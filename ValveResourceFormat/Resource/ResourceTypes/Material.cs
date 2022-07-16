@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -6,7 +7,8 @@ using System.Numerics;
 using System.Text;
 using ValveKeyValue;
 using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Blocks.ResourceEditInfoStructs;
+using RED2Structs = ValveResourceFormat.Blocks.RED2Structs;
+using REDIStructs = ValveResourceFormat.Blocks.ResourceEditInfoStructs;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Serialization.VfxEval;
 
@@ -118,7 +120,7 @@ namespace ValveResourceFormat.ResourceTypes
                 arguments.Add(name, value != 0);
             }
 
-            var specialDeps = (SpecialDependencies)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.SpecialDependencies];
+            var specialDeps = (REDIStructs.SpecialDependencies)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.SpecialDependencies];
             bool hemiOctIsoRoughness_RG_B = specialDeps.List.Any(dependancy => dependancy.CompilerIdentifier == "CompileTexture" && dependancy.String == "Texture Compiler Version Mip HemiOctIsoRoughness_RG_B");
             bool invert = specialDeps.List.Any(dependancy => dependancy.CompilerIdentifier == "CompileTexture" && dependancy.String == "Texture Compiler Version LegacySource1InvertNormals");
             if (hemiOctIsoRoughness_RG_B)
@@ -224,22 +226,37 @@ namespace ValveResourceFormat.ResourceTypes
                 }
             }
 
-            // Can't read ExtraStringData from RED2 yet
-            if (Resource.EditInfo.GetType() == typeof(ResourceEditInfo))
+            var subrect = default(REDIStructs.ExtraStringData.EditStringData);
+            if (Resource.EditInfo.Type == BlockType.REDI)
             {
-                var extraStringData = (ExtraStringData)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.ExtraStringData];
-                var subrect = extraStringData.List.Where(x => x.Name.ToLower() == "subrectdefinition").FirstOrDefault();
-
-                if (subrect != null)
-                {
-                    var toolattributes = new List<KVObject>()
-                    {
-                        new KVObject("SubrectDefinition", subrect.Value)
-                    };
-
-                    root.Add(new KVObject("ToolAttributes", toolattributes));
-                }
+                var extraStringData = (REDIStructs.ExtraStringData)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.ExtraStringData];
+                subrect = extraStringData.List.Where(x => x.Name.ToLower() == "subrectdefinition").FirstOrDefault();
             }
+            else if (Resource.EditInfo.Type == BlockType.RED2)
+            {
+                //((ResourceEditInfo2)Resource.EditInfo).Structs2.TryGetValue(ResourceEditInfo2.RED2NewStruct.SearchableUserData, out var searchableUserData);
+                //var kvp = ((RED2Structs.SearchableUserData)searchableUserData).Data;
+                //Console.WriteLine(kvp.ToString());
+                //.Where(x => x.Key.ToLower() == "subrectdefinition").FirstOrDefault();
+
+                // put it to EditStringData for no reason, to make it look like it came from REDI's ExtraStringData
+                //subrect = new REDIStructs.ExtraStringData.EditStringData
+                //{
+                //    Name = kvp.Key,
+                //    Value = (string)kvp.Value
+                //};
+            }
+
+            if (subrect != null)
+            {
+                var toolattributes = new List<KVObject>()
+                {
+                    new KVObject("SubrectDefinition", subrect.Value)
+                };
+
+                root.Add(new KVObject("ToolAttributes", toolattributes));
+            }
+
             using var ms = new MemoryStream();
             KVSerializer.Create(KVSerializationFormat.KeyValues1Text).Serialize(ms, root);
             return Encoding.UTF8.GetString(ms.ToArray());

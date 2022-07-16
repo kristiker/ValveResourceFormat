@@ -349,6 +349,21 @@ namespace GUI.Types.Viewers
                 }
 
                 resTabs.TabPages.Add(tab2);
+#if DEBUG
+                if (block.Type == BlockType.RED2)
+                {
+                    var tab3 = new TabPage("REDI From RED2");
+                    var control = new TextBox();
+                    control.Font = new Font(FontFamily.GenericMonospace, control.Font.Size);
+                    control.Text = Utils.Utils.NormalizeLineEndings(((ResourceEditInfo2)block).GetRedi().ToString());
+                    control.Dock = DockStyle.Fill;
+                    control.Multiline = true;
+                    control.ReadOnly = true;
+                    control.ScrollBars = ScrollBars.Both;
+                    tab3.Controls.Add(control);
+                    resTabs.TabPages.Add(tab3);
+                }
+#endif
 
                 if (block.Type == BlockType.DATA && resource.ResourceType == ResourceType.Material)
                 {
