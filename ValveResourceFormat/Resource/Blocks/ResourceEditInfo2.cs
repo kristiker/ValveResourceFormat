@@ -1,6 +1,8 @@
 using System;
 using System.IO;
-using ValveResourceFormat.Blocks.ResourceEditInfoStructs;
+using System.Collections.Generic;
+using REDIStructs = ValveResourceFormat.Blocks.ResourceEditInfoStructs;
+using RED2Structs = ValveResourceFormat.Blocks.RED2Structs;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Serialization.KeyValues;
@@ -16,9 +18,46 @@ namespace ValveResourceFormat.Blocks
 
         private BinaryKV3 BackingData;
 
-        public ResourceEditInfo2()
+        /// <summary>
+        /// New structs added with RED2 that are not present in REDI.
+        /// </summary>
+        public enum RED2NewStruct
         {
-            //
+            WeakReferenceList,
+            SearchableUserData,
+            SubassetReferences,
+            SubassetDefinitions,
+
+            End,
+        }
+
+        // or
+        public enum RED2Struct
+        {
+            InputDependencies = 0,
+            AdditionalInputDependencies = 1,
+            ArgumentDependencies = 2,
+            SpecialDependencies = 3,
+            //CustomDependencies = 4,
+            AdditionalRelatedFiles = 5,
+            ChildResourceList = 6,
+            //ExtraIntData = 7,
+            //ExtraFloatData = 8,
+            //ExtraStringData = 9,
+            WeakReferenceList = 10,
+            SearchableUserData = 11,
+            SubassetReferences = 12,
+            SubassetDefinitions = 13,
+
+            End,
+        }
+
+        public Dictionary<RED2NewStruct, RED2Structs.IRED2Struct> Structs2 { get; private set; }
+
+        public ResourceEditInfo2()
+            : base()
+        {
+            Structs2 = new Dictionary<RED2NewStruct, RED2Structs.IRED2Struct>(sizeof(RED2NewStruct)-1);
         }
 
         public override void Read(BinaryReader reader, Resource resource)
@@ -31,13 +70,38 @@ namespace ValveResourceFormat.Blocks
             kv3.Read(reader, resource);
             BackingData = kv3;
 
-            ConstructSpecialDependencies();
-            ConstuctInputDependencies();
-
-            foreach (var kv in kv3.Data)
+            for (var i = RED2Struct.InputDependencies; i < RED2Struct.End; i++)
             {
-                // TODO: Structs?
-                //var structType = ConstructStruct(kv.Key);
+                if (!Enum.IsDefined<RED2Struct>(i))
+                {
+                    continue;
+                }
+
+                var keyName = "m_"+Enum.GetName<RED2Struct>(i);
+
+                if ((REDIStruct)i < REDIStruct.End)
+                {
+                    var block = ConstructStruct(keyName, kv3.AsKeyValueCollection());
+
+                    Structs.Add((REDIStruct)i, (REDIStructs.REDIBlock)block);
+                }
+                else
+                {
+                    Console.WriteLine("Construct RED2 struct: " + keyName);
+                    var block = ConstructStruct(keyName, kv3.AsKeyValueCollection());
+
+                    if (block is not null)
+                    {
+                        if (block is RED2Structs.SearchableUserData)
+                        {
+                            var equivalentRediStructs = ((RED2Structs.SearchableUserData)block).GetEquivalentREDIBlocks();
+                            Structs.Add(REDIStruct.ExtraIntData, equivalentRediStructs.Item1);
+                            Structs.Add(REDIStruct.ExtraFloatData, equivalentRediStructs.Item2);
+                            Structs.Add(REDIStruct.ExtraStringData, equivalentRediStructs.Item3);
+                        }
+                        Structs2.Add((RED2NewStruct)i, (RED2Structs.IRED2Struct)block);
+                    }
+                }
             }
         }
 
@@ -46,62 +110,35 @@ namespace ValveResourceFormat.Blocks
             BackingData.WriteText(writer);
         }
 
-        private void ConstructSpecialDependencies()
+        public ResourceEditInfo GetRedi()
         {
-            var specialDependenciesRedi = new SpecialDependencies();
-            var specialDependencies = BackingData.AsKeyValueCollection().GetArray("m_SpecialDependencies");
+            var redi = new ResourceEditInfo();
 
-            foreach (var specialDependency in specialDependencies)
+            foreach( var kv in Structs )
             {
-                var specialDependencyRedi = new SpecialDependencies.SpecialDependency
-                {
-                    String = specialDependency.GetProperty<string>("m_String"),
-                    CompilerIdentifier = specialDependency.GetProperty<string>("m_CompilerIdentifier"),
-                    Fingerprint = specialDependency.GetIntegerProperty("m_nFingerprint"),
-                    UserData = specialDependency.GetIntegerProperty("m_nUserData"),
-                };
-
-                specialDependenciesRedi.List.Add(specialDependencyRedi);
+                redi.Structs.Add(kv.Key, kv.Value);
             }
-
-            Structs.Add(REDIStruct.SpecialDependencies, specialDependenciesRedi);
+            return redi;
         }
 
-        private void ConstuctInputDependencies()
-        {
-            var dependenciesRedi = new InputDependencies();
-            var dependencies = BackingData.AsKeyValueCollection().GetArray("m_InputDependencies");
-
-            foreach (var dependency in dependencies)
-            {
-                var dependencyRedi = new InputDependencies.InputDependency
-                {
-                    ContentRelativeFilename = dependency.GetProperty<string>("m_RelativeFilename"),
-                    ContentSearchPath = dependency.GetProperty<string>("m_SearchPath"),
-                    FileCRC = (uint)dependency.GetUnsignedIntegerProperty("m_nFileCRC"),
-                };
-
-                dependenciesRedi.List.Add(dependencyRedi);
-            }
-
-            Structs.Add(REDIStruct.InputDependencies, dependenciesRedi);
-        }
-
-        private static REDIBlock ConstructStruct(string name)
+        private static RED2Structs.IRED2Struct ConstructStruct(string name, IKeyValueCollection data)
         {
             return name switch
             {
-                "m_InputDependencies" => new InputDependencies(),
-                "m_AdditionalInputDependencies" => new AdditionalInputDependencies(),
-                "m_ArgumentDependencies" => new ArgumentDependencies(),
-                "m_SpecialDependencies" => new SpecialDependencies(),
-                // CustomDependencies
-                "m_AdditionalRelatedFiles" => new AdditionalRelatedFiles(),
-                "m_ChildResourceList" => new ChildResourceList(),
-                // ExtraIntData
-                // ExtraFloatData
-                // ExtraStringData
-                "m_SearchableUserData" => null,
+                "m_InputDependencies" => new RED2Structs.InputDependencies(data.GetArray(name)),
+                "m_AdditionalInputDependencies" => new RED2Structs.AdditionalInputDependencies(data.GetArray(name)),
+                "m_ArgumentDependencies" => new RED2Structs.ArgumentDependencies(data.GetArray(name)),
+                "m_SpecialDependencies" => new RED2Structs.SpecialDependencies(data.GetArray(name)),
+                // CustomDependencies is gone
+                "m_AdditionalRelatedFiles" => new RED2Structs.AdditionalRelatedFiles(data.GetArray(name)),
+                "m_ChildResourceList" => new RED2Structs.ChildResourceList(data.GetArray<string>(name)),
+                // ExtraIntData is in SearchableUserData
+                // ExtraFloatData is in SearchableUserData
+                // ExtraStringData is in SearchableUserData
+                "m_WeakReferenceList" => new RED2Structs.WeakReferenceList(data.GetArray<string>(name)), // is new in RED2
+                "m_SearchableUserData" => new RED2Structs.SearchableUserData(data.GetSubCollection(name)), // is new in RED2
+                "m_SubassetReferences" => new RED2Structs.SubassetReferences(data.GetSubCollection(name)), // is new in RED2
+                "m_SubassetDefinitions" => new RED2Structs.SubassetDefinitions(data.GetSubCollection(name)), // is new in RED2
                 _ => throw new InvalidDataException($"Unknown struct in RED2 block: '{name}'"),
             };
         }

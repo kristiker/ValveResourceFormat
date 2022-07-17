@@ -34,7 +34,7 @@ namespace ValveResourceFormat.Blocks
 
         public ResourceEditInfo()
         {
-            Structs = new Dictionary<REDIStruct, REDIBlock>();
+            Structs = new Dictionary<REDIStruct, REDIBlock>(sizeof(REDIStruct)-1);
         }
 
         public override void Read(BinaryReader reader, Resource resource)
