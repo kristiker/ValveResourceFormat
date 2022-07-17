@@ -114,14 +114,14 @@ namespace ValveResourceFormat.Blocks.RED2Structs
     {
         public override BlockType Type => BlockType.RED2;
 
-        public ChildResourceList(IKeyValueCollection m_ChildResourceList)
+        public ChildResourceList(IEnumerable<string> m_ChildResourceList)
         {
-            foreach (var additionalRelatedFile in m_ChildResourceList)
+            foreach (var childResource in m_ChildResourceList)
             {
                 var referenceInfoRedi = new ChildResourceList.ReferenceInfo
                 {
                     // no Id
-                    ResourceName = (string)additionalRelatedFile.Value
+                    ResourceName = childResource
                 };
 
                 List.Add(referenceInfoRedi);

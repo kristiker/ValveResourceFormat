@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Linq;
 using REDIStructs = ValveResourceFormat.Blocks.ResourceEditInfoStructs;
 using RED2Structs = ValveResourceFormat.Blocks.RED2Structs;
 using ValveResourceFormat.ResourceTypes;
@@ -81,9 +82,9 @@ namespace ValveResourceFormat.Blocks
 
                 if ((REDIStruct)i < REDIStruct.End)
                 {
-                    if (i == RED2Struct.ChildResourceList)
+                    if (i == RED2Struct.WeakReferenceList)
                         continue;
-                    var value = kv3.AsKeyValueCollection().GetArray(keyName);
+                    var value = kv3.AsKeyValueCollection().GetArray<object>(keyName);
                     var block = ConstructStruct(keyName, value);
 
                     Structs.Add((REDIStruct)i, (REDIStructs.REDIBlock)block);
@@ -111,17 +112,17 @@ namespace ValveResourceFormat.Blocks
             return redi;
         }
 
-        private static RED2Structs.IRED2Struct ConstructStruct(string name, IKeyValueCollection[] value)
+        private static RED2Structs.IRED2Struct ConstructStruct(string name, IEnumerable<object> value)
         {
             return name switch
             {
-                "m_InputDependencies" => new RED2Structs.InputDependencies(value),
-                "m_AdditionalInputDependencies" => new RED2Structs.AdditionalInputDependencies(value),
-                "m_ArgumentDependencies" => new RED2Structs.ArgumentDependencies(value),
-                "m_SpecialDependencies" => new RED2Structs.SpecialDependencies(value),
+                "m_InputDependencies" => new RED2Structs.InputDependencies(value.Cast<IKeyValueCollection>().ToArray()),
+                "m_AdditionalInputDependencies" => new RED2Structs.AdditionalInputDependencies(value.Cast<IKeyValueCollection>().ToArray()),
+                "m_ArgumentDependencies" => new RED2Structs.ArgumentDependencies(value.Cast<IKeyValueCollection>().ToArray()),
+                "m_SpecialDependencies" => new RED2Structs.SpecialDependencies(value.Cast<IKeyValueCollection>().ToArray()),
                 // CustomDependencies is gone
-                "m_AdditionalRelatedFiles" => new RED2Structs.AdditionalRelatedFiles(value),
-                "m_ChildResourceList" => null, // new RED2Structs.ChildResourceList((IKeyValueCollection)value)
+                "m_AdditionalRelatedFiles" => new RED2Structs.AdditionalRelatedFiles(value.Cast<IKeyValueCollection>().ToArray()),
+                "m_ChildResourceList" => new RED2Structs.ChildResourceList(value.Cast<string>()),
                 // ExtraIntData is gone
                 // ExtraFloatData is gone
                 // ExtraStringData is gone
