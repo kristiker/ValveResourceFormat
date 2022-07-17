@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
-using System.Linq;
 using REDIStructs = ValveResourceFormat.Blocks.ResourceEditInfoStructs;
 using RED2Structs = ValveResourceFormat.Blocks.RED2Structs;
 using ValveResourceFormat.ResourceTypes;
@@ -82,16 +81,26 @@ namespace ValveResourceFormat.Blocks
 
                 if ((REDIStruct)i < REDIStruct.End)
                 {
-                    if (i == RED2Struct.WeakReferenceList)
-                        continue;
-                    var value = kv3.AsKeyValueCollection().GetArray<object>(keyName);
-                    var block = ConstructStruct(keyName, value);
+                    var block = ConstructStruct(keyName, kv3.AsKeyValueCollection());
 
                     Structs.Add((REDIStruct)i, (REDIStructs.REDIBlock)block);
                 }
                 else
                 {
                     Console.WriteLine("Construct RED2 struct: " + keyName);
+                    var block = ConstructStruct(keyName, kv3.AsKeyValueCollection());
+
+                    if (block is not null)
+                    {
+                        if (block is RED2Structs.SearchableUserData)
+                        {
+                            var equivalentRediStructs = ((RED2Structs.SearchableUserData)block).GetEquivalentREDIBlocks();
+                            Structs.Add(REDIStruct.ExtraIntData, equivalentRediStructs.Item1);
+                            Structs.Add(REDIStruct.ExtraFloatData, equivalentRediStructs.Item2);
+                            Structs.Add(REDIStruct.ExtraStringData, equivalentRediStructs.Item3);
+                        }
+                        Structs2.Add((RED2NewStruct)i, (RED2Structs.IRED2Struct)block);
+                    }
                 }
             }
         }
@@ -112,22 +121,22 @@ namespace ValveResourceFormat.Blocks
             return redi;
         }
 
-        private static RED2Structs.IRED2Struct ConstructStruct(string name, IEnumerable<object> value)
+        private static RED2Structs.IRED2Struct ConstructStruct(string name, IKeyValueCollection data)
         {
             return name switch
             {
-                "m_InputDependencies" => new RED2Structs.InputDependencies(value.Cast<IKeyValueCollection>().ToArray()),
-                "m_AdditionalInputDependencies" => new RED2Structs.AdditionalInputDependencies(value.Cast<IKeyValueCollection>().ToArray()),
-                "m_ArgumentDependencies" => new RED2Structs.ArgumentDependencies(value.Cast<IKeyValueCollection>().ToArray()),
-                "m_SpecialDependencies" => new RED2Structs.SpecialDependencies(value.Cast<IKeyValueCollection>().ToArray()),
+                "m_InputDependencies" => new RED2Structs.InputDependencies(data.GetArray(name)),
+                "m_AdditionalInputDependencies" => new RED2Structs.AdditionalInputDependencies(data.GetArray(name)),
+                "m_ArgumentDependencies" => new RED2Structs.ArgumentDependencies(data.GetArray(name)),
+                "m_SpecialDependencies" => new RED2Structs.SpecialDependencies(data.GetArray(name)),
                 // CustomDependencies is gone
-                "m_AdditionalRelatedFiles" => new RED2Structs.AdditionalRelatedFiles(value.Cast<IKeyValueCollection>().ToArray()),
-                "m_ChildResourceList" => new RED2Structs.ChildResourceList(value.Cast<string>()),
-                // ExtraIntData is gone
-                // ExtraFloatData is gone
-                // ExtraStringData is gone
-                "m_WeakReferenceList" => null, // is new
-                "m_SearchableUserData" => null, // is new
+                "m_AdditionalRelatedFiles" => new RED2Structs.AdditionalRelatedFiles(data.GetArray(name)),
+                "m_ChildResourceList" => new RED2Structs.ChildResourceList(data.GetArray<string>(name)),
+                // ExtraIntData is in SearchableUserData
+                // ExtraFloatData is in SearchableUserData
+                // ExtraStringData is in SearchableUserData
+                "m_WeakReferenceList" => new RED2Structs.WeakReferenceList(data.GetArray<string>(name)), // is new
+                "m_SearchableUserData" => new RED2Structs.SearchableUserData(data.GetSubCollection(name)), // is new
                 "m_SubassetReferences" => null, // is new
                 "m_SubassetDefinitions" => null, // is new
                 _ => throw new InvalidDataException($"Unknown struct in RED2 block: '{name}'"),

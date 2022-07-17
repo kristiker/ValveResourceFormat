@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Serialization.KeyValues;
@@ -138,16 +139,11 @@ namespace ValveResourceFormat.Blocks.RED2Structs
         public static BlockType Type => BlockType.RED2;
 
         // dunno what objects
-        public List<object> List { get; }
+        public List<string> List { get; }
 
-        public WeakReferenceList()
+        public WeakReferenceList(IEnumerable<string> m_WeakReferenceList)
         {
-            List = null;
-        }
-
-        public WeakReferenceList(KVValue m_WeakReferenceList)
-        {
-            List = new List<object>();
+            List = new List<string>(m_WeakReferenceList);
         }
     }
 
@@ -155,27 +151,58 @@ namespace ValveResourceFormat.Blocks.RED2Structs
     {
         public static BlockType Type => BlockType.RED2;
 
-        public Dictionary<string, object> Data { get; }
+        public KVObject Data { get; }
 
-        public SearchableUserData()
+        public SearchableUserData(IKeyValueCollection m_SearchableUserData)
         {
-            Data = null;
+            Data = (KVObject)m_SearchableUserData;
+            var x = GetEquivalentREDIBlocks();
         }
 
-        public SearchableUserData(KVValue m_SearchableUserData)
+        public (REDIStructs.ExtraIntData, REDIStructs.ExtraFloatData, REDIStructs.ExtraStringData) GetEquivalentREDIBlocks()
         {
-            if (m_SearchableUserData is null)
+
+            var blocks =
+            (
+                ExtraIntData: new REDIStructs.ExtraIntData(),
+                ExtraFloatData: new REDIStructs.ExtraFloatData(),
+                ExtraStringData: new REDIStructs.ExtraStringData()
+            );
+
+            foreach (var (key, value) in Data)
             {
-                Data = null;
-            }
-            else
-            {
-                Data = new Dictionary<string, object>();
-                foreach (var (key, value) in (IKeyValueCollection)m_SearchableUserData.Value)
+                var type = value.GetType();
+
+                if (type == typeof(Int64))
                 {
-                    Data.Add(key, value);
+                    var editIntData = new REDIStructs.ExtraIntData.EditIntData
+                    {
+                        Name = key,
+                        Value = Convert.ToInt32(value)
+                    };
+                    blocks.ExtraIntData.List.Add(editIntData);
+                }
+                else if (type == typeof(float))
+                {
+                    var editFloatData = new REDIStructs.ExtraFloatData.EditFloatData
+                    {
+                        Name = key,
+                        Value = (float)value
+                    };
+                    blocks.ExtraFloatData.List.Add(editFloatData);
+                }
+                else if (type == typeof(string))
+                {
+                    var editStringData = new REDIStructs.ExtraStringData.EditStringData
+                    {
+                        Name = key,
+                        Value = (string)value
+                    };
+                    blocks.ExtraStringData.List.Add(editStringData);
                 }
             }
+
+            return blocks;
         }
 
     }

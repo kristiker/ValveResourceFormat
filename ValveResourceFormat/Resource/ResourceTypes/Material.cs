@@ -227,25 +227,9 @@ namespace ValveResourceFormat.ResourceTypes
             }
 
             var subrect = default(REDIStructs.ExtraStringData.EditStringData);
-            if (Resource.EditInfo.Type == BlockType.REDI)
-            {
-                var extraStringData = (REDIStructs.ExtraStringData)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.ExtraStringData];
-                subrect = extraStringData.List.Where(x => x.Name.ToLower() == "subrectdefinition").FirstOrDefault();
-            }
-            else if (Resource.EditInfo.Type == BlockType.RED2)
-            {
-                //((ResourceEditInfo2)Resource.EditInfo).Structs2.TryGetValue(ResourceEditInfo2.RED2NewStruct.SearchableUserData, out var searchableUserData);
-                //var kvp = ((RED2Structs.SearchableUserData)searchableUserData).Data;
-                //Console.WriteLine(kvp.ToString());
-                //.Where(x => x.Key.ToLower() == "subrectdefinition").FirstOrDefault();
 
-                // put it to EditStringData for no reason, to make it look like it came from REDI's ExtraStringData
-                //subrect = new REDIStructs.ExtraStringData.EditStringData
-                //{
-                //    Name = kvp.Key,
-                //    Value = (string)kvp.Value
-                //};
-            }
+            var extraStringData = (REDIStructs.ExtraStringData)Resource.EditInfo.Structs[ResourceEditInfo.REDIStruct.ExtraStringData];
+            subrect = extraStringData.List.Where(x => x.Name.ToLower() == "subrectdefinition").FirstOrDefault();
 
             if (subrect != null)
             {
