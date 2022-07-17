@@ -211,27 +211,11 @@ namespace ValveResourceFormat.Blocks.RED2Structs
     {
         public static BlockType Type => BlockType.RED2;
 
-        public Dictionary<string, object> Data { get; }
+        public KVObject Data { get; }
 
-        public SubassetReferences()
+        public SubassetReferences(IKeyValueCollection m_SubassetReferences)
         {
-            Data = null;
-        }
-
-        public SubassetReferences(KVValue m_SubassetReferences)
-        {
-            if (m_SubassetReferences is null)
-            {
-                Data = null;
-            }
-            else
-            {
-                Data = new Dictionary<string, object>();
-                foreach (var (key, value) in (IKeyValueCollection)m_SubassetReferences.Value)
-                {
-                    Data.Add(key, value);
-                }
-            }
+            Data = (KVObject)m_SubassetReferences;
         }
 
     }
@@ -240,27 +224,11 @@ namespace ValveResourceFormat.Blocks.RED2Structs
     {
         public static BlockType Type => BlockType.RED2;
 
-        public Dictionary<string, object> Data { get; }
-
-        public SubassetDefinitions()
-        {
-            Data = null;
-        }
+        public KVObject Data { get; }
 
         public SubassetDefinitions(IKeyValueCollection m_SubassetDefinitions)
         {
-            if (m_SubassetDefinitions is null)
-            {
-                Data = null;
-            }
-            else
-            {
-                Data = new Dictionary<string, object>();
-                foreach (var (key, value) in m_SubassetDefinitions)
-                {
-                    Data.Add(key, value);
-                }
-            }
+            Data = (KVObject)m_SubassetDefinitions;
         }
 
     }

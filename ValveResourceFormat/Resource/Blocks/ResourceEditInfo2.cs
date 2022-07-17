@@ -135,10 +135,10 @@ namespace ValveResourceFormat.Blocks
                 // ExtraIntData is in SearchableUserData
                 // ExtraFloatData is in SearchableUserData
                 // ExtraStringData is in SearchableUserData
-                "m_WeakReferenceList" => new RED2Structs.WeakReferenceList(data.GetArray<string>(name)), // is new
-                "m_SearchableUserData" => new RED2Structs.SearchableUserData(data.GetSubCollection(name)), // is new
-                "m_SubassetReferences" => null, // is new
-                "m_SubassetDefinitions" => null, // is new
+                "m_WeakReferenceList" => new RED2Structs.WeakReferenceList(data.GetArray<string>(name)), // is new in RED2
+                "m_SearchableUserData" => new RED2Structs.SearchableUserData(data.GetSubCollection(name)), // is new in RED2
+                "m_SubassetReferences" => new RED2Structs.SubassetReferences(data.GetSubCollection(name)), // is new in RED2
+                "m_SubassetDefinitions" => new RED2Structs.SubassetDefinitions(data.GetSubCollection(name)), // is new in RED2
                 _ => throw new InvalidDataException($"Unknown struct in RED2 block: '{name}'"),
             };
         }
