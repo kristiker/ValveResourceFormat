@@ -87,16 +87,6 @@ namespace ValveResourceFormat.IO
 
                 default:
                     extract.Data = Encoding.UTF8.GetBytes(resource.DataBlock.ToString());
-                    extract.Children.Add( new ChildExtractedResource()
-                    {
-                        Data = Array.Empty<byte>(),
-                        FileName = "examplechild.txt"
-                    });
-                    extract.Children.Add( new ChildExtractedResource()
-                    {
-                        Data = Array.Empty<byte>(),
-                        FileName = "examplechild2.txt"
-                    });
                     break;
             }
 
