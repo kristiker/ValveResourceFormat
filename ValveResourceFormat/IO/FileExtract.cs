@@ -8,14 +8,13 @@ using ValveResourceFormat.ResourceTypes;
 namespace ValveResourceFormat.IO
 {
 
-    public ref struct ExtractedResource
+    public class ExtractedResource
     {
-        public Span<byte> Data { get; set; }
+        public byte[] Data { get; set; }
         public List<ChildExtractedResource> Children { get; private set;}
 
         public ExtractedResource()
         {
-            Data = new Span<byte>();
             Children = new List<ChildExtractedResource>();
         }
     }
@@ -48,7 +47,7 @@ namespace ValveResourceFormat.IO
                     {
                         var soundStream = ((Sound)resource.DataBlock).GetSoundStream();
                         soundStream.TryGetBuffer(out var buffer);
-                        extract.Data = buffer;
+                        extract.Data = buffer.ToArray();
 
                         break;
                     }
@@ -61,7 +60,7 @@ namespace ValveResourceFormat.IO
                         bitmap.PeekPixels().Encode(ms, SKEncodedImageFormat.Png, 100);
 
                         ms.TryGetBuffer(out var buffer);
-                        extract.Data = buffer;
+                        extract.Data = buffer.ToArray();
 
                         break;
                     }
