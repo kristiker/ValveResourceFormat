@@ -1,0 +1,54 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "VRF",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "buildvrf",
+            "program": "${workspaceFolder}/GUI/bin/Debug/win-x64/Source2Viewer.exe",
+            "args": [
+                "C:/Program Files (x86)/Steam/steamapps/common/Aperture Desk Job/game/steampal/pak01_dir.vpk",
+                "C:/Users/user/Desktop/CAGO2/csgo/maps/graphics_settings.vpk",
+                "vpk:C:/Users/user/Desktop/CAGO2/csgo/pak01_dir.vpk:particles/barrel_burning_engine_smoke2.vpcf_c",
+            ],
+            "cwd": "${workspaceFolder}/GUI",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Decompiler (console)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "builddecompiler",
+            "program": "${workspaceFolder}/Decompiler/bin/Debug/Decompiler.exe",
+            "args": [
+                //"--input", "C:/Users/kristi/Documents/decompile/animgraphs/analog_synth.vanmgrph_c",
+                "--output",
+                "C:/Users/kristi/Documents/decompile/sounds/",
+                "-d",
+                //"--input", "D:/Games/steamapps/common/Aperture Desk Job/game/steampal/pak01_dir.vpk",
+                "--input",
+                "D:/Games/steamapps/common/dota 2 beta/game/dota/pak01_dir.vpk",
+                //"--stats",
+                //"--threads", "3",
+                "--vpk_extensions",
+                "vsnd_c",
+                "--vpk_filepath",
+                "sounds/vo/",
+            ],
+            "cwd": "${workspaceFolder}/Decompiler",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        //,
+        //{
+        //    "name": ".NET Core Attach",
+        //    "type": "coreclr",
+        //    "request": "attach"
+        //}
+    ]
+}
