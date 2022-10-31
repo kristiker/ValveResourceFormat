@@ -14,6 +14,7 @@ using GUI.Forms;
 using GUI.Types.Exporter;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
+using ValveResourceFormat.CompiledShader;
 using Resource = ValveResourceFormat.Resource;
 
 namespace GUI
@@ -665,6 +666,18 @@ namespace GUI
                     });
 
                     return;
+                }
+
+                // Export first uncompressed zframe
+                if (decompile && fileName.EndsWith("vcs", StringComparison.Ordinal))
+                {
+                    Console.WriteLine("Exporting z\\\\0000000 for " + fileName);
+                    using var shader = new ShaderFile();
+                    using var memory = new MemoryStream(output);
+
+                    shader.Read(fileName, memory);
+
+                    output = shader.GetDecompressedZFrameByIndex(0);
                 }
 
                 var dialog = new SaveFileDialog
