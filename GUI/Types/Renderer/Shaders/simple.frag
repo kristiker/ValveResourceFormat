@@ -1,170 +1,82 @@
-#version 330
-
-// Render modes -- Switched on/off by code
-#define param_renderMode_FullBright 0
-#define param_renderMode_Color 0
-#define param_renderMode_Normals 0
-#define param_renderMode_Tangents 0
-#define param_renderMode_BumpMap 0
-#define param_renderMode_BumpNormals 0
-#define param_renderMode_Illumination 0
-
-//Parameter defines - These are default values and can be overwritten based on material/model parameters
-#define param_F_FULLBRIGHT 0
-#define param_F_TINT_MASK 0
-#define param_F_ALPHA_TEST 0
-#define param_F_GLASS 0
-#define param_HemiOctIsoRoughness_RG_B 0
-#define param_LegacySource1InvertNormals 0
-//End of parameter defines
-
-in vec3 vFragPosition;
-
-in vec3 vNormalOut;
-in vec3 vTangentOut;
-in vec3 vBitangentOut;
-
-in vec2 vTexCoordOut;
-
-out vec4 outputColor;
-
-uniform float g_flAlphaTestReference;
-uniform sampler2D g_tColor;
-uniform sampler2D g_tNormal;
-uniform sampler2D g_tTintMask;
-
-uniform vec3 vLightPosition;
-uniform vec3 vEyePosition;
-
-uniform vec4 m_vTintColorSceneObject;
-uniform vec3 m_vTintColorDrawCall;
-
-uniform vec4 g_vTexCoordOffset;
-uniform vec4 g_vTexCoordScale;
-uniform vec4 g_vColorTint;
-
-// glass specific params
-#if param_F_GLASS == 1
-uniform bool g_bFresnel = true;
-uniform float g_flEdgeColorFalloff = 3.0;
-uniform float g_flEdgeColorMaxOpacity = 0.5;
-uniform float g_flEdgeColorThickness = 0.1;
-uniform vec4 g_vEdgeColor;
-uniform float g_flRefractScale = 0.1;
-uniform float g_flOpacityScale = 1.0;
-#endif
-
-vec3 oct_to_float32x3(vec2 e)
-{
-    vec3 v = vec3(e.xy, 1.0 - abs(e.x) - abs(e.y));
-    return normalize(v);
-}
-
-//Calculate the normal of this fragment in world space
-vec3 calculateWorldNormal()
-{
-    //Get the noral from the texture map -- Normal map seems broken
-    vec4 bumpNormal = texture(g_tNormal, vTexCoordOut * g_vTexCoordScale.xy + g_vTexCoordOffset.xy);
-
-    //Reconstruct the tangent vector from the map
-#if param_HemiOctIsoRoughness_RG_B == 1
-    vec2 temp = vec2(bumpNormal.x + bumpNormal.y -1.003922, bumpNormal.x - bumpNormal.y);
-    vec3 tangentNormal = oct_to_float32x3(temp);
-#else
-    //vec2 temp = vec2(bumpNormal.w, bumpNormal.y) * 2 - 1;
-    //vec3 tangentNormal = vec3(temp, sqrt(1 - temp.x * temp.x - temp.y * temp.y));
-    vec2 temp = vec2(bumpNormal.w + bumpNormal.y -1.003922, bumpNormal.w - bumpNormal.y);
-    vec3 tangentNormal = oct_to_float32x3(temp);
-#endif
-
-#if param_LegacySource1InvertNormals == 1
-    tangentNormal.y *= -1.0;
-#endif
-
-    vec3 normal = vNormalOut;
-    vec3 tangent = vTangentOut.xyz;
-    vec3 bitangent = vBitangentOut;
-
-    //Make the tangent space matrix
-    mat3 tangentSpace = mat3(tangent, bitangent, normal);
-
-    //Calculate the tangent normal in world space and return it
-    return normalize(tangentSpace * tangentNormal);
-}
-
-//Main entry point
+#version 330 core
+// LunarGOO output
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+layout(std140, binding = 0 ) uniform PerViewConstantBuffer_t {
+	layout(row_major) mat4 g_matWorldToProjection;
+	layout(row_major) mat4 g_matProjectionToWorld;
+	layout(row_major) mat4 g_matWorldToView;
+	layout(row_major) mat4 g_matViewToProjection;
+	vec4 g_vInvProjRow3;
+	vec4 g_vClipPlane0;
+	float g_flToneMapScalarLinear;
+	float g_flLightMapScalar;
+	float g_flEnvMapScalar;
+	float g_flToneMapScalarGamma;
+	vec3 g_vCameraPositionWs;
+	float g_flViewportMinZ;
+	vec3 g_vCameraDirWs;
+	float g_flViewportMaxZ;
+	vec3 g_vCameraUpDirWs;
+	float g_flTime;
+	vec3 g_vDepthPsToVsConversion;
+	float g_flNearPlane;
+	float g_flFarPlane;
+	float g_flLightBinnerFarPlane;
+	vec2 g_vInvViewportSize;
+	vec2 g_vViewportToGBufferRatio;
+	vec2 g_vMorphTextureAtlasSize;
+	vec4 g_vInvGBufferSize;
+	vec2 g_vViewportOffset;
+	vec2 g_vViewportSize;
+	vec2 g_vRenderTargetSize;
+	float g_flFogBlendToBackground;
+	float g_flHenyeyGreensteinCoeff;
+	vec3 g_vFogColor;
+	float g_flNegFogStartOverFogRange;
+	float g_flInvFogRange;
+	float g_flFogMaxDensity;
+	float g_flFogExponent;
+	float g_flMod2xIdentity;
+	float g_bStereoEnabled;
+	float g_flStereoCameraIndex;
+	float g_fInvViewportZRange;
+	float g_fMinViewportZScaled;
+	vec3 g_vMiddleEyePositionWs;
+	float g_flPad2;
+	layout(row_major) mat4 g_matWorldToProjectionMultiview[2];
+	vec4 g_vCameraPositionWsMultiview[2];
+	vec4 g_vFrameBufferCopyInvSizeAndUvScale;
+	vec4 g_vCameraAngles;
+	vec4 g_vWorldToCameraOffset;
+	vec4 g_vWorldToCameraOffsetMultiview[2];
+	vec4 g_vPerViewConstantExtraData0;
+	vec4 g_vPerViewConstantExtraData1;
+	vec4 g_vPerViewConstantExtraData2;
+	vec4 g_vPerViewConstantExtraData3;
+} ;
+layout(std140) uniform PerLayerConstantBuffer_t {
+	vec4 g_vWireframeColor;
+} ;
+layout(location=0) in vec3 PS_INPUT_gl_vPositionWs;
+layout(location=0) out vec4 PS_OUTPUT_gl_vColor;
+const float C_0d0 = 0.0;
+const float C_1d0 = 1.0;
+const vec3 C_vec3p0d0p = vec3(0.0);
+const vec4 C_xx1m2m1 = vec4(0.0, 0.0, 0.0, 1.0);
 void main()
 {
-    //Get the ambient color from the color texture
-    vec4 color = texture(g_tColor, vTexCoordOut * g_vTexCoordScale.xy + g_vTexCoordOffset.xy) * vec4(m_vTintColorDrawCall.xyz, 1);
-
-#if param_F_ALPHA_TEST == 1
-    if (color.a < g_flAlphaTestReference)
-    {
-       discard;
-    }
-#endif
-
-    //Get the direction from the fragment to the light - light position == camera position for now
-    vec3 lightDirection = normalize(vLightPosition - vFragPosition);
-    vec3 viewDirection = normalize(vEyePosition - vFragPosition);
-
-    //Get the world normal for this fragment
-    vec3 worldNormal = calculateWorldNormal();
-
-#if param_renderMode_FullBright == 1 || param_F_FULLBRIGHT == 1
-    float illumination = 1.0;
-#else
-    //Calculate lambert lighting
-    float illumination = max(0.0, dot(worldNormal, lightDirection));
-    illumination = illumination * 0.7 + 0.3;//add ambient
-#endif
-
-    //Calculate tint color
-    vec3 tintColor = m_vTintColorSceneObject.xyz * m_vTintColorDrawCall;
-
-#if param_F_TINT_MASK == 1
-    float tintStrength = texture(g_tTintMask, vTexCoordOut * g_vTexCoordScale.xy + g_vTexCoordScale.xy).y;
-    vec3 tintFactor = tintStrength * tintColor + (1 - tintStrength) * vec3(1);
-#else
-    vec3 tintFactor = tintColor;
-#endif
-
-#if param_F_GLASS == 1
-    vec4 glassColor = vec4(illumination * color.rgb * g_vColorTint.rgb, color.a);
-
-    float viewDotNormalInv = clamp(1.0 - (dot(viewDirection, worldNormal) - g_flEdgeColorThickness), 0.0, 1.0);
-    float fresnel = clamp(pow(viewDotNormalInv, g_flEdgeColorFalloff), 0.0, 1.0) * g_flEdgeColorMaxOpacity * (g_bFresnel ? 1.0 : 0.0);
-    vec4 fresnelColor = vec4(g_vEdgeColor.xyz, fresnel);
-
-    outputColor = mix(glassColor, fresnelColor, g_flOpacityScale);
-#else
-    //Simply multiply the color from the color texture with the illumination
-    outputColor = vec4(illumination * color.rgb * g_vColorTint.xyz * tintFactor, color.a);
-#endif
-
-    // Different render mode definitions
-#if param_renderMode_Color == 1
-    outputColor = vec4(color.rgb, 1.0);
-#endif
-
-#if param_renderMode_BumpMap == 1
-    outputColor = texture(g_tNormal, vTexCoordOut * g_vTexCoordScale.xy + g_vTexCoordOffset.xy);
-#endif
-
-#if param_renderMode_Tangents == 1
-    outputColor = vec4(vTangentOut.xyz * vec3(0.5) + vec3(0.5), 1.0);
-#endif
-
-#if param_renderMode_Normals == 1
-    outputColor = vec4(vNormalOut * vec3(0.5) + vec3(0.5), 1.0);
-#endif
-
-#if param_renderMode_BumpNormals == 1
-    outputColor = vec4(worldNormal * vec3(0.5) + vec3(0.5), 1.0);
-#endif
-
-#if param_renderMode_Illumination == 1
-    outputColor = vec4(illumination, illumination, illumination, 1.0);
-#endif
+	float flDist = distance(PS_INPUT_gl_vPositionWs, g_vCameraPositionWs);
+	float H_j6vk5z = flDist * g_flInvFogRange;
+	float param = H_j6vk5z + g_flNegFogStartOverFogRange;
+	float misc3a = clamp(param, C_0d0, C_1d0);
+	float flFog = pow(misc3a, g_flFogExponent);
+	float misc2a = min(g_flFogMaxDensity, flFog);
+	float misc3a1 = clamp(misc2a, C_0d0, C_1d0);
+	vec3 misc3a2 = mix(C_vec3p0d0p, g_vFogColor, misc3a1);
+	vec3 H_48eakq = vec3(g_flToneMapScalarLinear);
+	vec3 H_yke8c51 = H_48eakq * misc3a2;
+	vec4 H_rwwpo7 = C_xx1m2m1;
+	H_rwwpo7.xyz = H_yke8c51.xyz;
+	PS_OUTPUT_gl_vColor = H_rwwpo7;
 }
