@@ -39,8 +39,8 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <Reference Include="SpirvCrossDll">
-      <HintPath>SpirvCrossDll.dll</HintPath>
+    <Reference Include="SpirvReflector">
+      <HintPath>SpirvReflector.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>

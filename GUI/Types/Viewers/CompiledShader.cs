@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using GUI.Utils;
+using GUI.Utils.SpirvReflector;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using static ValveResourceFormat.CompiledShader.ShaderUtilHelpers;
@@ -338,9 +339,9 @@ namespace GUI.Types.Viewers
                 zframeFile.PrintGpuSource(gpuSourceId, textBuffer.Write);
                 // The textBuffer is correct unless we have a non-empty Vulkan source; we attempt spirv reflection
                 var spirvSucceeded = false;
-                if (!gpuSource.HasEmptySource() && gpuSource is VulkanSource)
+                if (!gpuSource.HasEmptySource() && gpuSource is VulkanSource spirv)
                 {
-                    spirvSucceeded = AttemptSpirvReflection((VulkanSource)gpuSource, textBuffer);
+                    spirvSucceeded = AttemptSpirvReflection(spirv, textBuffer);
                 }
                 var formattedSourceContent = textBuffer.ToString();
                 textBuffer.Dispose();
@@ -375,7 +376,7 @@ namespace GUI.Types.Viewers
             {
                 try
                 {
-                    var reflectedSpirv = DecompileSpirv(vulkanSource.GetSpirvBytes());
+                    var reflectedSpirv = SpirvReflector.DecompileSpirv(vulkanSource.GetSpirvBytes());
                     textBuffer.GetStringBuilder().Clear();
                     textBuffer.WriteLine(vulkanSource.GetSourceDetails());
                     textBuffer.WriteLine($"// SPIR-V source ({vulkanSource.MetaDataOffset}), Glsl reflection with SPIRV-Cross, KhronosGroup\n");
@@ -385,9 +386,9 @@ namespace GUI.Types.Viewers
                     textBuffer.WriteLine($"{BytesToString(vulkanSource.GetMetaDataBytes())}");
                     return true;
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
-                    textBuffer.GetStringBuilder().Insert(0, "// Spirv reflection failed, showing source bytes\n");
+                    textBuffer.GetStringBuilder().Insert(0, "// Spirv reflection failed, showing source bytes\n" + e.ToString() + "\n");
                     return false;
                 }
             }
@@ -440,48 +441,6 @@ namespace GUI.Types.Viewers
                 ));
                 return tabControl;
             }
-
-#pragma warning disable CA5392 // Use DefaultDllImportSearchPaths attribute for P/Invokes
-            [DllImport("SpirvCrossDll.dll")]
-            private static extern IntPtr CreateSpirvDecompiler();
-
-            [DllImport("SpirvCrossDll.dll")]
-            private static extern int PushUInt32(IntPtr decompiler, uint val);
-
-            [DllImport("SpirvCrossDll.dll")]
-            private static extern char Parse(IntPtr decompiler);
-
-            [DllImport("SpirvCrossDll.dll")]
-            private static extern int GetDataLength(IntPtr decompiler);
-
-            [DllImport("SpirvCrossDll.dll")]
-            private static extern char GetChar(IntPtr decompiler, int i);
-#pragma warning restore CA5392
-
-#pragma warning disable CA1806 // Ignore HRESULT error code
-            private static string DecompileSpirv(byte[] databytes)
-            {
-                var decompiler = CreateSpirvDecompiler();
-                for (var i = 0; i < databytes.Length; i += 4)
-                {
-                    var b0 = (uint)databytes[i + 0];
-                    var b1 = (uint)databytes[i + 1];
-                    var b2 = (uint)databytes[i + 2];
-                    var b3 = (uint)databytes[i + 3];
-                    var nextUInt32 = b3 + (b2 << 8) + (b1 << 16) + (b0 << 24);
-                    PushUInt32(decompiler, nextUInt32);
-                }
-                Parse(decompiler);
-                var len = GetDataLength(decompiler);
-                var sb = new StringBuilder();
-                for (var i = 0; i < len; i++)
-                {
-                    var c = GetChar(decompiler, i);
-                    sb.Append(c);
-                }
-                return sb.ToString();
-            }
-#pragma warning restore CA1806
         }
     }
 }
