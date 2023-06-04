@@ -64,7 +64,10 @@ namespace GUI.Types.Viewers
             var helpText = "[ctrl+click to open and focus links, ESC or right-click on tabs to close]\n\n";
             shaderRichTextBox.Text = $"{helpText}{shaderRichTextBox.Text}";
 
-            var extract = new ShaderExtract(shaderCollection);
+            var extract = new ShaderExtract(shaderCollection)
+            {
+                SpirvDecompiler = SpirvReflector.DecompileSpirv,
+            };
             IViewer.AddContentTab<Func<string>>(tabControl, extract.GetVfxFileName(), extract.ToVFX, true);
 
             return tab;
