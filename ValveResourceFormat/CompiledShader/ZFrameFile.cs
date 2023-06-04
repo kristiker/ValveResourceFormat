@@ -229,9 +229,9 @@ namespace ValveResourceFormat.CompiledShader
             var sourceDetails =
                 $"// {GpuSources[sourceId].GetBlockName()}[{sourceId}] source bytes " +
                 $"({GpuSources[sourceId].Sourcebytes.Length}) ref={GpuSources[sourceId].GetEditorRefIdAsString()}\n";
-            if (GpuSources[sourceId].Sourcebytes.Length == 0)
+            if (GpuSources[sourceId].HasEmptySource())
             {
-                outputWriter(sourceDetails);
+                outputWriter($"{GpuSources[sourceId].GetSourceDetails()}\n");
                 outputWriter("[empty source]");
                 return;
             }
@@ -239,6 +239,17 @@ namespace ValveResourceFormat.CompiledShader
             {
                 var glslSourceFile = Encoding.UTF8.GetString(GpuSources[sourceId].Sourcebytes);
                 outputWriter(glslSourceFile);
+            }
+            else if (GpuSources[sourceId] is VulkanSource)
+            {
+                VulkanSource vulkanSource = (VulkanSource)GpuSources[sourceId];
+                outputWriter($"{vulkanSource.GetSourceDetails()}\n");
+                outputWriter($"// Spirv bytecode ({vulkanSource.MetaDataOffset})\n");
+                outputWriter($"[0]\n");
+                outputWriter($"{BytesToString(vulkanSource.GetSpirvBytes())}\n\n");
+                outputWriter($"// Source metadata (unknown encoding) ({vulkanSource.MetaDataLength})\n");
+                outputWriter($"[{vulkanSource.MetaDataOffset}]\n");
+                outputWriter($"{BytesToString(vulkanSource.GetMetaDataBytes())}");
             }
             else
             {
@@ -356,7 +367,7 @@ namespace ValveResourceFormat.CompiledShader
                 int flag1 = datareader.ReadByte();
                 int flag2 = datareader.ReadByte();
 
-                if (flag0 != 0 && flag0 != 1 || flag1 != 0 && flag1 != 1 || flag2 != 0 && flag2 != 1)
+                if ((flag0 != 0 && flag0 != 1) || (flag1 != 0 && flag1 != 1) || (flag2 != 0 && flag2 != 1))
                 {
                     throw new ShaderParserException("unexpected data");
                 }
@@ -847,5 +858,4 @@ namespace ValveResourceFormat.CompiledShader
             DataReader.ShowBytes(dynExpLen);
         }
     }
-
 }

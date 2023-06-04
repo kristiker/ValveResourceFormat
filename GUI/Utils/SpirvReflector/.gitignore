@@ -1,0 +1,7 @@
+*
+!GUI\Utils\SpirvReflector\CMakeLists.txt
+!GUI\Utils\SpirvReflector\NativeInterop.cs
+!GUI\Utils\SpirvReflector\SpirvReflector.cpp
+!GUI\Utils\SpirvReflector\SpirvReflector.h
+!GUI\Utils\SpirvReflector\dllmain.cpp
+!GUI\Utils\SpirvReflector\framework.h

@@ -74,6 +74,7 @@ public sealed class ShaderExtract
 
     private ShaderExtractParams Options { get; set; }
     private Dictionary<string, IndentedTextWriter> IncludeWriters { get; set; }
+    public Func<byte[], string> SpirvDecompiler { get; set; }
 
     public ShaderExtract(Resource resource)
         : this((SboxShader)resource.DataBlock)
@@ -562,6 +563,9 @@ public sealed class ShaderExtract
         var perConditionParameters = new Dictionary<(int Index, int State), HashSet<int>>(staticConfig.SumStates);
         var hasParameters = shader.ParamBlocks.Count > 0;
 
+        // Source
+        var variant0Source = new StringBuilder();
+
         foreach (var i in Enumerable.Range(0, shader.GetZFrameCount()))
         {
             if (Options.ZFrameReadingCap >= 0 && i >= Options.ZFrameReadingCap)
@@ -574,6 +578,23 @@ public sealed class ShaderExtract
 
             var staticConfigState = staticConfig.GetConfigState(zFrame.ZframeId);
             attributesDisect[staticConfigState] = zframeAttributes;
+
+            if (zFrame.GpuSourceCount > 0 && variant0Source.Length == 0)
+            {
+                var gpuSource = zFrame.GpuSources[0];
+                if (gpuSource is GlslSource glsl)
+                {
+                    variant0Source.AppendLine("// --------- GLSL source begin --------- ");
+                    variant0Source.Append(Encoding.UTF8.GetString(glsl.Sourcebytes));
+                    variant0Source.AppendLine("// ---------  GLSL source end  --------- ");
+                }
+                else if (gpuSource is VulkanSource spirv && !spirv.HasEmptySource() && SpirvDecompiler is not null)
+                {
+                    variant0Source.AppendLine("// --------- SPIRV -> HLSL begin --------- ");
+                    variant0Source.Append(SpirvDecompiler.Invoke(spirv.GetSpirvBytes()));
+                    variant0Source.AppendLine("// ---------  SPIRV -> HLSL end  --------- ");
+                }
+            }
 
             if (!hasParameters)
             {
@@ -603,6 +624,18 @@ public sealed class ShaderExtract
         {
             writer.WriteLine();
             WriteVariantParameters(shader.SfBlocks, shader.ParamBlocks, shader.ChannelBlocks, writer, perConditionParameters);
+        }
+
+        if (variant0Source.Length > 0)
+        {
+            writer.WriteLine();
+
+            foreach (var line in variant0Source.ToString().Split(new string[] { "\n", "\r\n" }, StringSplitOptions.None))
+            {
+                writer.WriteLine(line);
+            }
+
+            writer.WriteLine();
         }
 
         WriteAttributes(shader.SfBlocks, writer, attributesDisect, perConditionAttributes);

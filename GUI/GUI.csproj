@@ -39,6 +39,11 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="SpirvReflector">
+      <HintPath>SpirvReflector.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
     <Compile Update="Controls\GLViewerTrackBarControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
