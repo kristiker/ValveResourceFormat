@@ -584,15 +584,15 @@ public sealed class ShaderExtract
                 var gpuSource = zFrame.GpuSources[0];
                 if (gpuSource is GlslSource glsl)
                 {
-                    variant0Source.AppendLine("// --------- GLSL source begin. --------- ");
+                    variant0Source.AppendLine("// --------- GLSL source begin --------- ");
                     variant0Source.Append(Encoding.UTF8.GetString(glsl.Sourcebytes));
-                    variant0Source.AppendLine("// ---------  GLSL source end.  --------- ");
+                    variant0Source.AppendLine("// ---------  GLSL source end  --------- ");
                 }
                 else if (gpuSource is VulkanSource spirv && !spirv.HasEmptySource() && SpirvDecompiler is not null)
                 {
-                    variant0Source.AppendLine("// --------- SPIRV -> HLSL begin. --------- ");
+                    variant0Source.AppendLine("// --------- SPIRV -> HLSL begin --------- ");
                     variant0Source.Append(SpirvDecompiler.Invoke(spirv.GetSpirvBytes()));
-                    variant0Source.AppendLine("// ---------  SPIRV -> HLSL end.  --------- ");
+                    variant0Source.AppendLine("// ---------  SPIRV -> HLSL end  --------- ");
                 }
             }
 
