@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using OpenTK.Graphics.OpenGL;
@@ -29,7 +29,10 @@ namespace GUI.Types.Renderer
         private static partial Regex AmdGlslError();
 
         private readonly Dictionary<uint, Shader> CachedShaders = new();
-        public int ShaderCount => CachedShaders.Count;
+        private readonly Dictionary<uint, Shader> CachedShaders1 = new();
+        private readonly Dictionary<string, Shader> CachedShaders2 = new();
+
+        public (int, int, int) ShaderCount => (CachedShaders.Count, CachedShaders1.Count, CachedShaders2.Count);
         private readonly Dictionary<string, HashSet<string>> ShaderDefines = new();
 
         private static IReadOnlyDictionary<string, byte> EmptyArgs { get; } = new Dictionary<string, byte>(0);
@@ -46,14 +49,10 @@ namespace GUI.Types.Renderer
             var shaderFileName = GetShaderFileByName(shaderName);
             arguments ??= EmptyArgs;
 
-            if (ShaderDefines.ContainsKey(shaderName))
+            var cachedShader = GetShader(shaderName, arguments);
+            if (cachedShader != null)
             {
-                var shaderCacheHash = CalculateShaderCacheHash(shaderName, arguments);
-
-                if (CachedShaders.TryGetValue(shaderCacheHash, out var cachedShader))
-                {
-                    return cachedShader;
-                }
+                return cachedShader;
             }
 
             int shaderProgram = -1;
@@ -114,10 +113,16 @@ namespace GUI.Types.Renderer
 
                 ShaderDefines[shaderName] = defines;
                 var newShaderCacheHash = CalculateShaderCacheHash(shaderName, arguments);
-
                 CachedShaders[newShaderCacheHash] = shader;
 
-                Console.WriteLine($"Shader {newShaderCacheHash} ('{shaderName}' as '{shaderFileName}') ({string.Join(", ", arguments.Keys)}) compiled and linked succesfully");
+                var newShaderCacheHash2 = CalculateShaderCacheHashNew(shaderName, arguments);
+                CachedShaders1[newShaderCacheHash2] = shader;
+
+                var idString = GetShaderIdString(shaderName, arguments);
+                CachedShaders2[idString] = shader;
+
+                var paramsDescription = GetShaderIdString(shaderName, arguments, pretty: true);
+                Console.WriteLine($"Shader {newShaderCacheHash} ('{shaderName}' as '{shaderFileName}') ({paramsDescription}) compiled and linked succesfully");
                 return shader;
             }
             catch (InvalidProgramException)
@@ -357,6 +362,8 @@ namespace GUI.Types.Renderer
 
             ShaderDefines.Clear();
             CachedShaders.Clear();
+            CachedShaders1.Clear();
+            CachedShaders2.Clear();
         }
 
         protected virtual void Dispose(bool disposing)
@@ -376,13 +383,50 @@ namespace GUI.Types.Renderer
             GC.SuppressFinalize(this);
         }
 
+        private IEnumerable<KeyValuePair<string, byte>> SortAndFilterArguments(string shaderName, IReadOnlyDictionary<string, byte> arguments)
+        {
+            return arguments
+                .Where(p => ShaderDefines[shaderName].Contains(p.Key))
+                .OrderBy(p => p.Key);
+        }
+
+        private string GetShaderIdString(string shaderName, IReadOnlyDictionary<string, byte> arguments, bool pretty = false)
+        {
+            var sb = new StringBuilder(pretty ? string.Empty : shaderName + '-');
+            var first = true;
+
+            foreach (var param in SortAndFilterArguments(shaderName, arguments))
+            {
+                if (!first && pretty)
+                {
+                    sb.Append(", ");
+                }
+
+                if (param.Value > 0)
+                {
+                    sb.Append(param.Key);
+                    if (param.Value > 1)
+                    {
+                        sb.Append('=');
+                        sb.Append(param.Value);
+                    }
+                }
+
+                if (first)
+                {
+                    first = false;
+                }
+            }
+
+            return sb.ToString();
+        }
+
         private uint CalculateShaderCacheHash(string shaderName, IReadOnlyDictionary<string, byte> arguments)
         {
             var shaderCacheHashString = new StringBuilder();
             shaderCacheHashString.AppendLine(shaderName);
 
             var parameters = ShaderDefines[shaderName].Intersect(arguments.Keys);
-
             foreach (var key in parameters)
             {
                 shaderCacheHashString.AppendLine(key);
@@ -390,6 +434,34 @@ namespace GUI.Types.Renderer
             }
 
             return MurmurHash2.Hash(shaderCacheHashString.ToString(), ShaderSeed);
+        }
+
+        private uint CalculateShaderCacheHashNew(string shaderName, IReadOnlyDictionary<string, byte> arguments)
+        {
+            return MurmurHash2.Hash(GetShaderIdString(shaderName, arguments), ShaderSeed);
+        }
+
+        private Shader GetShader(string shaderName, IReadOnlyDictionary<string, byte> arguments)
+        {
+            if (!ShaderDefines.ContainsKey(shaderName))
+            {
+                return null;
+            }
+
+            CachedShaders.TryGetValue(CalculateShaderCacheHash(shaderName, arguments), out var shader);
+            CachedShaders1.TryGetValue(CalculateShaderCacheHashNew(shaderName, arguments), out var shader1);
+            var idString = GetShaderIdString(shaderName, arguments);
+            CachedShaders2.TryGetValue(idString, out var shader2);
+            if (shader is null && shader2 is { })
+            {
+                Console.WriteLine("Bad hash case! " + idString);
+            }
+            else if (shader is { } && shader2 is null)
+            {
+                Console.WriteLine("Unwanted collision! " + idString);
+            }
+
+            return shader2;
         }
 
 #if DEBUG
