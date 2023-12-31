@@ -562,6 +562,8 @@ namespace GUI.Types.Viewers
                 BackColor = Color.Black,
             };
 
+            control.InitGpuDecoder(vrfGuiContext, resource);
+
             control.SetImage(
                 bitmap,
                 Path.GetFileNameWithoutExtension(vrfGuiContext.FileName),

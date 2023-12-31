@@ -361,6 +361,8 @@ namespace GUI.Types.Renderer
                     return "particle_trail";
                 case "vrf.morph_composite":
                     return "morph_composite";
+                case "vrf.texture_decode":
+                    return "texture_decoder";
                 case "sky.vfx":
                     return "sky";
                 case "tools_sprite.vfx":
