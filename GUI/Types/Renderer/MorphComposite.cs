@@ -9,7 +9,7 @@ using ValveResourceFormat.Serialization;
 
 namespace GUI.Types.Renderer
 {
-    class MorphComposite
+    class MorphComposite : IDisposable
     {
         private const float VertexOffset = 2f / 2048f;
         private const int VertexSize = 16;
@@ -85,7 +85,7 @@ namespace GUI.Types.Renderer
         {
             using var _ = CompositeTexture.BindingContext();
 
-            GL.TexImage2D(CompositeTexture.Target, 0, PixelInternalFormat.Rgb16f, 2048, 2048, 0, PixelFormat.Rgba, PixelType.Float, 0);
+            GL.TexImage2D(CompositeTexture.Target, 0, PixelInternalFormat.Rgb16f, 2048, 2048, 0, PixelFormat.Rgba, PixelType.HalfFloat, IntPtr.Zero);
 
             CompositeTexture.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
             CompositeTexture.SetWrapMode(TextureWrapMode.ClampToEdge);
@@ -319,6 +319,12 @@ namespace GUI.Types.Renderer
                     usedRects.Remove(rect);
                 }
             }
+        }
+
+        public void Dispose()
+        {
+            CompositeTexture.Dispose();
+            GL.DeleteFramebuffer(frameBuffer);
         }
     }
 }
