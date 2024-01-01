@@ -9,7 +9,7 @@ using ValveResourceFormat.Serialization;
 
 namespace GUI.Types.Renderer
 {
-    class MorphComposite : IDisposable
+    class MorphComposite
     {
         private const float VertexOffset = 2f / 2048f;
         private const int VertexSize = 16;
@@ -319,12 +319,6 @@ namespace GUI.Types.Renderer
                     usedRects.Remove(rect);
                 }
             }
-        }
-
-        public void Dispose()
-        {
-            CompositeTexture.Dispose();
-            GL.DeleteFramebuffer(frameBuffer);
         }
     }
 }

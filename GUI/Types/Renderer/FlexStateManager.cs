@@ -1,9 +1,7 @@
 using GUI.Utils;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.ResourceTypes.ModelFlex;
 
 namespace GUI.Types.Renderer
 {
