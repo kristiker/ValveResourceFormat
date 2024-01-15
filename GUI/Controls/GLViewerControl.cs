@@ -356,7 +356,10 @@ namespace GUI.Controls
 #endif
 
         public Framebuffer GLDefaultFramebuffer;
+        public float ResolutionScale = 1.5f;
+        public (int Width, int Height) GLControlSizeScaled => ((int)(GLControl.Width * ResolutionScale), (int)(GLControl.Height * ResolutionScale));
         public Framebuffer MainFramebuffer;
+        public Framebuffer MsaaResoloveFramebuffer;
         private int MaxSamples;
         private int NumSamples => Math.Max(1, Math.Min(Settings.Config.AntiAliasingSamples, MaxSamples));
 
@@ -390,11 +393,18 @@ namespace GUI.Controls
 
             try
             {
-                MainFramebuffer = Framebuffer.Prepare(GLControl.Width,
-                    GLControl.Height,
+                MainFramebuffer = Framebuffer.Prepare(GLControlSizeScaled.Width,
+                    GLControlSizeScaled.Height,
                     NumSamples,
                     new(PixelInternalFormat.R11fG11fB10f, PixelFormat.Rgb, PixelType.UnsignedInt),
                     Framebuffer.DepthAttachmentFormat.Depth32F
+                );
+
+                MsaaResoloveFramebuffer = Framebuffer.Prepare(MainFramebuffer.Width,
+                    MainFramebuffer.Height,
+                    0,
+                    MainFramebuffer.ColorFormat,
+                    null
                 );
 
                 GLLoad?.Invoke(this, e);
@@ -476,11 +486,28 @@ namespace GUI.Controls
                 MainFramebuffer.Bind(FramebufferTarget.ReadFramebuffer);
                 GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
 
+                var (sourceWidth, sourceHeight) = (MainFramebuffer.Width, MainFramebuffer.Height);
+                var (w, h) = (GLControl.Width, GLControl.Height);
+                var filter = BlitFramebufferFilter.Nearest;
+
+                // can't scale msaa up/down, need to resolve first
+                if (ResolutionScale != 1.0f)
+                {
+                    MsaaResoloveFramebuffer.Bind(FramebufferTarget.DrawFramebuffer);
+                    GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
+                    GL.BlitFramebuffer(0, 0, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+
+                    filter = BlitFramebufferFilter.Linear;
+                    (sourceWidth, sourceHeight) = (MsaaResoloveFramebuffer.Width, MsaaResoloveFramebuffer.Height);
+                    MsaaResoloveFramebuffer.Bind(FramebufferTarget.ReadFramebuffer);
+                    GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                }
+
                 GLDefaultFramebuffer.Bind(FramebufferTarget.DrawFramebuffer);
                 GL.DrawBuffer(DrawBufferMode.Back);
 
-                var (w, h) = (GLControl.Width, GLControl.Height);
-                GL.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+                GL.BlitFramebuffer(0, 0, sourceWidth, sourceHeight, 0, 0, w, h, ClearBufferMask.ColorBufferBit, filter);
+
                 GLDefaultFramebuffer.Bind(FramebufferTarget.Framebuffer);
                 GL.Finish();
             }
@@ -513,19 +540,22 @@ namespace GUI.Controls
 
         private void HandleResize()
         {
-            var (w, h) = (GLControl.Width, GLControl.Height);
+            var (w, h) = (GLControlSizeScaled.Width, GLControlSizeScaled.Height);
 
             if (w <= 0 || h <= 0)
             {
                 return;
             }
 
-            GLDefaultFramebuffer.Resize(w, h);
+            GLDefaultFramebuffer.Resize(GLControl.Width, GLControl.Height);
+
             MainFramebuffer.Resize(w, h, NumSamples);
+            MsaaResoloveFramebuffer.Resize(w, h);
 
             if (MainFramebuffer.InitialStatus == FramebufferErrorCode.FramebufferUndefined)
             {
                 var status = MainFramebuffer.Initialize();
+                MsaaResoloveFramebuffer.Initialize();
 
                 if (status != FramebufferErrorCode.FramebufferComplete)
                 {
