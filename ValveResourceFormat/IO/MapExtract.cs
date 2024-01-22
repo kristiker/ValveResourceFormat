@@ -1,4 +1,3 @@
-using SharpGLTF.Schema2;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,7 +10,6 @@ using ValveResourceFormat.Blocks;
 using ValveResourceFormat.IO.ContentFormats.DmxModel;
 using ValveResourceFormat.IO.ContentFormats.ValveMap;
 using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Utils;
 
@@ -225,6 +223,95 @@ public sealed class MapExtract
         };
     }
 
+    public ContentFile ToContentFile()
+    {
+        var vmap = new ContentFile
+        {
+            Data = Encoding.UTF8.GetBytes(ToValveMap()),
+            FileName = LumpFolder + ".vmap",
+        };
+
+        var physData = LoadWorldPhysics();
+        if (physData != null)
+        {
+            FolderExtractFilter.Add(WorldPhysicsName + "_c"); // TODO: put vphys on vmdl.AdditionalFiles
+            var physModelNames = WorldPhysicsNamesToExtract(WorldPhysicsName);
+
+            //var original = new ModelExtract(physData, physModelNames.Original).ToContentFile();
+            var editable = new ModelExtract(physData, physModelNames.Editable)
+            {
+                Type = ModelExtract.ModelExtractType.Map_PhysicsToRenderMesh,
+                PhysicsToRenderMaterialNameProvider = GetToolTextureNameForCollisionTags,
+            }
+            .ToContentFile();
+
+            CreatePhysSceneNodes(physData);
+
+            //vmap.AdditionalFiles.Add(original);
+            vmap.AdditionalFiles.Add(editable);
+        }
+
+        foreach (var meshName in MeshesToExtract)
+        {
+            var meshNameCompiled = meshName + "_c";
+            using var mesh = FileLoader.LoadFile(meshNameCompiled);
+            if (mesh is not null)
+            {
+                var vmdl = new ModelExtract((Mesh)mesh.DataBlock, meshName).ToContentFile();
+                FolderExtractFilter.Add(meshNameCompiled); // TODO: put vmesh on vmdl.AdditionalFiles
+                vmap.AdditionalFiles.Add(vmdl);
+            }
+        }
+
+        foreach (var modelName in ModelsToExtract)
+        {
+            using var model = FileLoader.LoadFile(modelName + "_c");
+            if (model is not null)
+            {
+                var data = (Model)model.DataBlock;
+
+                var hasMeshes = data.GetEmbeddedMeshesAndLoD().Any() || data.GetReferenceMeshNamesAndLoD().Any();
+                var hasPhysics = data.GetEmbeddedPhys() is not null || data.GetReferencedPhysNames().Any();
+                var isJustPhysics = hasPhysics && !hasMeshes;
+
+                ModelEntityAssociations.TryGetValue(modelName, out var associatedEntityClass);
+                var toolTexture = GetToolTextureForEntity(associatedEntityClass);
+
+                var modelExtract = new ModelExtract(model, FileLoader)
+                {
+                    Type = isJustPhysics
+                        ? ModelExtract.ModelExtractType.Map_PhysicsToRenderMesh
+                        : ModelExtract.ModelExtractType.Default,
+                    PhysicsToRenderMaterialNameProvider = (_) => toolTexture,
+                };
+
+                var vmdl = modelExtract.ToContentFile();
+                vmap.AdditionalFiles.Add(vmdl);
+            }
+        }
+
+        // Export all gathered vsnap files
+        foreach (var snapshotName in SnapshotsToExtract)
+        {
+            using var snapshot = FileLoader.LoadFile(snapshotName + "_c");
+            if (snapshot is not null)
+            {
+                var snapshotExtract = new SnapshotExtract(snapshot);
+                var vsnap = snapshotExtract.ToContentFile();
+                vsnap.FileName = snapshotName;
+                vmap.AdditionalFiles.Add(vsnap);
+            }
+        }
+
+        vmap.AdditionalFiles.AddRange(PreExportedFragments);
+
+        // Add these files so they can be filtered out in folder extract
+        vmap.AdditionalFiles.AddRange(FolderExtractFilter.Select(r => new ContentFile { FileName = r }));
+
+        return vmap;
+    }
+
+
     private void CreatePhysSceneNodes(PhysAggregateData phys)
     {
         var hammerMeshBuilder = new HammerMeshBuilder();
@@ -298,98 +385,8 @@ public sealed class MapExtract
             }
         }
 
-        CMapMesh Mesh = new CMapMesh
-        {
-            MeshData = hammerMeshBuilder.GenerateMesh()
-        };
-
-        MapDocument.World.Children.Add(Mesh);
-    }
-
-    public ContentFile ToContentFile()
-    {
-        var vmap = new ContentFile
-        {
-            Data = Encoding.UTF8.GetBytes(ToValveMap()),
-            FileName = LumpFolder + ".vmap",
-        };
-
-        var physData = LoadWorldPhysics();
-        if (physData != null)
-        {
-            FolderExtractFilter.Add(WorldPhysicsName + "_c"); // TODO: put vphys on vmdl.AdditionalFiles
-            var physModelNames = WorldPhysicsNamesToExtract(WorldPhysicsName);
-
-            //var original = new ModelExtract(physData, physModelNames.Original).ToContentFile();
-            var editable = new ModelExtract(physData, physModelNames.Editable)
-            {
-                Type = ModelExtract.ModelExtractType.Map_PhysicsToRenderMesh,
-                PhysicsToRenderMaterialNameProvider = GetToolTextureNameForCollisionTags,
-            }
-            .ToContentFile();
-            //vmap.AdditionalFiles.Add(original);
-            vmap.AdditionalFiles.Add(editable);
-
-        }
-
-        foreach (var meshName in MeshesToExtract)
-        {
-            var meshNameCompiled = meshName + "_c";
-            using var mesh = FileLoader.LoadFile(meshNameCompiled);
-            if (mesh is not null)
-            {
-                var vmdl = new ModelExtract((ResourceTypes.Mesh)mesh.DataBlock, meshName).ToContentFile();
-                FolderExtractFilter.Add(meshNameCompiled); // TODO: put vmesh on vmdl.AdditionalFiles
-                vmap.AdditionalFiles.Add(vmdl);
-            }
-        }
-
-        foreach (var modelName in ModelsToExtract)
-        {
-            using var model = FileLoader.LoadFile(modelName + "_c");
-            if (model is not null)
-            {
-                var data = (Model)model.DataBlock;
-
-                var hasMeshes = data.GetEmbeddedMeshesAndLoD().Any() || data.GetReferenceMeshNamesAndLoD().Any();
-                var hasPhysics = data.GetEmbeddedPhys() is not null || data.GetReferencedPhysNames().Any();
-                var isJustPhysics = hasPhysics && !hasMeshes;
-
-                ModelEntityAssociations.TryGetValue(modelName, out var associatedEntityClass);
-                var toolTexture = GetToolTextureForEntity(associatedEntityClass);
-
-                var modelExtract = new ModelExtract(model, FileLoader)
-                {
-                    Type = isJustPhysics
-                        ? ModelExtract.ModelExtractType.Map_PhysicsToRenderMesh
-                        : ModelExtract.ModelExtractType.Default,
-                    PhysicsToRenderMaterialNameProvider = (_) => toolTexture,
-                };
-
-                var vmdl = modelExtract.ToContentFile();
-                vmap.AdditionalFiles.Add(vmdl);
-            }
-        }
-
-        // Export all gathered vsnap files
-        foreach (var snapshotName in SnapshotsToExtract)
-        {
-            using var snapshot = FileLoader.LoadFile(snapshotName + "_c");
-            if (snapshot is not null)
-            {
-                var snapshotExtract = new SnapshotExtract(snapshot);
-                var vsnap = snapshotExtract.ToContentFile();
-                vsnap.FileName = snapshotName;
-                vmap.AdditionalFiles.Add(vsnap);
-            }
-        }
-
-        vmap.AdditionalFiles.AddRange(PreExportedFragments);
-
-        // Add these files so they can be filtered out in folder extract
-        vmap.AdditionalFiles.AddRange(FolderExtractFilter.Select(r => new ContentFile { FileName = r }));
-
-        return vmap;
+        var hammermesh = hammerMeshBuilder.GenerateMesh();
+        MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
     }
 
     public string ToValveMap()
@@ -405,7 +402,6 @@ public sealed class MapExtract
         if (!string.IsNullOrEmpty(WorldPhysicsName))
         {
             var physModelNames = WorldPhysicsNamesToExtract(WorldPhysicsName);
-            CreatePhysSceneNodes(LoadWorldPhysics());
 
             /*MapDocument.World.Children.Add(new CMapEntity() { Name = "World Physics", EditorOnly = true }
                 .WithClassName("prop_static")
@@ -625,6 +621,7 @@ public sealed class MapExtract
 
             var aggregateHasTransforms = fragmentTransforms.Length > 0;
 
+            // maybe not load and export model here
             using (var modelRes = FileLoader.LoadFile(modelName + "_c"))
             {
                 // TODO: reference meshes
@@ -641,6 +638,8 @@ public sealed class MapExtract
 
                 PreExportedFragments.AddRange(ModelExtract.GetContentFiles_DrawCallSplit(modelRes, FileLoader, drawCenters, drawCalls.Length));
             }
+
+
 
             BaseEntity NewPropStatic(string modelName) => new CMapEntity()
                 .WithClassName("prop_static")

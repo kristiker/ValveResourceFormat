@@ -35,7 +35,6 @@ namespace ValveResourceFormat.IO
             mesh.FaceData.Streams.Add(faceFlags);
 
             var textureCoords = CreateStream<Datamodel.Vector2Array, Vector2>(1, "texcoord:0");
-            var textureCoords4 = CreateStream<Datamodel.Vector4Array, Vector4>(1, "texcoord:4");
             var normals = CreateStream<Datamodel.Vector3Array, Vector3>(1, "normal:0");
             var tangent = CreateStream<Datamodel.Vector4Array, Vector4>(1, "tangent:0");
             mesh.FaceVertexData.Streams.Add(textureCoords);
@@ -62,13 +61,13 @@ namespace ValveResourceFormat.IO
             {
                 //all dummy data for now since only material is good enough for exporting tool brushes
                 mesh.EdgeData.Size++;
+                textureCoords.Data.Add(new Vector2(0));
                 normals.Data.Add(new Vector3(0, -0.44f, 0.89f));
                 tangent.Data.Add(new Vector4(1, 0, 0, -1));
+                textureCoords.Data.Add(new Vector2(1));
                 normals.Data.Add(new Vector3(0, -0.44f, 0.89f));
                 tangent.Data.Add(new Vector4(1, 0, 0, -1));
                 edgeFlags.Data.Add((int)EdgeFlag.None);
-                textureCoords.Data.Add(new Vector2(0, 0));
-                textureCoords.Data.Add(new Vector2(0, 1));
             }
 
             int prevHalfEdge = -1;
