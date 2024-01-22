@@ -1,6 +1,6 @@
 using System.Numerics;
-using Datamodel.Format;
 using DMElement = Datamodel.Element;
+using Datamodel.Format;
 
 namespace ValveResourceFormat.IO.ContentFormats.ValveMap;
 
@@ -247,7 +247,7 @@ internal class CDmePolygonMesh : MapNode
     public Datamodel.IntArray VertexDataIndices { get; } = [];
 
     /// <summary>
-    /// The origin (or destination, I'm not sure) vertex of this edge.
+    /// The destination vertex of this edge.
     /// </summary>
     public Datamodel.IntArray EdgeVertexIndices { get; } = [];
 

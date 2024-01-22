@@ -11,12 +11,12 @@ using Datamodel;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.IO.ContentFormats.DmxModel;
 using ValveResourceFormat.ResourceTypes;
-using ValveResourceFormat.ResourceTypes.ModelAnimation;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics;
+using RnShapes = ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Serialization.KeyValues;
 using ValveResourceFormat.Utils;
-using RnShapes = ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
+using ValveResourceFormat.ResourceTypes.ModelAnimation;
 
 
 namespace ValveResourceFormat.IO;
@@ -72,9 +72,9 @@ public class ModelExtract
     {
         ArgumentNullException.ThrowIfNull(fileLoader);
 
-        this.fileLoader = fileLoader;
         this.modelResource = modelResource;
-        model = (Model)modelResource.DataBlock;
+        this.model = (Model)modelResource.DataBlock;
+        this.fileLoader = fileLoader;
 
         var refPhysics = model.GetReferencedPhysNames().FirstOrDefault();
         if (refPhysics != null)
@@ -777,11 +777,27 @@ public class ModelExtract
     public static byte[] ToDmxMesh(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures = null,
         bool splitDrawCallsIntoSeparateSubmeshes = false)
     {
+        using var dmx = ConvertMeshToDmxMesh(mesh, name, materialInputSignatures, splitDrawCallsIntoSeparateSubmeshes);
+        using var stream = new MemoryStream();
+        dmx.Save(stream, "keyvalues2", 4);
+
+        return stream.ToArray();
+    }
+
+    public static Datamodel.Datamodel ToDmxMeshReturn(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures = null,
+    bool splitDrawCallsIntoSeparateSubmeshes = false)
+    {
+        var dmx = ConvertMeshToDmxMesh(mesh, name, materialInputSignatures, splitDrawCallsIntoSeparateSubmeshes);
+
+        return dmx;
+    }
+
+    private static Datamodel.Datamodel ConvertMeshToDmxMesh(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures, bool splitDrawCallsIntoSeparateSubmeshes)
+    {
         var mdat = mesh.Data;
         var mbuf = mesh.VBIB;
         var indexBuffers = mbuf.IndexBuffers.Select(ib => new Lazy<int[]>(() => GltfModelExporter.ReadIndices(ib, 0, (int)ib.ElementCount, 0))).ToArray();
-
-        using var dmx = new Datamodel.Datamodel("model", 22);
+        var dmx = new Datamodel.Datamodel("model", 22);
         DmxModelMultiVertexBufferLayout(name, mbuf.VertexBuffers.Count, out var dmeModel, out var dags, out var dmeVertexBuffers);
 
         IKeyValueCollection materialInputSignature = null;
@@ -840,10 +856,7 @@ public class ModelExtract
         }
 
         TieElementRoot(dmx, dmeModel);
-        using var stream = new MemoryStream();
-        dmx.Save(stream, "keyvalues2", 4);
-
-        return stream.ToArray();
+        return dmx;
     }
 
     private static DmeModel BuildDmeDagSkeleton(Skeleton skeleton, out DmeTransform[] transforms)

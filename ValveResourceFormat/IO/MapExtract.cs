@@ -1,3 +1,4 @@
+using SharpGLTF.Schema2;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -7,8 +8,10 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using ValveResourceFormat.Blocks;
+using ValveResourceFormat.IO.ContentFormats.DmxModel;
 using ValveResourceFormat.IO.ContentFormats.ValveMap;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Utils;
 
@@ -222,6 +225,87 @@ public sealed class MapExtract
         };
     }
 
+    private void CreatePhysSceneNodes(PhysAggregateData phys)
+    {
+        var hammerMeshBuilder = new HammerMeshBuilder();
+
+        for (var p = 0; p < phys.Parts.Length; p++)
+        {
+            var shape = phys.Parts[p].Shape;
+
+            //// Hulls
+            //foreach (var hull in shape.Hulls)
+            //{
+            //    var collisionAttributeIndex = hull.CollisionAttributeIndex;
+            //    //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
+            //
+            //    var vertOffset = verts[collisionAttributeIndex].Count / 3;
+            //    foreach (var v in hull.Shape.VertexPositions)
+            //    {
+            //        var vec = v;
+            //        if (bindPose.Length != 0)
+            //        {
+            //            vec = Vector3.Transform(vec, bindPose[p]);
+            //        }
+            //
+            //        verts[collisionAttributeIndex].Add(vec.X);
+            //        verts[collisionAttributeIndex].Add(vec.Y);
+            //        verts[collisionAttributeIndex].Add(vec.Z);
+            //    }
+            //
+            //    foreach (var face in hull.Shape.Faces)
+            //    {
+            //        var startEdge = face.Edge;
+            //
+            //        for (var edge = hull.Shape.Edges[startEdge].Next; edge != startEdge;)
+            //        {
+            //            var nextEdge = hull.Shape.Edges[edge].Next;
+            //
+            //            if (nextEdge == startEdge)
+            //            {
+            //                break;
+            //            }
+            //
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
+            //
+            //            edge = nextEdge;
+            //        }
+            //    }
+            //}
+
+            // Meshes
+            foreach (var mesh in shape.Meshes)
+            {
+
+                var collisionAttributeIndex = mesh.CollisionAttributeIndex;
+                //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
+
+                foreach (var Vertex in mesh.Shape.Vertices)
+                {
+                    hammerMeshBuilder.AddVertex(Vertex);
+                }
+
+                foreach (var Face in mesh.Shape.Triangles)
+                {
+                    var Indices = new int[] { Face.X, Face.Y, Face.Z };
+                    hammerMeshBuilder.AddFace(Indices);
+                }
+            }
+        }
+
+        CMapMesh Mesh = new CMapMesh
+        {
+            MeshData = hammerMeshBuilder.GenerateMesh()
+        };
+
+        MapDocument.World.Children.Add(Mesh);
+    }
+
     public ContentFile ToContentFile()
     {
         var vmap = new ContentFile
@@ -245,6 +329,7 @@ public sealed class MapExtract
             .ToContentFile();
             //vmap.AdditionalFiles.Add(original);
             vmap.AdditionalFiles.Add(editable);
+
         }
 
         foreach (var meshName in MeshesToExtract)
@@ -253,7 +338,7 @@ public sealed class MapExtract
             using var mesh = FileLoader.LoadFile(meshNameCompiled);
             if (mesh is not null)
             {
-                var vmdl = new ModelExtract((Mesh)mesh.DataBlock, meshName).ToContentFile();
+                var vmdl = new ModelExtract((ResourceTypes.Mesh)mesh.DataBlock, meshName).ToContentFile();
                 FolderExtractFilter.Add(meshNameCompiled); // TODO: put vmesh on vmdl.AdditionalFiles
                 vmap.AdditionalFiles.Add(vmdl);
             }
@@ -320,6 +405,7 @@ public sealed class MapExtract
         if (!string.IsNullOrEmpty(WorldPhysicsName))
         {
             var physModelNames = WorldPhysicsNamesToExtract(WorldPhysicsName);
+            CreatePhysSceneNodes(LoadWorldPhysics());
 
             /*MapDocument.World.Children.Add(new CMapEntity() { Name = "World Physics", EditorOnly = true }
                 .WithClassName("prop_static")
@@ -539,7 +625,6 @@ public sealed class MapExtract
 
             var aggregateHasTransforms = fragmentTransforms.Length > 0;
 
-            // maybe not load and export model here
             using (var modelRes = FileLoader.LoadFile(modelName + "_c"))
             {
                 // TODO: reference meshes
@@ -556,7 +641,6 @@ public sealed class MapExtract
 
                 PreExportedFragments.AddRange(ModelExtract.GetContentFiles_DrawCallSplit(modelRes, FileLoader, drawCenters, drawCalls.Length));
             }
-
 
             BaseEntity NewPropStatic(string modelName) => new CMapEntity()
                 .WithClassName("prop_static")
@@ -974,4 +1058,5 @@ public sealed class MapExtract
 
         return vGammaColor;
     }
+
 }
