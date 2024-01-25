@@ -8,14 +8,13 @@ using static ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull;
 using static ValveResourceFormat.IO.HammerMeshBuilder;
 using System.ComponentModel;
 using Plankton;
+using System.Linq;
 
 namespace ValveResourceFormat.IO
 {
     internal class HammerMeshBuilder
     {
         public PlanktonMesh pMesh = new();
-
-        public List<string> Materials { get; set; } = new();
 
         [Flags]
         public enum EdgeFlag
@@ -59,18 +58,12 @@ namespace ValveResourceFormat.IO
 
             for (var i = 0; i < pMesh.Halfedges.Count / 2; i++)
             {
-                //all dummy data for now since only material is good enough for exporting tool brushes
                 mesh.EdgeData.Size++;
-                textureCoords.Data.Add(new Vector2(0));
-                normals.Data.Add(new Vector3(0, -0.44f, 0.89f));
-                tangent.Data.Add(new Vector4(1, 0, 0, -1));
-                textureCoords.Data.Add(new Vector2(1));
-                normals.Data.Add(new Vector3(0, -0.44f, 0.89f));
-                tangent.Data.Add(new Vector4(1, 0, 0, -1));
                 edgeFlags.Data.Add((int)EdgeFlag.None);
             }
 
             int prevHalfEdge = -1;
+
             for (var i = 0; i < pMesh.Halfedges.Count; i++)
             {
                 var halfEdge = pMesh.Halfedges[i];
@@ -101,7 +94,25 @@ namespace ValveResourceFormat.IO
                 prevHalfEdge = i;
 
                 mesh.FaceVertexData.Size += 1;
+
+                if (halfEdge.AdjacentFace != -1)
+                {
+                    var normal = CalculateFaceNormal(pMesh, i);
+                    var tangents = CalculateTangentFromNormal(normal);
+                    normals.Data.Add(normal);
+                    tangent.Data.Add(tangents);
+
+                }
+                else
+                {
+                    normals.Data.Add(new Vector3(0, 0, 0));
+                    tangent.Data.Add(new Vector4(0, 0, 0, 0));
+                }
+
+                textureCoords.Data.Add(new Vector2(0));
             }
+
+            mesh.Materials.Add("test");
 
             foreach (var Face in pMesh.Faces)
             {
@@ -109,14 +120,15 @@ namespace ValveResourceFormat.IO
                 mesh.FaceDataIndices.Add(faceDataIndex);
                 mesh.FaceData.Size++;
 
-                var materialIndex = mesh.Materials.IndexOf(pMesh.Vertices[pMesh.Halfedges[Face.FirstHalfedge].StartVertex].material);
-                if (materialIndex == -1)
-                {
-                    materialIndex = mesh.Materials.Count;
-                    mesh.Materials.Add(pMesh.Vertices[pMesh.Halfedges[Face.FirstHalfedge].StartVertex].material);
-                }
+                //var materialIndex = mesh.Materials.IndexOf(Face.Material);
+                //if (materialIndex == -1 && Face.Material != null)
+                //{
+                //    materialIndex = mesh.Materials.Count;
+                //    mesh.Materials.Add(Face.Material);
+                //}
 
-                faceMaterialIndices.Data.Add(materialIndex);
+
+                faceMaterialIndices.Data.Add(0);
                 faceFlags.Data.Add(0);
 
                 mesh.FaceEdgeIndices.Add(Face.FirstHalfedge);
@@ -133,11 +145,9 @@ namespace ValveResourceFormat.IO
             pMesh.Vertices.Add(Vertex.X, Vertex.Y, Vertex.Z);
         }
 
-        public void AddFace(IEnumerable<int> Indices)
+        public void AddFace(int index1, int index2, int index3)
         {
-            VerifyIndicesWithinBounds(Indices);
-            pMesh.Faces.AddFace(Indices);
-
+            pMesh.Faces.AddFace(index1, index2, index3);
         }
 
         private bool VerifyIndicesWithinBounds(IEnumerable<int> indices)
@@ -159,6 +169,29 @@ namespace ValveResourceFormat.IO
             {
                 mesh.SubdivisionData.SubdivisionLevels.Add(0);
             }
+        }
+
+        private static Vector3 CalculateFaceNormal(PlanktonMesh mesh, int i)
+        {
+            var parentFaceHalfEdges = new int[] { i, mesh.Halfedges[i].NextHalfedge, mesh.Halfedges[i].PrevHalfedge };
+            var v1 = mesh.Vertices[mesh.Halfedges[parentFaceHalfEdges[0]].StartVertex];
+            var v2 = mesh.Vertices[mesh.Halfedges[parentFaceHalfEdges[1]].StartVertex];
+            var v3 = mesh.Vertices[mesh.Halfedges[parentFaceHalfEdges[2]].StartVertex];
+
+            var p1 = new Vector3(v1.X, v1.Y, v1.Z);
+            var p2 = new Vector3(v2.X, v2.Y, v2.Z);
+            var p3 = new Vector3(v3.X, v3.Y, v3.Z);
+
+            var normal = Vector3.Normalize(Vector3.Cross(p2 - p1, p3 - p1));
+
+            return normal;
+        }
+
+        public static Vector4 CalculateTangentFromNormal(Vector3 normal)
+        {
+            Vector3 tangent1 = Vector3.Cross(normal, new Vector3(0, 1, 0));
+            Vector3 tangent2 = Vector3.Cross(normal, new Vector3(0, 0, 1));
+            return new Vector4(tangent1.Length() > tangent2.Length() ? tangent1 : tangent2, 1.0f);
         }
 
         public static CDmePolygonMeshDataStream<T> CreateStream<TArray, T>(int dataStateFlags, string name, params T[] data)

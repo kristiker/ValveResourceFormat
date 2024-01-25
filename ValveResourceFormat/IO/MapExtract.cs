@@ -244,9 +244,6 @@ public sealed class MapExtract
                 PhysicsToRenderMaterialNameProvider = GetToolTextureNameForCollisionTags,
             }
             .ToContentFile();
-
-            CreatePhysSceneNodes(physData);
-
             //vmap.AdditionalFiles.Add(original);
             vmap.AdditionalFiles.Add(editable);
         }
@@ -311,84 +308,6 @@ public sealed class MapExtract
         return vmap;
     }
 
-
-    private void CreatePhysSceneNodes(PhysAggregateData phys)
-    {
-        var hammerMeshBuilder = new HammerMeshBuilder();
-
-        for (var p = 0; p < phys.Parts.Length; p++)
-        {
-            var shape = phys.Parts[p].Shape;
-
-            //// Hulls
-            //foreach (var hull in shape.Hulls)
-            //{
-            //    var collisionAttributeIndex = hull.CollisionAttributeIndex;
-            //    //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
-            //
-            //    var vertOffset = verts[collisionAttributeIndex].Count / 3;
-            //    foreach (var v in hull.Shape.VertexPositions)
-            //    {
-            //        var vec = v;
-            //        if (bindPose.Length != 0)
-            //        {
-            //            vec = Vector3.Transform(vec, bindPose[p]);
-            //        }
-            //
-            //        verts[collisionAttributeIndex].Add(vec.X);
-            //        verts[collisionAttributeIndex].Add(vec.Y);
-            //        verts[collisionAttributeIndex].Add(vec.Z);
-            //    }
-            //
-            //    foreach (var face in hull.Shape.Faces)
-            //    {
-            //        var startEdge = face.Edge;
-            //
-            //        for (var edge = hull.Shape.Edges[startEdge].Next; edge != startEdge;)
-            //        {
-            //            var nextEdge = hull.Shape.Edges[edge].Next;
-            //
-            //            if (nextEdge == startEdge)
-            //            {
-            //                break;
-            //            }
-            //
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
-            //
-            //            edge = nextEdge;
-            //        }
-            //    }
-            //}
-
-            // Meshes
-            foreach (var mesh in shape.Meshes)
-            {
-
-                var collisionAttributeIndex = mesh.CollisionAttributeIndex;
-                //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
-
-                foreach (var Vertex in mesh.Shape.Vertices)
-                {
-                    hammerMeshBuilder.AddVertex(Vertex);
-                }
-
-                foreach (var Face in mesh.Shape.Triangles)
-                {
-                    var Indices = new int[] { Face.X, Face.Y, Face.Z };
-                    hammerMeshBuilder.AddFace(Indices);
-                }
-            }
-        }
-
-        var hammermesh = hammerMeshBuilder.GenerateMesh();
-        MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
-    }
-
     public string ToValveMap()
     {
         using var datamodel = new Datamodel.Datamodel("vmap", 29);
@@ -438,6 +357,129 @@ public sealed class MapExtract
                 GatherEntitiesFromLump((EntityLump)entityLumpResource.DataBlock);
             }
         }
+
+        using (var modelRes = FileLoader.LoadFile(GetWorldPhysicsName()))
+        {
+            var mesh = ((Model)modelRes.DataBlock).GetEmbeddedMeshes().First();
+
+            HammerMeshBuilder builder = new();
+
+            var dmx = ModelExtract.ToDmxMeshReturn(mesh.Mesh, GetWorldPhysicsName() + "_c");
+            var model = (DmeModel)dmx.Root["model"];
+            var dmeDag = (DmeDag)model.JointList[0];
+
+            var vertices = (Vector3[])dmeDag.Shape.CurrentState["position$0"];
+            var indices = new List<int>();
+
+            var faceSets = (Datamodel.ElementArray)dmeDag.Shape.FaceSets;
+            foreach (var faceSet in faceSets)
+            {
+                var faces = (Datamodel.IntArray)faceSet["faces"];
+
+                foreach (var face in faces)
+                {
+                    if (face != -1)
+                    {
+                        indices.Add(face);
+                    }
+                }
+            }
+
+            foreach (var vertex in vertices)
+            {
+                builder.AddVertex(vertex);
+            }
+
+            for (var i = 0; i < indices.Count; i += 3)
+            {
+                builder.AddFace(indices[i], indices[i + 1], indices[i + 2]);
+            }
+
+            var hammermesh = builder.GenerateMesh();
+            MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
+            Console.WriteLine("ASSAsaSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS");
+        }
+        var phys = LoadWorldPhysics();
+        for (var p = 0; p < phys.Parts.Length; p++)
+        {
+            var shape = phys.Parts[p].Shape;
+
+            // Hulls
+            //foreach (var hull in shape.Hulls)
+            //{
+            //    foreach (var v in hull.Shape.VertexPositions)
+            //    {
+            //        var vec = v;
+            //        if (bindPose.Length != 0)
+            //        {
+            //            vec = Vector3.Transform(vec, bindPose[p]);
+            //        }
+            //
+            //        verts[collisionAttributeIndex].Add(vec.X);
+            //        verts[collisionAttributeIndex].Add(vec.Y);
+            //        verts[collisionAttributeIndex].Add(vec.Z);
+            //    }
+            //
+            //    foreach (var face in hull.Shape.Faces)
+            //    {
+            //        var startEdge = face.Edge;
+            //
+            //        for (var edge = hull.Shape.Edges[startEdge].Next; edge != startEdge;)
+            //        {
+            //            var nextEdge = hull.Shape.Edges[edge].Next;
+            //
+            //            if (nextEdge == startEdge)
+            //            {
+            //                break;
+            //            }
+            //
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
+            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
+            //
+            //            edge = nextEdge;
+            //        }
+            //    }
+            //}
+
+            //Meshes
+            foreach (var mesh in shape.Meshes)
+            {
+                var attributes = phys.CollisionAttributes[mesh.CollisionAttributeIndex];
+
+                var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
+                var group = attributes.GetStringProperty("m_CollisionGroupString");
+
+                var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
+                if (tooltexture != "nodraw" && tooltexture != "clip")
+                {
+                    var collisionamt = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+
+                    var hammerMeshBuilder = new HammerMeshBuilder();
+
+                    var collisionAttributeIndex = mesh.CollisionAttributeIndex;
+                    //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
+
+                    foreach (var Vertex in mesh.Shape.Vertices)
+                    {
+                        hammerMeshBuilder.AddVertex(Vertex);
+                    }
+
+                    foreach (var Face in mesh.Shape.Triangles)
+                    {
+                        hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z);
+                    }
+
+                    var hammermesh = hammerMeshBuilder.GenerateMesh();
+                    MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
+
+                }
+            }
+        }
+
 
         using var stream = new MemoryStream();
         datamodel.Save(stream, "keyvalues2", 4);
