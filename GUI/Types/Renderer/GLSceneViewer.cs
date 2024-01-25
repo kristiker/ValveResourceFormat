@@ -132,8 +132,8 @@ namespace GUI.Types.Renderer
 
         private void CreateBuffers()
         {
-            viewBuffer = new(0);
-            lightingBuffer = new(1);
+            viewBuffer = new(2);
+            lightingBuffer = new(3);
 
             Buffers = [viewBuffer, lightingBuffer];
         }
