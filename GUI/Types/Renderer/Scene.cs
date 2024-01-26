@@ -367,9 +367,11 @@ namespace GUI.Types.Renderer
                     }
                 }
 
-                if (node.LightingOrigin.HasValue && node.EnvMap is null)
+                // If no precomputed envmap, compute it ourselves
+                if (node.EnvMap == null)
                 {
-                    var closest = LightingInfo.EnvMaps.OrderBy(e => Vector3.Distance(e.BoundingBox.Center, node.LightingOrigin.Value)).First();
+                    var objectCenter = node.LightingOrigin ?? node.BoundingBox.Center;
+                    var closest = LightingInfo.EnvMaps.OrderBy(e => Vector3.Distance(e.BoundingBox.Center, objectCenter)).First();
                     node.EnvMap = closest;
                     node.EnvMapGpuDataIndex = gpuDataToTextureIndex.IndexOf(closest.ArrayIndex);
                 }

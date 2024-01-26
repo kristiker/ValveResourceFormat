@@ -72,11 +72,11 @@ vec3 CubemapParallaxCorrection(in EnvMap envMapData, vec3 localReflectionVector)
 
 float GetEnvMapLOD(float roughness, vec3 R, float clothMask)
 {
-    #if (renderMode_Cubemaps == 1)
-        return sin(g_flTime * 3);
-    #endif
-
     const float EnvMapMipCount = g_vEnvMapSizeConstants.x;
+
+    #if (renderMode_Cubemaps == 1)
+        return ((sin(g_flTime) + 1) / 2) * EnvMapMipCount;
+    #endif
 
     #if F_CLOTH_SHADING == 1
         float lod = mix(roughness, pow(roughness, 0.125), clothMask);
@@ -196,16 +196,9 @@ vec3 GetEnvironment(MaterialProperties_t mat, out vec3 diffuse)
     #if (SCENE_CUBEMAP_TYPE == 0)
         envMap = max(g_vClearColor.rgb, vec3(0.3, 0.1, 0.1));
         diffuse = max(g_vClearColor.rgb, vec3(0.1, 0.1, 0.3));
-    #elif (SCENE_CUBEMAP_TYPE == 1)
-        EnvMapInstanceData_t envMapInstanceData = DecodeObjectEnvMapData();
-        EnvMap envMapData = GetEnvMap(envMapInstanceData.EnvMapDataIndex, vFragPosition);
+    #endif
 
-        vec3 coords = GetCorrectedSampleCoords(R, envMapData);
-        coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected
-
-        envMap = textureLod(g_tEnvironmentMap, coords, lod).rgb;
-        diffuse = textureLod(g_tEnvironmentMap, coords, lod_Diffuse).rgb * 0.5;
-    #elif (SCENE_CUBEMAP_TYPE == 2)
+    #if (SCENE_CUBEMAP_TYPE == 1 || SCENE_CUBEMAP_TYPE == 2)
 
     float totalWeight = 0.01;
     EnvMapInstanceData_t envMapInstanceData = DecodeObjectEnvMapData();
@@ -218,7 +211,8 @@ vec3 GetEnvironment(MaterialProperties_t mat, out vec3 diffuse)
         // Custom lighting origin has a fixed env map index.
         if (envMapInstanceData.CustomLightingOrigin)
         {
-            envMapData = GetEnvMap(envMapInstanceData.EnvMapDataIndex, vFragPosition);
+            int dataIndex = envMapInstanceData.EnvMapDataIndex != -1 ? envMapInstanceData.EnvMapDataIndex : i;
+            envMapData = GetEnvMap(dataIndex, vFragPosition);
         }
         else
         {
@@ -250,19 +244,30 @@ vec3 GetEnvironment(MaterialProperties_t mat, out vec3 diffuse)
         vec3 coords = GetCorrectedSampleCoords(R, envMapData);
         coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected
 
-        int cubeDepth = envMapData.ArrayTextureIndex;
-        envMap += textureLod(g_tEnvironmentMap, vec4(coords, cubeDepth), lod).rgb * weight;
-        diffuse += textureLod(g_tEnvironmentMap, vec4(coords, cubeDepth), lod_Diffuse).rgb * weight;
-
-        if (totalWeight > 0.99)
+        // TODO: upload these cubemaps as cubemap array.
+        #if (SCENE_CUBEMAP_TYPE == 1)
         {
+            envMap = textureLod(g_tEnvironmentMap, coords, lod).rgb;
+            diffuse = textureLod(g_tEnvironmentMap, coords, lod_Diffuse).rgb * 0.5;
             break;
         }
+        #else
+        {
+            int cubeDepth = envMapData.ArrayTextureIndex;
+            envMap += textureLod(g_tEnvironmentMap, vec4(coords, cubeDepth), lod).rgb * weight;
+            diffuse += textureLod(g_tEnvironmentMap, vec4(coords, cubeDepth), lod_Diffuse).rgb * weight;
+
+            if (totalWeight > 0.99)
+            {
+                break;
+            }
+        }
+        #endif
     }
 
     diffuse = mix(diffuse*2.0, diffuse*2.6, GetLuma(diffuse));
 
-    #endif // SCENE_CUBEMAP_TYPE == 2
+    #endif
 
     #if (renderMode_Cubemaps == 1)
         return envMap;

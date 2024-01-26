@@ -178,15 +178,12 @@ namespace GUI.Types.Renderer
             }
             #endregion
 
-            if (config.NeedsCubemapBinding && request.Node.EnvMapGpuDataIndex != -1)
+            if (config.NeedsCubemapBinding && request.Node.EnvMapGpuDataIndex != -1 && request.Node.EnvMap != null)
             {
-                if (config.NeedsCubemapBinding && request.Node.EnvMap != null)
-                {
-                    var envmap = request.Node.EnvMap.EnvMapTexture;
+                var envmap = request.Node.EnvMap.EnvMapTexture;
 
-                    instanceBoundTextures.Enqueue(envmap);
-                    Shader.SetTexture((int)ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
-                }
+                instanceBoundTextures.Enqueue(envmap);
+                Shader.SetTexture((int)ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
             }
 
             if (uniforms.Animated != -1)

@@ -185,7 +185,7 @@ namespace GUI.Types.Renderer
                 }
 
                 //instanceData.TintAlpha = node.TintAlpha;
-                instanceData.CustomLightingOrigin = node.LightingOrigin.HasValue;
+                instanceData.CustomLightingOrigin = node.LightingOrigin.HasValue || Scene.LightingInfo.CubemapType == Scene.CubemapType.IndividualCubemaps;
                 instanceData.EnvMapIndex = node.EnvMapGpuDataIndex;
             }
 
