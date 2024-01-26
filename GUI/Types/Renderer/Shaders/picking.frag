@@ -7,7 +7,7 @@
 #define renderMode_ShaderId 0
 #define renderMode_ShaderProgramId 0
 
-uniform uint sceneObjectId;
+uniform uint sceneObjectId; // also in instancing.glsl
 uniform uint meshId;
 uniform uint shaderId;
 uniform uint shaderProgramId;

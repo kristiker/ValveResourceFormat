@@ -2,6 +2,7 @@
 
 #include "common/utils.glsl"
 #include "common/features.glsl"
+#include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
 #include "common/LightingConstants.glsl"
 #include "complex_features.glsl"
@@ -90,7 +91,6 @@ uniform vec4 g_vColorTint = vec4(1.0);
 uniform float g_flModelTintAmount = 1.0;
 uniform float g_flFadeExponent = 1.0;
 
-uniform mat4 transform;
 uniform vec4 vTint;
 
 uniform vec4 g_vTexCoordOffset;
@@ -179,7 +179,7 @@ vec4 GetTintColor()
 
 void main()
 {
-    mat4 skinTransform = transform * getSkinMatrix();
+    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION + getMorphOffset(), 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;

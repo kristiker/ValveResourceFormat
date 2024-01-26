@@ -158,9 +158,6 @@ namespace GUI.Types.Renderer
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Draw(ref Uniforms uniforms, ref Config config, Request request)
         {
-            var transformTk = request.Transform.ToOpenTK();
-            GL.UniformMatrix4(uniforms.Transform, false, ref transformTk);
-
             #region Picking
             if (uniforms.ObjectId != -1)
             {

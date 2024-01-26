@@ -43,6 +43,7 @@ namespace GUI.Types.Renderer
         public bool FogEnabled { get; set; } = true;
 
         public IEnumerable<SceneNode> AllNodes => staticNodes.Concat(dynamicNodes);
+        public uint MaxNodeId { get; private set; }
 
         private readonly List<SceneNode> staticNodes = [];
         private readonly List<SceneNode> dynamicNodes = [];
@@ -70,6 +71,8 @@ namespace GUI.Types.Renderer
                 StaticOctree.Insert(node, node.BoundingBox);
                 node.Id = (uint)staticNodes.Count * 2;
             }
+
+            MaxNodeId = Math.Max(MaxNodeId, node.Id);
         }
 
         public SceneNode Find(uint id)

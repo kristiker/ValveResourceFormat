@@ -29,9 +29,11 @@ namespace GUI.Types.Renderer
         private Frustum lockedCullFrustum;
         private Frustum skyboxLockedCullFrustum;
 
+        private StorageBuffer instanceBuffer;
+        private StorageBuffer transformBuffer;
         protected UniformBuffer<ViewConstants> viewBuffer;
         private UniformBuffer<LightingConstants> lightingBuffer;
-        public List<IBlockBindableBuffer> Buffers { get; private set; }
+
         public List<(ReservedTextureSlots Slot, string Name, RenderTexture Texture)> Textures { get; } = [];
 
         private bool skipRenderModeChange;
@@ -115,6 +117,8 @@ namespace GUI.Types.Renderer
         {
             if (disposing)
             {
+                instanceBuffer?.Dispose();
+                transformBuffer?.Dispose();
                 viewBuffer?.Dispose();
                 lightingBuffer?.Dispose();
 
@@ -132,10 +136,52 @@ namespace GUI.Types.Renderer
 
         private void CreateBuffers()
         {
+            instanceBuffer = new(0, "instance");
+            transformBuffer = new(1, "transform");
             viewBuffer = new(2);
             lightingBuffer = new(3);
+        }
 
-            Buffers = [viewBuffer, lightingBuffer];
+        [System.Runtime.CompilerServices.InlineArray(SizeInBytes / 4)]
+        public struct PerInstancePackedData
+        {
+            public const int SizeInBytes = 32;
+            private uint data;
+
+            public Color32 TintAlpha { readonly get => new(this[0]); set => this[0] = value.PackedValue; }
+            public int TransformBufferIndex { readonly get => (int)this[1]; set => this[1] = (uint)value; }
+        }
+
+        void UpdateInstanceBuffers()
+        {
+            var transformData = new List<Matrix4x4>() { Matrix4x4.Identity };
+
+            var instanceBufferData = new PerInstancePackedData[Scene.MaxNodeId + 1];
+
+            foreach (var node in Scene.AllNodes)
+            {
+                if (node.Id > Scene.MaxNodeId || node.Id < 0)
+                {
+                    continue;
+                }
+
+                ref var instanceData = ref instanceBufferData[node.Id];
+
+                if (node.Transform.IsIdentity)
+                {
+                    instanceData.TransformBufferIndex = 0;
+                }
+                else
+                {
+                    instanceData.TransformBufferIndex = transformData.Count;
+                    transformData.Add(node.Transform);
+                }
+
+                //instanceData.TintAlpha = staticNode.TintAlpha;
+            }
+
+            instanceBuffer.Create(instanceBufferData, PerInstancePackedData.SizeInBytes);
+            transformBuffer.Create(transformData.ToArray(), 64);
         }
 
         void UpdateSceneBuffersGpu(Scene scene, Camera camera)
@@ -188,6 +234,8 @@ namespace GUI.Types.Renderer
             Scene.CalculateEnvironmentMaps();
 
             SkyboxScene?.CalculateEnvironmentMaps();
+
+            UpdateInstanceBuffers();
 
             if (Scene.AllNodes.Any() && this is not GLWorldViewer)
             {
@@ -348,8 +396,8 @@ namespace GUI.Types.Renderer
                 UpdateSceneBuffersGpu(SkyboxScene, skyboxCamera);
                 renderContext.Scene = SkyboxScene;
 
-                SkyboxScene.RenderOpaqueLayer(renderContext);
-                SkyboxScene.RenderTranslucentLayer(renderContext);
+                //SkyboxScene.RenderOpaqueLayer(renderContext);
+                //SkyboxScene.RenderTranslucentLayer(renderContext);
 
                 // Back to main Scene
                 UpdateSceneBuffersGpu(Scene, Camera);

@@ -29,8 +29,8 @@ out vec2 vTexCoord2Out;
 out vec2 vTexCoord3Out;
 #endif
 
+#include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
-uniform mat4 transform;
 uniform vec4 vTint = vec4(1.0);
 
 uniform float g_flTexCoordScale0 = 1.0;
@@ -56,7 +56,7 @@ uniform vec4 g_vTexCoordScroll3 = vec4(0.0);
 
 vec2 getTexCoord(float scale, float rotation, vec4 offset, vec4 scroll) {
 
-    //Transform degrees to radians
+    //CalculateObjectToWorldMatrix() degrees to radians
     float r = radians(rotation);
 
     vec2 totalOffset = (scroll.xy * g_flTime) + offset.xy;
@@ -76,7 +76,7 @@ vec2 getTexCoord(float scale, float rotation, vec4 offset, vec4 scroll) {
 
 void main()
 {
-    mat4 skinTransform = transform * getSkinMatrix();
+    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;

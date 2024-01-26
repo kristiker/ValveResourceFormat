@@ -50,9 +50,9 @@ centroid out vec4 vVertexColor_Alpha;
 uniform vec4 g_vColorTint = vec4(1.0);
 uniform float g_flModelTintAmount = 1.0;
 
+#include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
 #include "common/LightingConstants.glsl"
-uniform mat4 transform;
 uniform vec4 vTint;
 
 // Material 1
@@ -91,7 +91,7 @@ uniform vec4 g_vTexCoordScale1 = vec4(1.0);
 
 void main()
 {
-    mat4 skinTransform = transform;
+    mat4 skinTransform = CalculateObjectToWorldMatrix();
 
     #if defined(csgo_environment_vfx)
         skinTransform *= getSkinMatrix();

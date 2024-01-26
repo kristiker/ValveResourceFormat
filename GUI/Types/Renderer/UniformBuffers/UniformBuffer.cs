@@ -4,29 +4,9 @@ using OpenTK.Graphics.OpenGL;
 
 namespace GUI.Types.Renderer.UniformBuffers
 {
-    interface IBlockBindableBuffer : IDisposable
-    {
-        int BindingPoint { get; }
-        string Name { get; }
-
-        public void SetBlockBinding(Shader shader)
-        {
-            var blockIndex = shader.GetUniformBlockIndex(Name);
-            if (blockIndex > -1)
-            {
-                GL.UniformBlockBinding(shader.Program, blockIndex, BindingPoint);
-            }
-        }
-    }
-
-    class UniformBuffer<T> : IBlockBindableBuffer
+    class UniformBuffer<T> : Buffer
         where T : new()
     {
-        public int Handle { get; }
-        public int Size { get; }
-        public int BindingPoint { get; }
-        public string Name { get; }
-
         T data;
         public T Data { get => data; set { data = value; Update(); } }
 
@@ -34,13 +14,8 @@ namespace GUI.Types.Renderer.UniformBuffers
         readonly float[] cpuBuffer;
         readonly GCHandle cpuBufferHandle;
 
-        const BufferTarget Target = BufferTarget.UniformBuffer;
-
-        public UniformBuffer(int bindingPoint)
+        public UniformBuffer(int bindingPoint) : base(BufferTarget.UniformBuffer, bindingPoint, typeof(T).Name)
         {
-            Handle = GL.GenBuffer();
-            BindingPoint = bindingPoint;
-
             Size = Marshal.SizeOf<T>();
             Debug.Assert(Size % 16 == 0);
 
@@ -49,17 +24,7 @@ namespace GUI.Types.Renderer.UniformBuffers
 
             data = new T();
             Initialize();
-
-            Name = typeof(T).Name;
-#if DEBUG
-            Bind();
-            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, Handle, Name.Length, Name);
-            Unbind();
-#endif
         }
-
-        void Bind() => GL.BindBuffer(Target, Handle);
-        static void Unbind() => GL.BindBuffer(Target, 0);
 
         private void WriteToCpuBuffer()
         {
@@ -84,11 +49,10 @@ namespace GUI.Types.Renderer.UniformBuffers
             Unbind();
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
-            // make sure dispose gets called, or this will leak
             cpuBufferHandle.Free();
-            GL.DeleteBuffer(Handle);
+            base.Dispose();
         }
     }
 }
