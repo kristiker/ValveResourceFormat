@@ -70,7 +70,6 @@ namespace GUI.Types.Renderer
             public int MeshId;
             public int ShaderId;
             public int ShaderProgramId;
-            public int CubeMapArrayIndices;
             public int MorphCompositeTexture;
             public int MorphCompositeTextureSize;
             public int MorphVertexIdOffset;
@@ -124,7 +123,6 @@ namespace GUI.Types.Renderer
                             EnvmapTexture = shader.GetUniformLocation("g_tEnvironmentMap"),
                             Transform = shader.GetUniformLocation("transform"),
                             Tint = shader.GetUniformLocation("vTint"),
-                            CubeMapArrayIndices = shader.GetUniformLocation("g_iEnvMapArrayIndices"),
                             ObjectId = shader.GetUniformLocation("sceneObjectId"),
                             MeshId = shader.GetUniformLocation("meshId"),
                             ShaderId = shader.GetUniformLocation("shaderId"),
@@ -180,21 +178,14 @@ namespace GUI.Types.Renderer
             }
             #endregion
 
-            if (uniforms.CubeMapArrayIndices != -1 && request.Node.EnvMapIds != null)
+            if (config.NeedsCubemapBinding && request.Node.EnvMapGpuDataIndex != -1)
             {
-                if (config.NeedsCubemapBinding && request.Node.EnvMaps.Count > 0)
+                if (config.NeedsCubemapBinding && request.Node.EnvMap != null)
                 {
-                    var envmap = request.Node.EnvMaps[0].EnvMapTexture;
-                    var envmapDataIndex = request.Node.EnvMapIds[0];
+                    var envmap = request.Node.EnvMap.EnvMapTexture;
 
                     instanceBoundTextures.Enqueue(envmap);
                     Shader.SetTexture((int)ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
-
-                    GL.Uniform1(uniforms.CubeMapArrayIndices, envmapDataIndex);
-                }
-                else
-                {
-                    GL.Uniform1(uniforms.CubeMapArrayIndices, request.Node.EnvMapIds.Length, request.Node.EnvMapIds);
                 }
             }
 
