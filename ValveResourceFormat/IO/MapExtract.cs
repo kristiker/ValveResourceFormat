@@ -358,51 +358,11 @@ public sealed class MapExtract
             }
         }
 
-        using (var modelRes = FileLoader.LoadFile(GetWorldPhysicsName()))
-        {
-            var mesh = ((Model)modelRes.DataBlock).GetEmbeddedMeshes().First();
-
-            HammerMeshBuilder builder = new();
-
-            var dmx = ModelExtract.ToDmxMeshReturn(mesh.Mesh, GetWorldPhysicsName() + "_c");
-            var model = (DmeModel)dmx.Root["model"];
-            var dmeDag = (DmeDag)model.JointList[0];
-
-            var vertices = (Vector3[])dmeDag.Shape.CurrentState["position$0"];
-            var indices = new List<int>();
-
-            var faceSets = (Datamodel.ElementArray)dmeDag.Shape.FaceSets;
-            foreach (var faceSet in faceSets)
-            {
-                var faces = (Datamodel.IntArray)faceSet["faces"];
-
-                foreach (var face in faces)
-                {
-                    if (face != -1)
-                    {
-                        indices.Add(face);
-                    }
-                }
-            }
-
-            foreach (var vertex in vertices)
-            {
-                builder.AddVertex(vertex);
-            }
-
-            for (var i = 0; i < indices.Count; i += 3)
-            {
-                builder.AddFace(indices[i], indices[i + 1], indices[i + 2]);
-            }
-
-            var hammermesh = builder.GenerateMesh();
-            MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
-            Console.WriteLine("ASSAsaSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS");
-        }
+        //convert phys to hammer meshes
         var phys = LoadWorldPhysics();
-        for (var p = 0; p < phys.Parts.Length; p++)
+        for (var i = 0; i < phys.Parts.Length; i++)
         {
-            var shape = phys.Parts[p].Shape;
+            var shape = phys.Parts[i].Shape;
 
             // Hulls
             //foreach (var hull in shape.Hulls)
@@ -454,9 +414,12 @@ public sealed class MapExtract
                 var group = attributes.GetStringProperty("m_CollisionGroupString");
 
                 var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
+
+                //extract everything but nodraw and clip, these tend to have the most complicated geo in them and still make hammer hand
+                //gotta find where the issue with them is within plankton...
                 if (tooltexture != "nodraw" && tooltexture != "clip")
                 {
-                    var collisionamt = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+                    var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
 
                     var hammerMeshBuilder = new HammerMeshBuilder();
 
@@ -465,7 +428,7 @@ public sealed class MapExtract
 
                     foreach (var Vertex in mesh.Shape.Vertices)
                     {
-                        hammerMeshBuilder.AddVertex(Vertex);
+                        hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex, material));
                     }
 
                     foreach (var Face in mesh.Shape.Triangles)

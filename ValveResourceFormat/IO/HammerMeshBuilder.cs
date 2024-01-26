@@ -9,6 +9,7 @@ using static ValveResourceFormat.IO.HammerMeshBuilder;
 using System.ComponentModel;
 using Plankton;
 using System.Linq;
+using SharpGLTF.Geometry.VertexTypes;
 
 namespace ValveResourceFormat.IO
 {
@@ -22,6 +23,18 @@ namespace ValveResourceFormat.IO
             None = 0x0,
             SoftNormals = 0x1,
             HardNormals = 0x2,
+        }
+
+        public class Vertex
+        {
+            public Vector3 position;
+            public string material;
+
+            public Vertex(Vector3 position, string material)
+            {
+                this.position = position;
+                this.material = material;
+            }
         }
 
         public CDmePolygonMesh GenerateMesh()
@@ -63,7 +76,6 @@ namespace ValveResourceFormat.IO
             }
 
             int prevHalfEdge = -1;
-
             for (var i = 0; i < pMesh.Halfedges.Count; i++)
             {
                 var halfEdge = pMesh.Halfedges[i];
@@ -109,10 +121,11 @@ namespace ValveResourceFormat.IO
                     tangent.Data.Add(new Vector4(0, 0, 0, 0));
                 }
 
-                textureCoords.Data.Add(new Vector2(0));
-            }
+                var startVertex = pMesh.Vertices[halfEdge.StartVertex];
+                var startVertexVector = new Vector3(startVertex.X, startVertex.Y, startVertex.Z);
 
-            mesh.Materials.Add("test");
+                textureCoords.Data.Add(new Vector2(startVertexVector.Length() % 1.0f));
+            }
 
             foreach (var Face in pMesh.Faces)
             {
@@ -120,15 +133,15 @@ namespace ValveResourceFormat.IO
                 mesh.FaceDataIndices.Add(faceDataIndex);
                 mesh.FaceData.Size++;
 
-                //var materialIndex = mesh.Materials.IndexOf(Face.Material);
-                //if (materialIndex == -1 && Face.Material != null)
-                //{
-                //    materialIndex = mesh.Materials.Count;
-                //    mesh.Materials.Add(Face.Material);
-                //}
+                var mat = pMesh.Vertices[pMesh.Halfedges[Face.FirstHalfedge].StartVertex].material;
+                var materialIndex = mesh.Materials.IndexOf(mat);
+                if (materialIndex == -1 && mat != null)
+                {
+                    materialIndex = mesh.Materials.Count;
+                    faceMaterialIndices.Data.Add(materialIndex);
+                    mesh.Materials.Add(mat);
+                }
 
-
-                faceMaterialIndices.Data.Add(0);
                 faceFlags.Data.Add(0);
 
                 mesh.FaceEdgeIndices.Add(Face.FirstHalfedge);
@@ -140,9 +153,9 @@ namespace ValveResourceFormat.IO
             return mesh;
         }
 
-        public void AddVertex(Vector3 Vertex)
+        public void AddVertex(Vertex Vertex)
         {
-            pMesh.Vertices.Add(Vertex.X, Vertex.Y, Vertex.Z);
+            pMesh.Vertices.Add(Vertex.position.X, Vertex.position.Y, Vertex.position.Z, Vertex.material);
         }
 
         public void AddFace(int index1, int index2, int index3)

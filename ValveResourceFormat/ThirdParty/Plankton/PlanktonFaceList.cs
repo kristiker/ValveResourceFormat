@@ -104,7 +104,7 @@ namespace Plankton
                 else
                     loop[i] = h;
                 // NOTE: To PREVENT non-manifold vertices, uncomment the line below...
-                //if(is_new[i] && is_new[(i+n-1)%n] && vs[v1].OutgoingHalfedge > -1) return -1;
+                if(is_new[i] && is_new[(i+n-1)%n] && vs[v1].OutgoingHalfedge > -1) return -1;
             }
             
             // Now create any missing halfedge pairs...
