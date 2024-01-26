@@ -320,7 +320,7 @@ namespace GUI.Types.Renderer
             });
 
             var i = 0;
-            Span<int> envMapArrayTextureIndices = stackalloc int[LightingConstants.MAX_ENVMAPS];
+            Span<int> gpuDataToTextureIndex = stackalloc int[LightingConstants.MAX_ENVMAPS];
 
             foreach (var envMap in LightingInfo.EnvMaps.OrderByDescending((envMap) => envMap.IndoorOutdoorLevel))
             {
@@ -336,7 +336,7 @@ namespace GUI.Types.Renderer
                 }
 
                 UpdateGpuEnvmapData(envMap, i, envMap.ArrayIndex);
-                envMapArrayTextureIndices[i] = envMap.ArrayIndex;
+                gpuDataToTextureIndex[i] = envMap.ArrayIndex;
                 i++;
             }
 
@@ -352,12 +352,12 @@ namespace GUI.Types.Renderer
                     {
                         // SteamVR Home node handshake as envmap index
                         node.EnvMap = LightingInfo.EnvMaps[preComputedHandshake - 1];
-                        node.EnvMapGpuDataIndex = envMapArrayTextureIndices.IndexOf(node.EnvMap.ArrayIndex);
+                        node.EnvMapGpuDataIndex = gpuDataToTextureIndex.IndexOf(node.EnvMap.ArrayIndex);
                     }
                     else if (LightingInfo.EnvMapHandshakes.TryGetValue(preComputedHandshake, out preComputed))
                     {
                         node.EnvMap = preComputed;
-                        node.EnvMapGpuDataIndex = envMapArrayTextureIndices.IndexOf(preComputed.ArrayIndex);
+                        node.EnvMapGpuDataIndex = gpuDataToTextureIndex.IndexOf(preComputed.ArrayIndex);
                     }
                     else
                     {
@@ -367,12 +367,11 @@ namespace GUI.Types.Renderer
                     }
                 }
 
-                var lightingOrigin = node.LightingOrigin ?? Vector3.Zero;
-                if (node.LightingOrigin.HasValue)
+                if (node.LightingOrigin.HasValue && node.EnvMap is null)
                 {
-                    // in source2 this is a dynamic combo D_SPECULAR_CUBEMAP_STATIC=1, and i guess without a loop (similar to SCENE_CUBEMAP_TYPE=1)
-                    //node.EnvMap = [.. node.EnvMaps.OrderBy((envMap) => Vector3.Distance(lightingOrigin, envMap.BoundingBox.Center))];
-                    // todo.
+                    var closest = LightingInfo.EnvMaps.OrderBy(e => Vector3.Distance(e.BoundingBox.Center, node.LightingOrigin.Value)).First();
+                    node.EnvMap = closest;
+                    node.EnvMapGpuDataIndex = gpuDataToTextureIndex.IndexOf(closest.ArrayIndex);
                 }
             }
         }

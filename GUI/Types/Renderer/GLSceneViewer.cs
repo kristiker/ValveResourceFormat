@@ -151,6 +151,12 @@ namespace GUI.Types.Renderer
             public Color32 TintAlpha { readonly get => new(this[0]); set => this[0] = value.PackedValue; }
             public int TransformBufferIndex { readonly get => (int)this[1]; set => this[1] = (uint)value; }
             public int EnvMapIndex { readonly get => (int)this[2]; set => this[2] = (uint)value; }
+            public bool CustomLightingOrigin { readonly get => (this[3] & 1) != 0; set => PackBit(ref this[3], value); }
+
+            private static void PackBit(ref uint @uint, bool value)
+            {
+                @uint = (@uint & ~1u) | (value ? 1u : 0u);
+            }
         }
 
         void UpdateInstanceBuffers()
@@ -179,6 +185,7 @@ namespace GUI.Types.Renderer
                 }
 
                 //instanceData.TintAlpha = node.TintAlpha;
+                instanceData.CustomLightingOrigin = node.LightingOrigin.HasValue;
                 instanceData.EnvMapIndex = node.EnvMapGpuDataIndex;
             }
 

@@ -5,6 +5,7 @@
 //? #include "LightingConstants.glsl"
 //? #include "lighting_common.glsl"
 //? #include "pbr.glsl"
+//? #include "instancing.glsl"
 //? #include "lighting.glsl"
 
 #define SCENE_CUBEMAP_TYPE 0 // 0 = None, 1 = Per-batch cube map, 2 = Per-scene cube map array
@@ -196,8 +197,8 @@ vec3 GetEnvironment(MaterialProperties_t mat, out vec3 diffuse)
         envMap = max(g_vClearColor.rgb, vec3(0.3, 0.1, 0.1));
         diffuse = max(g_vClearColor.rgb, vec3(0.1, 0.1, 0.3));
     #elif (SCENE_CUBEMAP_TYPE == 1)
-        int dataIndex = CalculateEnvMapDataIndex();
-        EnvMap envMapData = GetEnvMap(dataIndex, vFragPosition);
+        EnvMapInstanceData_t envMapInstanceData = DecodeObjectEnvMapData();
+        EnvMap envMapData = GetEnvMap(envMapInstanceData.EnvMapDataIndex, vFragPosition);
 
         vec3 coords = GetCorrectedSampleCoords(R, envMapData);
         coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected
@@ -207,31 +208,41 @@ vec3 GetEnvironment(MaterialProperties_t mat, out vec3 diffuse)
     #elif (SCENE_CUBEMAP_TYPE == 2)
 
     float totalWeight = 0.01;
+    EnvMapInstanceData_t envMapInstanceData = DecodeObjectEnvMapData();
 
-    for (int i = 0; i < g_vEnvMapSizeConstants.y; i++) {
-
-        // TODO: We are looping all env maps, some culling would help
-        EnvMap envMapData = GetEnvMap(i, vFragPosition);
-
-        // extend bounds a little bit
-        envMapData.Bounds.Min -= vec3(0.001);
-        envMapData.Bounds.Max += vec3(0.001);
-
+    for (int i = 0; i < g_vEnvMapSizeConstants.y; i++)
+    {
         float weight = 1.0;
+        EnvMap envMapData;
 
-        if (envMapData.IsBoxProjection) {
-            vec3 envmapClampedFadeMax = saturate((envMapData.Bounds.Max - envMapData.LocalPosition) * envMapData.EdgeFadeDistsInverse);
-            vec3 envmapClampedFadeMin = saturate((envMapData.LocalPosition - envMapData.Bounds.Min) * envMapData.EdgeFadeDistsInverse);
+        // Custom lighting origin has a fixed env map index.
+        if (envMapInstanceData.CustomLightingOrigin)
+        {
+            envMapData = GetEnvMap(envMapInstanceData.EnvMapDataIndex, vFragPosition);
+        }
+        else
+        {
+            // TODO: We are looping all env maps, some culling would help
+            envMapData = GetEnvMap(i, vFragPosition);
 
-            float distanceFromEdge = min(min3(envmapClampedFadeMin), min3(envmapClampedFadeMax));
+            // extend bounds a little bit
+            envMapData.Bounds.Min -= vec3(0.001);
+            envMapData.Bounds.Max += vec3(0.001);
 
-            if (distanceFromEdge == 0.0)
-            {
-                continue;
+            if (envMapData.IsBoxProjection) {
+                vec3 envmapClampedFadeMax = saturate((envMapData.Bounds.Max - envMapData.LocalPosition) * envMapData.EdgeFadeDistsInverse);
+                vec3 envmapClampedFadeMin = saturate((envMapData.LocalPosition - envMapData.Bounds.Min) * envMapData.EdgeFadeDistsInverse);
+
+                float distanceFromEdge = min(min3(envmapClampedFadeMin), min3(envmapClampedFadeMax));
+
+                if (distanceFromEdge == 0.0)
+                {
+                    continue;
+                }
+
+                // blend using a smooth curve
+                weight = (pow2(distanceFromEdge) * (3.0 - (2.0 * distanceFromEdge))) * (1.0 - totalWeight);
             }
-
-            // blend using a smooth curve
-            weight = (pow2(distanceFromEdge) * (3.0 - (2.0 * distanceFromEdge))) * (1.0 - totalWeight);
         }
 
         totalWeight += weight;

@@ -41,9 +41,24 @@ mat4 CalculateObjectToWorldMatrix()
     return CalculateObjectToWorldMatrix(nTransformBufferOffset);
 }
 
-int CalculateEnvMapDataIndex()
+struct EnvMapInstanceData_t
 {
-    return int(GetInstanceData().m_Data[2]);
+    int EnvMapDataIndex;
+    bool CustomLightingOrigin;
+};
+
+EnvMapInstanceData_t DecodeObjectEnvMapData(PerInstancePackedShaderData_t packedData)
+{
+    EnvMapInstanceData_t data;
+    data.EnvMapDataIndex = int(packedData.m_Data[2]);
+    data.CustomLightingOrigin = (packedData.m_Data[3] & 1) != 0;
+
+    return data;
+}
+
+EnvMapInstanceData_t DecodeObjectEnvMapData()
+{
+    return DecodeObjectEnvMapData(GetInstanceData());
 }
 
 vec4 UnpackTintColorRGBA32(uint nColor)

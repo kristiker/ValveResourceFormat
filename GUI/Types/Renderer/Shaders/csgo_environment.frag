@@ -159,6 +159,7 @@ uniform float g_flModelTintAmount = 1.0;
 #include "common/texturing.glsl"
 #include "common/pbr.glsl"
 
+#include "common/instancing.glsl"
 #include "common/environment.glsl"
 
 #include "common/fog.glsl"
