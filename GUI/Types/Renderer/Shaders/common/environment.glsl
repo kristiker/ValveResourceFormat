@@ -196,7 +196,8 @@ vec3 GetEnvironment(MaterialProperties_t mat, out vec3 diffuse)
         envMap = max(g_vClearColor.rgb, vec3(0.3, 0.1, 0.1));
         diffuse = max(g_vClearColor.rgb, vec3(0.1, 0.1, 0.3));
     #elif (SCENE_CUBEMAP_TYPE == 1)
-        EnvMap envMapData = GetEnvMap(CalculateEnvMapArrayIndex(), vFragPosition);
+        int dataIndex = CalculateEnvMapDataIndex();
+        EnvMap envMapData = GetEnvMap(dataIndex, vFragPosition);
 
         vec3 coords = GetCorrectedSampleCoords(R, envMapData);
         coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected

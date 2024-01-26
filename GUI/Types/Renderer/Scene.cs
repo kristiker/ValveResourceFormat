@@ -352,7 +352,7 @@ namespace GUI.Types.Renderer
                     {
                         // SteamVR Home node handshake as envmap index
                         node.EnvMap = LightingInfo.EnvMaps[preComputedHandshake - 1];
-                        node.EnvMapGpuDataIndex = envMapArrayTextureIndices.IndexOf(preComputed.ArrayIndex);
+                        node.EnvMapGpuDataIndex = envMapArrayTextureIndices.IndexOf(node.EnvMap.ArrayIndex);
                     }
                     else if (LightingInfo.EnvMapHandshakes.TryGetValue(preComputedHandshake, out preComputed))
                     {

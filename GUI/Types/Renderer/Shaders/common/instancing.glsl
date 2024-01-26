@@ -41,6 +41,11 @@ mat4 CalculateObjectToWorldMatrix()
     return CalculateObjectToWorldMatrix(nTransformBufferOffset);
 }
 
+int CalculateEnvMapDataIndex()
+{
+    return int(GetInstanceData().m_Data[2]);
+}
+
 vec4 UnpackTintColorRGBA32(uint nColor)
 {
     vec4 vResult;

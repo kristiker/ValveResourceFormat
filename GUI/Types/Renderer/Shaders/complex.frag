@@ -252,9 +252,8 @@ uniform sampler2D g_tTintMask;
 #include "common/pbr.glsl"
 #include "common/fog.glsl"
 
-#if (S_SPECULAR == 1 || renderMode_Cubemaps == 1)
+#include "common/instancing.glsl"
 #include "common/environment.glsl"
-#endif
 
 // Must be last
 #include "common/lighting.glsl"

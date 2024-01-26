@@ -150,6 +150,7 @@ namespace GUI.Types.Renderer
 
             public Color32 TintAlpha { readonly get => new(this[0]); set => this[0] = value.PackedValue; }
             public int TransformBufferIndex { readonly get => (int)this[1]; set => this[1] = (uint)value; }
+            public int EnvMapIndex { readonly get => (int)this[2]; set => this[2] = (uint)value; }
         }
 
         void UpdateInstanceBuffers()
@@ -177,7 +178,8 @@ namespace GUI.Types.Renderer
                     transformData.Add(node.Transform);
                 }
 
-                //instanceData.TintAlpha = staticNode.TintAlpha;
+                //instanceData.TintAlpha = node.TintAlpha;
+                instanceData.EnvMapIndex = node.EnvMapGpuDataIndex;
             }
 
             instanceBuffer.Create(instanceBufferData, PerInstancePackedData.SizeInBytes);
