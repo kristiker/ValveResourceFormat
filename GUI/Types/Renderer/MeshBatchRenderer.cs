@@ -184,7 +184,7 @@ namespace GUI.Types.Renderer
             {
                 var envmap = request.Node.EnvMap.EnvMapTexture;
 
-                instanceBoundTextures.Enqueue(envmap);
+                instanceBoundTextures.Enqueue(envmap.Handle);
                 Shader.SetTexture((int)ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
             }
 

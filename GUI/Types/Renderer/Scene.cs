@@ -267,16 +267,14 @@ namespace GUI.Types.Renderer
             renderContext.RenderPass = RenderPass.Opaque;
 
             GL.UseProgram(renderContext.ReplacementShader.Program);
-            var transformLoc = GL.GetUniformLocation(renderContext.ReplacementShader.Program, "transform");
+            var objectIdLoc = renderContext.ReplacementShader.GetUniformLocation("sceneObjectId");
 
             foreach (var requestIndex in depthPassOpaqueCalls)
             {
                 var request = renderOpaqueDrawCalls[requestIndex];
 
                 GL.BindVertexArray(request.Call.VertexArrayObject);
-
-                var transformTk = request.Node.Transform.ToOpenTK();
-                GL.UniformMatrix4(transformLoc, false, ref transformTk);
+                GL.Uniform1(objectIdLoc, request.Node.Id);
 
                 GL.DrawElementsBaseVertex(
                     request.Call.PrimitiveType,
