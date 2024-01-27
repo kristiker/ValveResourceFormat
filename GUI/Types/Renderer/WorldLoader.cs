@@ -162,16 +162,13 @@ namespace GUI.Types.Renderer
                     var renderTexture = guiContext.MaterialLoader.LoadTexture(lightmap);
                     result.Lightmaps[uniformName] = renderTexture;
 
-                    using (renderTexture.BindingContext())
+                    if (name == "direct_light_indices")
                     {
-                        if (name == "direct_light_indices")
-                        {
-                            // point sampling
-                            renderTexture.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
-                        }
-
-                        renderTexture.SetWrapMode(TextureWrapMode.ClampToEdge);
+                        // point sampling
+                        renderTexture.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
                     }
+
+                    renderTexture.SetWrapMode(TextureWrapMode.ClampToEdge);
                 }
             }
 
@@ -934,11 +931,7 @@ namespace GUI.Types.Renderer
 
             if (resource == null)
             {
-                var color = new Color32(255, 0, 255, 255);
-                if (hammerEntity?.Color != null)
-                {
-                    color = color with { R = (byte)hammerEntity.Color.X, G = (byte)hammerEntity.Color.Y, B = (byte)hammerEntity.Color.Z };
-                }
+                var color = hammerEntity?.Color ?? new Color32(255, 0, 255, 255);
 
                 var boxNode = new SimpleBoxSceneNode(scene, color, new Vector3(16f))
                 {

@@ -24,6 +24,12 @@ namespace GUI.Types.Renderer
 
             vaoHandle = GL.GenVertexArray();
             GL.BindVertexArray(vaoHandle);
+
+#if DEBUG
+            var vaoLabel = nameof(SelectedNodeRenderer);
+            GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, vaoHandle, vaoLabel.Length, vaoLabel);
+#endif
+
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboHandle);
 
             SimpleVertex.BindDefaultShaderLayout(shader.Program);
@@ -141,8 +147,7 @@ namespace GUI.Types.Renderer
 
             vertexCount = vertices.Count;
 
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboHandle);
-            GL.BufferData(BufferTarget.ArrayBuffer, vertices.Count * SimpleVertex.SizeInBytes, vertices.ToArray(), BufferUsageHint.StaticDraw);
+            GL.NamedBufferData(vboHandle, vertices.Count * SimpleVertex.SizeInBytes, vertices.ToArray(), BufferUsageHint.StaticDraw);
         }
 
         public override void Update(Scene.UpdateContext context)

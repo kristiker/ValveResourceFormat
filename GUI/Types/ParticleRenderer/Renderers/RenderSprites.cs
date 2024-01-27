@@ -58,6 +58,11 @@ namespace GUI.Types.ParticleRenderer.Renderers
 
             texture = vrfGuiContext.MaterialLoader.LoadTexture(textureName);
 
+#if DEBUG
+            var vaoLabel = $"{nameof(RenderSprites)}: {System.IO.Path.GetFileName(textureName)}";
+            GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, quadVao, vaoLabel.Length, vaoLabel);
+#endif
+
             animateInFps = parse.Boolean("m_bAnimateInFPS", animateInFps);
             blendMode = parse.Enum<ParticleBlendMode>("m_nOutputBlendMode", blendMode);
             overbrightFactor = parse.NumberProvider("m_flOverbrightFactor", overbrightFactor);
@@ -223,8 +228,7 @@ namespace GUI.Types.ParticleRenderer.Renderers
                     i++;
                 }
 
-                GL.BindBuffer(BufferTarget.ArrayBuffer, vertexBufferHandle);
-                GL.BufferData(BufferTarget.ArrayBuffer, particles.Count * VertexSize * 4 * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
+                GL.NamedBufferData(vertexBufferHandle, particles.Count * VertexSize * 4 * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
             }
             finally
             {

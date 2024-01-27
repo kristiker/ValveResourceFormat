@@ -124,21 +124,27 @@ class Framebuffer : IDisposable
         if (ColorFormat != null)
         {
             Color = new RenderTexture(Target, width, height, 1, 1);
-            using (Color.BindingContext())
-            {
-                ResizeAttachment(Color, ColorFormat, width, height);
-                GL.FramebufferTexture2D(fboTarget, FramebufferAttachment.ColorAttachment0, Color.Target, Color.Handle, 0);
-            }
+
+#if DEBUG
+            var label = "FramebufferColor";
+            GL.ObjectLabel(ObjectLabelIdentifier.Texture, Color.Handle, label.Length, label);
+#endif
+
+            ResizeAttachment(Color, ColorFormat, width, height);
+            GL.NamedFramebufferTexture(FboHandle, FramebufferAttachment.ColorAttachment0, Color.Handle, 0);
         }
 
         if (DepthFormat != null)
         {
             Depth = new RenderTexture(Target, width, height, 1, 1);
-            using (Depth.BindingContext())
-            {
-                ResizeAttachment(Depth, DepthFormat, width, height);
-                GL.FramebufferTexture2D(fboTarget, FramebufferAttachment.DepthAttachment, Depth.Target, Depth.Handle, 0);
-            }
+
+#if DEBUG
+            var label = "FramebufferDepth";
+            GL.ObjectLabel(ObjectLabelIdentifier.Texture, Depth.Handle, label.Length, label);
+#endif
+
+            ResizeAttachment(Depth, DepthFormat, width, height);
+            GL.NamedFramebufferTexture(FboHandle, FramebufferAttachment.DepthAttachment, Depth.Handle, 0);
         }
 
         InitialStatus = GL.CheckFramebufferStatus(fboTarget);
@@ -147,6 +153,8 @@ class Framebuffer : IDisposable
 
     private void ResizeAttachment(RenderTexture attachment, AttachmentFormat format, int width, int height)
     {
+        GL.BindTexture(attachment.Target, attachment.Handle);
+
         if (Target == TextureTarget.Texture2DMultisample)
         {
             GL.TexImage2DMultisample((TextureTargetMultisample)attachment.Target, NumSamples, format.InternalFormat, width, height, false);
@@ -155,6 +163,8 @@ class Framebuffer : IDisposable
         {
             GL.TexImage2D(attachment.Target, 0, format.InternalFormat, width, height, 0, format.PixelFormat, format.PixelType, IntPtr.Zero);
         }
+
+        GL.BindTexture(attachment.Target, 0);
     }
 
     public void Resize(int width, int height, int msaa)
@@ -170,18 +180,12 @@ class Framebuffer : IDisposable
 
         if (Color != null)
         {
-            using (Color.BindingContext())
-            {
-                ResizeAttachment(Color, ColorFormat!, width, height);
-            }
+            ResizeAttachment(Color, ColorFormat!, width, height);
         }
 
         if (Depth != null)
         {
-            using (Depth.BindingContext())
-            {
-                ResizeAttachment(Depth, DepthFormat!, width, height);
-            }
+            ResizeAttachment(Depth, DepthFormat!, width, height);
         }
     }
 

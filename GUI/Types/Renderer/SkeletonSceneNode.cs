@@ -27,17 +27,15 @@ namespace GUI.Types.Renderer
             vaoHandle = GL.GenVertexArray();
             GL.BindVertexArray(vaoHandle);
 
+#if DEBUG
+            var vaoLabel = nameof(SkeletonSceneNode);
+            GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, vaoHandle, vaoLabel.Length, vaoLabel);
+#endif
+
             vboHandle = GL.GenBuffer();
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboHandle);
 
-            const int stride = sizeof(float) * 7;
-            var positionAttributeLocation = GL.GetAttribLocation(shader.Program, "aVertexPosition");
-            GL.EnableVertexAttribArray(positionAttributeLocation);
-            GL.VertexAttribPointer(positionAttributeLocation, 3, VertexAttribPointerType.Float, false, stride, 0);
-
-            var colorAttributeLocation = GL.GetAttribLocation(shader.Program, "aVertexColor");
-            GL.EnableVertexAttribArray(colorAttributeLocation);
-            GL.VertexAttribPointer(colorAttributeLocation, 4, VertexAttribPointerType.UnsignedByte, true, stride, sizeof(float) * 3);
+            SimpleVertex.BindDefaultShaderLayout(shader.Program);
 
             GL.BindVertexArray(0);
         }
@@ -74,8 +72,7 @@ namespace GUI.Types.Renderer
 
             vertexCount = vertices.Count;
 
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboHandle);
-            GL.BufferData(BufferTarget.ArrayBuffer, vertices.Count * SimpleVertex.SizeInBytes, vertices.ToArray(), BufferUsageHint.DynamicDraw);
+            GL.NamedBufferData(vboHandle, vertices.Count * SimpleVertex.SizeInBytes, vertices.ToArray(), BufferUsageHint.DynamicDraw);
         }
 
         private static void GetAnimationMatrixRecursive(List<SimpleVertex> vertices, Bone bone, Matrix4x4 bindPose, Frame frame)
@@ -97,7 +94,8 @@ namespace GUI.Types.Renderer
 
             if (!oldBindPose.IsIdentity)
             {
-                OctreeDebugRenderer<SceneNode>.AddLine(vertices, bindPose.Translation, oldBindPose.Translation, new(0f, 1f, 1f, 1f));
+                var fade = Random.Shared.NextSingle() * 0.5f + 0.5f;
+                OctreeDebugRenderer<SceneNode>.AddLine(vertices, bindPose.Translation, oldBindPose.Translation, new(1f - fade, 1f, fade, 1f));
             }
 
             foreach (var child in bone.Children)
@@ -115,6 +113,7 @@ namespace GUI.Types.Renderer
 
             var renderShader = context.ReplacementShader ?? shader;
 
+            GL.DepthFunc(DepthFunction.Always);
             GL.UseProgram(renderShader.Program);
 
             renderShader.SetUniform4x4("transform", Transform);
@@ -126,6 +125,7 @@ namespace GUI.Types.Renderer
 
             GL.UseProgram(0);
             GL.BindVertexArray(0);
+            GL.DepthFunc(DepthFunction.Greater);
         }
     }
 }

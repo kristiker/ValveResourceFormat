@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using GUI.Types.Renderer.UniformBuffers;
 using GUI.Utils;
+using OpenTK.Graphics.OpenGL;
 
 namespace GUI.Types.Renderer
 {
@@ -151,12 +153,16 @@ namespace GUI.Types.Renderer
 
         private readonly List<MeshBatchRenderer.Request> renderLooseNodes = [];
         private readonly List<MeshBatchRenderer.Request> renderOpaqueDrawCalls = [];
+        private readonly List<int> depthPassOpaqueCalls = [];
+        private readonly List<int> depthPassAlphaTestCalls = [];
         private readonly List<MeshBatchRenderer.Request> renderStaticOverlays = [];
         private readonly List<MeshBatchRenderer.Request> renderTranslucentDrawCalls = [];
 
         public void CollectSceneDrawCalls(Camera camera, Frustum cullFrustum = null)
         {
             renderOpaqueDrawCalls.Clear();
+            depthPassOpaqueCalls.Clear();
+            depthPassAlphaTestCalls.Clear();
             renderStaticOverlays.Clear();
             renderTranslucentDrawCalls.Clear();
             renderLooseNodes.Clear();
@@ -230,35 +236,120 @@ namespace GUI.Types.Renderer
                 }
             }
 
-            renderLooseNodes.Sort(MeshBatchRenderer.CompareCameraDistance);
+
+            renderOpaqueDrawCalls.Sort(MeshBatchRenderer.ComparePipeline);
+            renderStaticOverlays.Sort(MeshBatchRenderer.CompareRenderOrderThenPipeline);
+            renderTranslucentDrawCalls.Sort(MeshBatchRenderer.CompareCameraDistance_BackToFront);
+            renderLooseNodes.Sort(MeshBatchRenderer.CompareCameraDistance_BackToFront);
+
+            depthPassOpaqueCalls.EnsureCapacity((int)(renderOpaqueDrawCalls.Count * 0.75f));
+
+            for (var i = 0; i < renderOpaqueDrawCalls.Count; i++)
+            {
+                var request = renderOpaqueDrawCalls[i];
+                var (call, mesh) = (request.Call, request.Mesh);
+
+                if (call.Material.NoZPrepass || mesh.AnimationTexture != null || mesh.FlexStateManager?.MorphComposite != null)
+                {
+                    continue;
+                }
+
+                var depthPassList = call.Material.IsAlphaTest ? depthPassAlphaTestCalls : depthPassOpaqueCalls;
+                depthPassList.Add(i);
+            }
+
+            depthPassOpaqueCalls.Sort((a, b) => MeshBatchRenderer.CompareCameraDistance_FrontToBack(renderOpaqueDrawCalls[a], renderOpaqueDrawCalls[b]));
+            depthPassAlphaTestCalls.Sort((a, b) => MeshBatchRenderer.CompareCameraDistance_FrontToBack(renderOpaqueDrawCalls[a], renderOpaqueDrawCalls[b]));
+        }
+
+        public void DepthPassOpaque(RenderContext renderContext)
+        {
+            renderContext.RenderPass = RenderPass.Opaque;
+
+            GL.UseProgram(renderContext.ReplacementShader.Program);
+            var transformLoc = GL.GetUniformLocation(renderContext.ReplacementShader.Program, "transform");
+
+            foreach (var requestIndex in depthPassOpaqueCalls)
+            {
+                var request = renderOpaqueDrawCalls[requestIndex];
+
+                GL.BindVertexArray(request.Call.VertexArrayObject);
+
+                var transformTk = request.Node.Transform.ToOpenTK();
+                GL.UniformMatrix4(transformLoc, false, ref transformTk);
+
+                GL.DrawElementsBaseVertex(
+                    request.Call.PrimitiveType,
+                    request.Call.IndexCount,
+                    request.Call.IndexType,
+                    request.Call.StartIndex,
+                    request.Call.BaseVertex
+                );
+            }
         }
 
         public void RenderOpaqueLayer(RenderContext renderContext)
         {
             var camera = renderContext.Camera;
 
+#if DEBUG
+            const string RenderOpaque = "Opaque Render";
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, RenderOpaque.Length, RenderOpaque);
+#endif
+
             renderContext.RenderPass = RenderPass.Opaque;
             MeshBatchRenderer.Render(renderOpaqueDrawCalls, renderContext);
 
+#if DEBUG
+            const string RenderStaticOverlay = "StaticOverlay Render";
+            GL.PopDebugGroup();
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, RenderStaticOverlay.Length, RenderStaticOverlay);
+#endif
+
             renderContext.RenderPass = RenderPass.StaticOverlay;
             MeshBatchRenderer.Render(renderStaticOverlays, renderContext);
+
+#if DEBUG
+            const string RenderAfterOpaque = "AfterOpaque Render";
+            GL.PopDebugGroup();
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, RenderAfterOpaque.Length, RenderAfterOpaque);
+#endif
 
             renderContext.RenderPass = RenderPass.AfterOpaque;
             foreach (var request in renderLooseNodes)
             {
                 request.Node.Render(renderContext);
             }
+
+#if DEBUG
+            GL.PopDebugGroup();
+#endif
         }
 
         public void RenderTranslucentLayer(RenderContext renderContext)
         {
+#if DEBUG
+            const string RenderTranslucentLoose = "Translucent RenderLoose";
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, RenderTranslucentLoose.Length, RenderTranslucentLoose);
+#endif
+
             renderContext.RenderPass = RenderPass.Translucent;
             foreach (var request in renderLooseNodes)
             {
                 request.Node.Render(renderContext);
             }
 
+#if DEBUG
+            const string RenderTranslucent = "Translucent Render";
+            GL.PopDebugGroup();
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, RenderTranslucent.Length, RenderTranslucent);
+#endif
+
             MeshBatchRenderer.Render(renderTranslucentDrawCalls, renderContext);
+
+#if DEBUG
+            GL.PopDebugGroup();
+#endif
         }
 
         public void SetEnabledLayers(HashSet<string> layers)

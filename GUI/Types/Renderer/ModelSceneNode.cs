@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL;
@@ -104,10 +105,7 @@ namespace GUI.Types.Renderer
                 Animation.GetAnimationMatrices(matrices, frame, AnimationController.FrameCache.Skeleton);
 
                 // Update animation texture
-                using (animationTexture.BindingContext())
-                {
-                    GL.TexImage2D(animationTexture.Target, 0, PixelInternalFormat.Rgba32f, animationTexture.Width, animationTexture.Height, 0, PixelFormat.Rgba, PixelType.Float, floatBuffer);
-                }
+                GL.TextureSubImage2D(animationTexture.Handle, 0, 0, 0, animationTexture.Width, animationTexture.Height, PixelFormat.Rgba, PixelType.Float, floatBuffer);
 
                 var first = true;
                 foreach (var matrix in matrices)
@@ -227,7 +225,7 @@ namespace GUI.Types.Renderer
                     continue;
                 }
 
-                meshRenderers.Add(new RenderableMesh((Mesh)newResource.DataBlock, refMesh.MeshIndex, Scene, model, materialTable));
+                meshRenderers.Add(new RenderableMesh((Mesh)newResource.DataBlock, refMesh.MeshIndex, Scene, model, materialTable, debugLabel: Path.GetFileName(refMesh.MeshName)));
             }
 
             // Set active meshes to default
@@ -244,13 +242,17 @@ namespace GUI.Types.Renderer
             // Create animation texture
             animationTexture = new(TextureTarget.Texture2D, 4, bonesCount, 1, 1);
 
-            using (animationTexture.BindingContext())
-            {
-                // Set clamping to edges
-                animationTexture.SetWrapMode(TextureWrapMode.ClampToEdge);
-                // Set nearest-neighbor sampling since we don't want to interpolate matrix rows
-                animationTexture.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
-            }
+#if DEBUG
+            var textureName = nameof(animationTexture);
+            GL.ObjectLabel(ObjectLabelIdentifier.Texture, animationTexture.Handle, textureName.Length, textureName);
+#endif
+
+            // Set clamping to edges
+            animationTexture.SetWrapMode(TextureWrapMode.ClampToEdge);
+            // Set nearest-neighbor sampling since we don't want to interpolate matrix rows
+            animationTexture.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
+
+            GL.TextureStorage2D(animationTexture.Handle, 1, SizedInternalFormat.Rgba32f, animationTexture.Width, animationTexture.Height);
         }
 
         public IEnumerable<string> GetSupportedAnimationNames()

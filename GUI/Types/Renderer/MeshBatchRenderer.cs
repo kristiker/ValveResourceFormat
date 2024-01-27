@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 
@@ -36,25 +37,26 @@ namespace GUI.Types.Renderer
             return a.RenderOrder - b.RenderOrder;
         }
 
-        public static int CompareCameraDistance(Request a, Request b)
+        public static int CompareCameraDistance_BackToFront(Request a, Request b)
         {
             return -a.DistanceFromCamera.CompareTo(b.DistanceFromCamera);
         }
 
-        public static void Render(List<Request> requests, Scene.RenderContext context)
+        public static int CompareCameraDistance_FrontToBack(Request a, Request b)
         {
-            if (context.RenderPass == RenderPass.Opaque)
-            {
-                requests.Sort(ComparePipeline);
-            }
-            else if (context.RenderPass == RenderPass.StaticOverlay)
-            {
-                requests.Sort(CompareRenderOrderThenPipeline);
-            }
-            else if (context.RenderPass == RenderPass.Translucent)
-            {
-                requests.Sort(CompareCameraDistance);
-            }
+            return a.DistanceFromCamera.CompareTo(b.DistanceFromCamera);
+        }
+
+        public static int CompareAABBSize(Request a, Request b)
+        {
+            var aSize = MathF.Max(a.Node.BoundingBox.Size.X, MathF.Max(a.Node.BoundingBox.Size.Y, a.Node.BoundingBox.Size.Z));
+            var bSize = MathF.Max(b.Node.BoundingBox.Size.X, MathF.Max(b.Node.BoundingBox.Size.Y, b.Node.BoundingBox.Size.Z));
+            return aSize.CompareTo(bSize);
+        }
+
+        public static void Render(List<Request> requestsList, Scene.RenderContext context)
+        {
+            var requests = CollectionsMarshal.AsSpan(requestsList);
 
             DrawBatch(requests, context);
         }
@@ -80,9 +82,9 @@ namespace GUI.Types.Renderer
             public bool NeedsCubemapBinding;
         }
 
-        private static readonly Queue<RenderTexture> instanceBoundTextures = new(capacity: 4);
+        private static readonly Queue<int> instanceBoundTextures = new(capacity: 4);
 
-        private static void DrawBatch(List<Request> requests, Scene.RenderContext context)
+        public static void DrawBatch(ReadOnlySpan<Request> requests, Scene.RenderContext context)
         {
             uint vao = 0;
             Shader shader = null;
@@ -193,7 +195,7 @@ namespace GUI.Types.Renderer
 
                 if (bAnimated && uniforms.AnimationTexture != -1)
                 {
-                    instanceBoundTextures.Enqueue(request.Mesh.AnimationTexture);
+                    instanceBoundTextures.Enqueue((int)ReservedTextureSlots.AnimationTexture);
                     Shader.SetTexture((int)ReservedTextureSlots.AnimationTexture, uniforms.AnimationTexture, request.Mesh.AnimationTexture);
                 }
             }
@@ -201,7 +203,7 @@ namespace GUI.Types.Renderer
             var morphComposite = request.Mesh.FlexStateManager?.MorphComposite;
             if (morphComposite != null && uniforms.MorphCompositeTexture != -1)
             {
-                instanceBoundTextures.Enqueue(morphComposite.CompositeTexture);
+                instanceBoundTextures.Enqueue((int)ReservedTextureSlots.MorphCompositeTexture);
                 Shader.SetTexture((int)ReservedTextureSlots.MorphCompositeTexture, uniforms.MorphCompositeTexture, morphComposite.CompositeTexture);
 
                 GL.Uniform2(uniforms.MorphCompositeTextureSize, (float)morphComposite.CompositeTexture.Width, (float)morphComposite.CompositeTexture.Height);
@@ -224,10 +226,9 @@ namespace GUI.Types.Renderer
                 request.Call.BaseVertex
             );
 
-
-            while (instanceBoundTextures.TryDequeue(out var texture))
+            while (instanceBoundTextures.TryDequeue(out var slot))
             {
-                texture.Unbind();
+                GL.BindTextureUnit(slot, 0);
             }
         }
     }

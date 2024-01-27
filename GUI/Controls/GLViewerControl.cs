@@ -422,6 +422,11 @@ namespace GUI.Controls
 #if DEBUG
         private static void OnDebugMessage(DebugSource source, DebugType type, int id, DebugSeverity severity, int length, IntPtr pMessage, IntPtr pUserParam)
         {
+            if (source == DebugSource.DebugSourceApplication && severity == DebugSeverity.DebugSeverityNotification)
+            {
+                return;
+            }
+
             var severityStr = severity.ToString().Replace("DebugSeverity", string.Empty, StringComparison.Ordinal);
             var sourceStr = source.ToString().Replace("DebugSource", string.Empty, StringComparison.Ordinal);
             var typeStr = type.ToString().Replace("DebugType", string.Empty, StringComparison.Ordinal);
@@ -434,9 +439,9 @@ namespace GUI.Controls
                 default: Log.Debug("OpenGL", error); break;
             }
 
-            if (type == DebugType.DebugTypeError || severity == DebugSeverity.DebugSeverityHigh || severity == DebugSeverity.DebugSeverityMedium)
+            if (type == DebugType.DebugTypeError)
             {
-                //Debugger.Break();
+                Debugger.Break();
             }
         }
 
@@ -549,6 +554,11 @@ namespace GUI.Controls
             // blit to the default opengl framebuffer used by the control
             if (MainFramebuffer != GLDefaultFramebuffer)
             {
+#if DEBUG
+                const string BlitFramebuffer = "Blit Framebuffer";
+                GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, BlitFramebuffer.Length, BlitFramebuffer);
+#endif
+
                 MainFramebuffer.Bind(FramebufferTarget.ReadFramebuffer);
                 GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
 
@@ -559,6 +569,10 @@ namespace GUI.Controls
                 GL.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
                 GLDefaultFramebuffer.Bind(FramebufferTarget.Framebuffer);
                 GL.Finish();
+
+#if DEBUG
+                GL.PopDebugGroup();
+#endif
             }
 
             GLControl.SwapBuffers();

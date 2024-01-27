@@ -44,6 +44,12 @@ namespace GUI.Types.Renderer
 
             vaoHandle = GL.GenVertexArray();
             GL.BindVertexArray(vaoHandle);
+
+#if DEBUG
+            var vaoLabel = nameof(OctreeDebugRenderer<T>);
+            GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, vaoHandle, vaoLabel.Length, vaoLabel);
+#endif
+
             GL.BindBuffer(BufferTarget.ArrayBuffer, vboHandle);
 
             SimpleVertex.BindDefaultShaderLayout(shader.Program);
@@ -148,8 +154,7 @@ namespace GUI.Types.Renderer
             AddOctreeNode(vertices, octree.Root, 0);
             vertexCount = vertices.Count;
 
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vboHandle);
-            GL.BufferData(BufferTarget.ArrayBuffer, vertexCount * SimpleVertex.SizeInBytes, vertices.ToArray(), dynamic ? BufferUsageHint.DynamicDraw : BufferUsageHint.StaticDraw);
+            GL.NamedBufferData(vboHandle, vertexCount * SimpleVertex.SizeInBytes, vertices.ToArray(), dynamic ? BufferUsageHint.DynamicDraw : BufferUsageHint.StaticDraw);
         }
 
         public void Render()

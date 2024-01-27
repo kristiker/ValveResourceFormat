@@ -83,10 +83,7 @@ class PickingTexture : Framebuffer
 
             Initialize();
 
-            using (Color.BindingContext())
-            {
-                Color.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
-            }
+            Color.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
 
             CheckStatus_ThrowIfIncomplete(nameof(PickingTexture));
         }
@@ -111,15 +108,13 @@ class PickingTexture : Framebuffer
         GL.Flush();
         GL.Finish();
 
-        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, FboHandle);
-        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
-
         height = Height - height; // flip y
-
         var pixelInfo = new PixelInfo();
-        GL.ReadPixels(width, height, 1, 1, ColorFormat.PixelFormat, ColorFormat.PixelType, ref pixelInfo);
 
-        GL.ReadBuffer(ReadBufferMode.None);
+        GL.NamedFramebufferReadBuffer(FboHandle, ReadBufferMode.ColorAttachment0);
+        GL.ReadPixels(width, height, 1, 1, ColorFormat.PixelFormat, ColorFormat.PixelType, ref pixelInfo);
+        GL.NamedFramebufferReadBuffer(FboHandle, ReadBufferMode.None);
+
         return pixelInfo;
     }
 

@@ -22,13 +22,16 @@ namespace GUI.Types.Renderer
             // Forcefully clamp sprites so they don't render extra pixels on edges
             foreach (var texture in material.Textures.Values)
             {
-                using (texture.BindingContext())
-                {
-                    texture.SetWrapMode(TextureWrapMode.ClampToEdge);
-                }
+                texture.SetWrapMode(TextureWrapMode.ClampToEdge);
             }
 
             quadVao = SetupSquareQuadBuffer(material.Shader);
+
+#if DEBUG
+            var vaoLabel = $"{nameof(SpriteSceneNode)}: {System.IO.Path.GetFileName(resource.FileName)}";
+            GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, quadVao, vaoLabel.Length, vaoLabel);
+#endif
+
             size = material.Material.FloatParams.GetValueOrDefault("g_flUniformPointSize", 16);
             size /= 2f; // correct the scale to actually be 16x16
 

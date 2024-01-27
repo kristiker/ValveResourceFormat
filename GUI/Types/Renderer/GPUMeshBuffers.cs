@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Diagnostics;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Blocks;
 
@@ -7,7 +9,7 @@ namespace GUI.Types.Renderer
     {
         public struct Buffer
         {
-            public uint Handle;
+            public int Handle;
             public long Size;
         }
 
@@ -19,22 +21,31 @@ namespace GUI.Types.Renderer
             VertexBuffers = new Buffer[vbib.VertexBuffers.Count];
             IndexBuffers = new Buffer[vbib.IndexBuffers.Count];
 
-            for (var i = 0; i < vbib.VertexBuffers.Count; i++)
-            {
-                VertexBuffers[i].Handle = (uint)GL.GenBuffer();
-                GL.BindBuffer(BufferTarget.ArrayBuffer, VertexBuffers[i].Handle);
-                GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(vbib.VertexBuffers[i].ElementCount * vbib.VertexBuffers[i].ElementSizeInBytes), vbib.VertexBuffers[i].Data, BufferUsageHint.StaticDraw);
+            var handles = ArrayPool<int>.Shared.Rent(Math.Max(vbib.VertexBuffers.Count, vbib.IndexBuffers.Count));
 
-                GL.GetBufferParameter(BufferTarget.ArrayBuffer, BufferParameterName.BufferSize, out VertexBuffers[i].Size);
+            try
+            {
+                GL.CreateBuffers(vbib.VertexBuffers.Count, handles);
+
+                for (var i = 0; i < vbib.VertexBuffers.Count; i++)
+                {
+                    VertexBuffers[i].Handle = handles[i];
+                    GL.NamedBufferData(VertexBuffers[i].Handle, (IntPtr)(vbib.VertexBuffers[i].ElementCount * vbib.VertexBuffers[i].ElementSizeInBytes), vbib.VertexBuffers[i].Data, BufferUsageHint.StaticDraw);
+                    GL.GetNamedBufferParameter(VertexBuffers[i].Handle, BufferParameterName.BufferSize, out VertexBuffers[i].Size);
+                }
+
+                GL.CreateBuffers(vbib.IndexBuffers.Count, handles);
+
+                for (var i = 0; i < vbib.IndexBuffers.Count; i++)
+                {
+                    IndexBuffers[i].Handle = handles[i];
+                    GL.NamedBufferData(IndexBuffers[i].Handle, (IntPtr)(vbib.IndexBuffers[i].ElementCount * vbib.IndexBuffers[i].ElementSizeInBytes), vbib.IndexBuffers[i].Data, BufferUsageHint.StaticDraw);
+                    GL.GetNamedBufferParameter(IndexBuffers[i].Handle, BufferParameterName.BufferSize, out IndexBuffers[i].Size);
+                }
             }
-
-            for (var i = 0; i < vbib.IndexBuffers.Count; i++)
+            finally
             {
-                IndexBuffers[i].Handle = (uint)GL.GenBuffer();
-                GL.BindBuffer(BufferTarget.ElementArrayBuffer, IndexBuffers[i].Handle);
-                GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr)(vbib.IndexBuffers[i].ElementCount * vbib.IndexBuffers[i].ElementSizeInBytes), vbib.IndexBuffers[i].Data, BufferUsageHint.StaticDraw);
-
-                GL.GetBufferParameter(BufferTarget.ElementArrayBuffer, BufferParameterName.BufferSize, out IndexBuffers[i].Size);
+                ArrayPool<int>.Shared.Return(handles);
             }
         }
     }

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO.Hashing;
 using System.Linq;
@@ -16,6 +17,7 @@ namespace GUI.Types.Renderer
     {
         private readonly Dictionary<ulong, RenderMaterial> Materials = [];
         private readonly Dictionary<string, RenderTexture> Textures = [];
+        private readonly Dictionary<string, RenderTexture> TexturesSrgb = [];
         private readonly VrfGuiContext VrfGuiContext;
         private RenderTexture ErrorTexture;
         private RenderTexture DefaultNormal;
@@ -133,13 +135,16 @@ namespace GUI.Types.Renderer
 
         public RenderTexture GetTexture(string name, bool srgbRead = false)
         {
-            if (Textures.TryGetValue(name, out var tex))
+            // TODO: Create texture view for srgb textures
+            var cache = srgbRead ? TexturesSrgb : Textures;
+
+            if (cache.TryGetValue(name, out var tex))
             {
                 return tex;
             }
 
             tex = LoadTexture(name, srgbRead);
-            Textures.Add(name, tex);
+            cache.Add(name, tex);
             return tex;
         }
 
@@ -155,28 +160,28 @@ namespace GUI.Types.Renderer
             return LoadTexture(textureResource, srgbRead);
         }
 
+#pragma warning disable CA1822 // Mark members as static
         public RenderTexture LoadTexture(Resource textureResource, bool srgbRead = false, bool isViewerRequest = false)
+#pragma warning restore CA1822 // Mark members as static
         {
             var data = (Texture)textureResource.DataBlock;
             var target = TextureTarget.Texture2D;
+            var is3d = false;
             var clampModeS = data.Flags.HasFlag(VTexFlags.SUGGEST_CLAMPS) ? TextureWrapMode.ClampToBorder : TextureWrapMode.Repeat;
             var clampModeT = data.Flags.HasFlag(VTexFlags.SUGGEST_CLAMPT) ? TextureWrapMode.ClampToBorder : TextureWrapMode.Repeat;
             var clampModeU = data.Flags.HasFlag(VTexFlags.SUGGEST_CLAMPU) ? TextureWrapMode.ClampToBorder : TextureWrapMode.Repeat;
 
             if (data.Flags.HasFlag(VTexFlags.CUBE_TEXTURE))
             {
-                target = TextureTarget.TextureCubeMap;
+                is3d = true;
+                target = data.Flags.HasFlag(VTexFlags.TEXTURE_ARRAY) ? TextureTarget.TextureCubeMapArray : TextureTarget.TextureCubeMap;
                 clampModeS = TextureWrapMode.ClampToEdge;
                 clampModeT = TextureWrapMode.ClampToEdge;
                 clampModeU = TextureWrapMode.ClampToEdge;
-
-                if (data.Flags.HasFlag(VTexFlags.TEXTURE_ARRAY))
-                {
-                    target = TextureTarget.TextureCubeMapArray;
-                }
             }
             else if (data.Flags.HasFlag(VTexFlags.TEXTURE_ARRAY) || data.Flags.HasFlag(VTexFlags.VOLUME_TEXTURE))
             {
+                is3d = true;
                 target = TextureTarget.Texture2DArray;
                 clampModeS = TextureWrapMode.ClampToEdge;
                 clampModeT = TextureWrapMode.ClampToEdge;
@@ -184,66 +189,78 @@ namespace GUI.Types.Renderer
             }
 
             var tex = new RenderTexture(target, data);
-
-            var internalFormat = GetPixelInternalFormat(data.Format);
-            var format = GetInternalFormat(data.Format);
-
-            if (srgbRead)
-            {
-                internalFormat = (PixelInternalFormat?)ToSrgb((InternalFormat?)internalFormat);
-                format = ToSrgb(format);
-            }
-
-            using var _ = tex.BindingContext();
+            var format = GetTextureFormat(data.Format);
+            var sizedInternalFormat = srgbRead && format.InternalSrgbFormat is not null ? format.InternalSrgbFormat.Value : format.InternalFormat;
 
 #if DEBUG
             var textureName = System.IO.Path.GetFileName(textureResource.FileName);
             GL.ObjectLabel(ObjectLabelIdentifier.Texture, tex.Handle, textureName.Length, textureName);
 #endif
 
-            if (!format.HasValue && !internalFormat.HasValue)
+            var depth = data.Depth;
+
+            if (target == TextureTarget.TextureCubeMap || target == TextureTarget.TextureCubeMapArray)
             {
-                Log.Warn(nameof(MaterialLoader), $"Don't support {data.Format} but don't want to crash either. Using error texture!");
-                return GetErrorTexture();
+                depth *= 6;
+            }
+
+            var minMipLevelAllowed = 0;
+            var texWidth = data.Width;
+            var texHeight = data.Height;
+
+            if (!isViewerRequest && !is3d && data.NumMipLevels > 1)
+            {
+                var maxUserTextureSize = Settings.Config.MaxTextureSize;
+
+                while (minMipLevelAllowed + 1 < data.NumMipLevels && (texWidth > maxUserTextureSize || texHeight > maxUserTextureSize))
+                {
+                    minMipLevelAllowed++;
+
+                    texWidth >>= 1;
+                    texHeight >>= 1;
+                }
+            }
+
+            if (target == TextureTarget.Texture2DArray || target == TextureTarget.TextureCubeMapArray)
+            {
+                GL.TextureStorage3D(tex.Handle, data.NumMipLevels - minMipLevelAllowed, sizedInternalFormat, texWidth, texHeight, depth);
+            }
+            else
+            {
+                GL.TextureStorage2D(tex.Handle, data.NumMipLevels - minMipLevelAllowed, sizedInternalFormat, texWidth, texHeight);
             }
 
             var buffer = ArrayPool<byte>.Shared.Rent(data.GetBiggestBufferSize());
 
-            var maxMipLevelNotSet = true;
-            var minMipLevel = 0;
-
-            var maxTextureSize = Settings.Config.MaxTextureSize;
-
-            if (isViewerRequest || data.Flags.HasFlag(VTexFlags.TEXTURE_ARRAY) || data.Flags.HasFlag(VTexFlags.VOLUME_TEXTURE))
-            {
-                maxTextureSize = int.MaxValue;
-            }
-
             try
             {
-                foreach (var (i, width, height, bufferSize) in data.GetEveryMipLevelTexture(buffer, maxTextureSize))
+                foreach (var (level, width, height, bufferSize) in data.GetEveryMipLevelTexture(buffer, minMipLevelAllowed))
                 {
-                    if (maxMipLevelNotSet)
-                    {
-                        GL.TexParameter(target, TextureParameterName.TextureMaxLevel, i);
-                        maxMipLevelNotSet = false;
-                    }
+                    var realLevel = level - minMipLevelAllowed;
 
-                    minMipLevel = i;
-
-                    if (target == TextureTarget.TextureCubeMap)
+                    if (format.PixelType is not null)
                     {
-                        for (var face = Texture.CubemapFace.PositiveX; face <= Texture.CubemapFace.NegativeZ; face++)
+                        Debug.Assert(format.PixelFormat is not null);
+
+                        if (is3d)
                         {
-                            var faceSize = bufferSize / 6;
-                            var faceOffset = faceSize * (int)face;
-                            LoadTextureImplShared(data.Format, internalFormat, format, i, width, height, data.Depth,
-                                faceSize, buffer[faceOffset..(faceOffset + faceSize)], TextureTarget.TextureCubeMapPositiveX + (int)face);
+                            GL.TextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, format.PixelFormat.Value, format.PixelType.Value, buffer);
+                        }
+                        else
+                        {
+                            GL.TextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, format.PixelFormat.Value, format.PixelType.Value, buffer);
                         }
                     }
                     else
                     {
-                        LoadTextureImplShared(data.Format, internalFormat, format, i, width, height, data.Depth, bufferSize, buffer, target);
+                        if (is3d)
+                        {
+                            GL.CompressedTextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, (PixelFormat)sizedInternalFormat, bufferSize, buffer);
+                        }
+                        else
+                        {
+                            GL.CompressedTextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, (PixelFormat)sizedInternalFormat, bufferSize, buffer);
+                        }
                     }
                 }
             }
@@ -251,8 +268,6 @@ namespace GUI.Types.Renderer
             {
                 ArrayPool<byte>.Shared.Return(buffer);
             }
-
-            GL.TexParameter(target, TextureParameterName.TextureBaseLevel, minMipLevel);
 
             if (!isViewerRequest)
             {
@@ -262,128 +277,63 @@ namespace GUI.Types.Renderer
 
                 if (MaxTextureMaxAnisotropy >= 4)
                 {
-                    GL.TexParameter(target, (TextureParameterName)ExtTextureFilterAnisotropic.TextureMaxAnisotropyExt, MaxTextureMaxAnisotropy);
+                    GL.TextureParameter(tex.Handle, (TextureParameterName)ExtTextureFilterAnisotropic.TextureMaxAnisotropyExt, MaxTextureMaxAnisotropy);
                 }
             }
 
             tex.SetFiltering(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear);
 
-            GL.TexParameter(target, TextureParameterName.TextureWrapS, (int)clampModeS);
-            GL.TexParameter(target, TextureParameterName.TextureWrapT, (int)clampModeT);
-            GL.TexParameter(target, TextureParameterName.TextureWrapR, (int)clampModeU);
+            GL.TextureParameter(tex.Handle, TextureParameterName.TextureWrapS, (int)clampModeS);
+            GL.TextureParameter(tex.Handle, TextureParameterName.TextureWrapT, (int)clampModeT);
+            GL.TextureParameter(tex.Handle, TextureParameterName.TextureWrapR, (int)clampModeU);
 
             return tex;
         }
 
-        private static void LoadTextureImplShared(VTexFormat vtexFormat, PixelInternalFormat? internalFormat, InternalFormat? format,
-            int level, int width, int height, int depth, int bufferSize, byte[] buffer, TextureTarget target)
+        /// <param name="InternalFormat">Specifies the sized internal format to be used to store texture image data.</param>
+        /// <param name="InternalSrgbFormat">Same as <see cref="InternalFormat"/>, but for sRGB textures. Null if no sRGB format.</param>
+        /// <param name="PixelFormat">Specifies the format of the pixel data. Must be null if the format is compressed.</param>
+        /// <param name="PixelType">Specifies the data type of the pixel data. Must be null if the format is compressed.</param>
+        /// <see href="https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexStorage2D.xhtml"/>
+        /// <see href="https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexSubImage2D.xhtml"/>
+        record struct TextureFormatMapping(SizedInternalFormat InternalFormat, PixelFormat? PixelFormat = null, PixelType? PixelType = null, SizedInternalFormat? InternalSrgbFormat = null);
+
+        private static TextureFormatMapping GetTextureFormat(VTexFormat vformat) => vformat switch
         {
-            if (target == TextureTarget.TextureCubeMapArray)
-            {
-                depth *= 6;
-            }
+#pragma warning disable format
+            VTexFormat.ATI1N           => new((SizedInternalFormat)InternalFormat.CompressedRedRgtc1),
+            VTexFormat.ATI2N           => new((SizedInternalFormat)InternalFormat.CompressedRgRgtc2),
+            VTexFormat.BC6H            => new((SizedInternalFormat)InternalFormat.CompressedRgbBptcUnsignedFloat),
+            VTexFormat.BC7             => new((SizedInternalFormat)InternalFormat.CompressedRgbaBptcUnorm,        InternalSrgbFormat: (SizedInternalFormat)InternalFormat.CompressedSrgbAlphaBptcUnorm),
+            VTexFormat.DXT1            => new((SizedInternalFormat)InternalFormat.CompressedRgbaS3tcDxt1Ext,      InternalSrgbFormat: (SizedInternalFormat)InternalFormat.CompressedSrgbAlphaS3tcDxt1Ext),
+            VTexFormat.DXT5            => new((SizedInternalFormat)InternalFormat.CompressedRgbaS3tcDxt5Ext,      InternalSrgbFormat: (SizedInternalFormat)InternalFormat.CompressedSrgbAlphaS3tcDxt5Ext),
+            VTexFormat.ETC2            => new((SizedInternalFormat)InternalFormat.CompressedRgb8Etc2,             InternalSrgbFormat: (SizedInternalFormat)InternalFormat.CompressedSrgb8Etc2),
+            VTexFormat.ETC2_EAC        => new((SizedInternalFormat)InternalFormat.CompressedRgba8Etc2Eac,         InternalSrgbFormat: (SizedInternalFormat)InternalFormat.CompressedSrgb8Alpha8Etc2Eac),
 
-            var is3d = target == TextureTarget.Texture2DArray || target == TextureTarget.TextureCubeMapArray;
+            VTexFormat.R16             => new(SizedInternalFormat.R16,        PixelFormat.Red,    PixelType.UnsignedShort),
+            VTexFormat.RG1616          => new(SizedInternalFormat.Rg16,       PixelFormat.Rg,     PixelType.UnsignedShort),
+            VTexFormat.RGBA16161616    => new(SizedInternalFormat.Rgba16,     PixelFormat.Rgba,   PixelType.UnsignedShort),
 
-            if (internalFormat.HasValue)
-            {
-                var pixelFormat = GetPixelFormat(vtexFormat);
-                var pixelType = GetPixelType(vtexFormat);
+            VTexFormat.R16F            => new(SizedInternalFormat.R16f,       PixelFormat.Red,    PixelType.HalfFloat),
+            VTexFormat.RG1616F         => new(SizedInternalFormat.Rg16f,      PixelFormat.Rg,     PixelType.HalfFloat),
+            VTexFormat.RGBA16161616F   => new(SizedInternalFormat.Rgba16f,    PixelFormat.Rgba,   PixelType.HalfFloat),
 
-                if (is3d)
-                {
-                    GL.TexImage3D(target, level, internalFormat.Value, width, height, depth, 0, pixelFormat, pixelType, buffer);
-                }
-                else
-                {
-                    GL.TexImage2D(target, level, internalFormat.Value, width, height, 0, pixelFormat, pixelType, buffer);
-                }
-            }
-            else
-            {
-                if (is3d)
-                {
-                    GL.CompressedTexImage3D(target, level, format.Value, width, height, depth, 0, bufferSize, buffer);
-                }
-                else
-                {
-                    GL.CompressedTexImage2D(target, level, format.Value, width, height, 0, bufferSize, buffer);
-                }
-            }
-        }
+            VTexFormat.R32F            => new(SizedInternalFormat.R32f,       PixelFormat.Red,    PixelType.Float),
+            VTexFormat.RG3232F         => new(SizedInternalFormat.Rg32f,      PixelFormat.Rg,     PixelType.Float),
+            VTexFormat.RGBA32323232F   => new(SizedInternalFormat.Rgba32f,    PixelFormat.Rgba,   PixelType.Float),
 
-        private static InternalFormat? GetInternalFormat(VTexFormat vformat)
-            => vformat switch
-            {
-                VTexFormat.DXT1 => InternalFormat.CompressedRgbaS3tcDxt1Ext,
-                VTexFormat.DXT5 => InternalFormat.CompressedRgbaS3tcDxt5Ext,
-                VTexFormat.ETC2 => InternalFormat.CompressedRgb8Etc2,
-                VTexFormat.ETC2_EAC => InternalFormat.CompressedRgba8Etc2Eac,
-                VTexFormat.ATI1N => InternalFormat.CompressedRedRgtc1,
-                VTexFormat.ATI2N => InternalFormat.CompressedRgRgtc2,
-                VTexFormat.BC6H => InternalFormat.CompressedRgbBptcUnsignedFloat,
-                VTexFormat.BC7 => InternalFormat.CompressedRgbaBptcUnorm,
-                VTexFormat.RGBA8888 => InternalFormat.Rgba8,
-                VTexFormat.RGBA16161616 => InternalFormat.Rgba16,
-                VTexFormat.RGBA16161616F => InternalFormat.Rgba16f,
-                VTexFormat.I8 => InternalFormat.Intensity8,
-                _ => null // Unsupported texture format
-            };
+            VTexFormat.RGBA8888        => new(SizedInternalFormat.Rgba8,      PixelFormat.Rgba,   PixelType.UnsignedByte,     SizedInternalFormat.Srgb8Alpha8),
+            VTexFormat.BGRA8888        => new(SizedInternalFormat.Rgba8,      PixelFormat.Bgra,   PixelType.UnsignedByte,     SizedInternalFormat.Srgb8Alpha8),
+            //VTexFormat.I8              => new(SizedInternalFormat.Intensity8, PixelFormat.Red,  PixelType.UnsignedByte),
 
-        private static InternalFormat? ToSrgb(InternalFormat? format)
-            => format switch
-            {
-                InternalFormat.CompressedRgbaS3tcDxt1Ext => InternalFormat.CompressedSrgbAlphaS3tcDxt1Ext,
-                InternalFormat.CompressedRgbaS3tcDxt5Ext => InternalFormat.CompressedSrgbAlphaS3tcDxt5Ext,
-                InternalFormat.CompressedRgb8Etc2 => InternalFormat.CompressedSrgb8Etc2,
-                InternalFormat.CompressedRgba8Etc2Eac => InternalFormat.CompressedSrgb8Alpha8Etc2Eac,
-                InternalFormat.CompressedRgbaBptcUnorm => InternalFormat.CompressedSrgbAlphaBptcUnorm,
-                InternalFormat.Rgba8 => InternalFormat.Srgb8Alpha8,
-                InternalFormat.Rgb8 => InternalFormat.Srgb8,
-                _ => format
-            };
+            //VTexFormat.IA88
+            //VTexFormat.R11_EAC
+            //VTexFormat.RG11_EAC
+            //VTexFormat.RGB323232F
+#pragma warning restore format
 
-        private static PixelInternalFormat? GetPixelInternalFormat(VTexFormat vformat)
-            => vformat switch
-            {
-                VTexFormat.R16 => PixelInternalFormat.R16,
-                VTexFormat.R16F => PixelInternalFormat.R16f,
-                VTexFormat.RG1616 => PixelInternalFormat.Rg16,
-                VTexFormat.RG1616F => PixelInternalFormat.Rg16f,
-                VTexFormat.RGBA16161616 => PixelInternalFormat.Rgba16,
-                VTexFormat.RGBA16161616F => PixelInternalFormat.Rgba16f,
-                VTexFormat.RGBA8888 => PixelInternalFormat.Rgba8,
-                VTexFormat.BGRA8888 => PixelInternalFormat.Rgba8,
-                _ => null // Unsupported texture format
-            };
-
-        private static PixelFormat GetPixelFormat(VTexFormat vformat)
-            => vformat switch
-            {
-                VTexFormat.R16 => PixelFormat.Red,
-                VTexFormat.R16F => PixelFormat.Red,
-                VTexFormat.R32F => PixelFormat.Red,
-                VTexFormat.RG1616 => PixelFormat.Rg,
-                VTexFormat.RG1616F => PixelFormat.Rg,
-                VTexFormat.RG3232F => PixelFormat.Rg,
-                VTexFormat.BGRA8888 => PixelFormat.Bgra,
-                _ => PixelFormat.Rgba
-            };
-
-        private static PixelType GetPixelType(VTexFormat vformat)
-            => vformat switch
-            {
-                VTexFormat.R16 => PixelType.UnsignedShort,
-                VTexFormat.RG1616 => PixelType.UnsignedShort,
-                VTexFormat.RGBA16161616 => PixelType.UnsignedShort,
-                VTexFormat.R16F => PixelType.HalfFloat,
-                VTexFormat.RG1616F => PixelType.HalfFloat,
-                VTexFormat.RGBA16161616F => PixelType.HalfFloat,
-                VTexFormat.R32F => PixelType.Float,
-                VTexFormat.RG3232F => PixelType.Float,
-                VTexFormat.RGBA32323232F => PixelType.Float,
-                _ => PixelType.UnsignedByte
-            };
+            _ => throw new NotImplementedException($"Unsupported texture format {vformat}")
+        };
 
         static readonly string[] NonMaterialUniforms =
         [
@@ -474,16 +424,16 @@ namespace GUI.Types.Renderer
         {
             if (ErrorTexture == null)
             {
-                ReadOnlySpan<float> color1 = [0.4f, 0.1f, 0.3f, 1f];
-                ReadOnlySpan<float> color2 = [0f, 0.5f, 0f, 1f];
+                ReadOnlySpan<byte> color1 = [100, 25, 75];
+                ReadOnlySpan<byte> color2 = [0, 127, 0];
 
-                var color = new float[16 * 4];
+                var color = new byte[16 * 3];
 
                 for (var i = 0; i < 16; i++)
                 {
                     var checkerboardX = i / 4 % 2;
                     var colorToUse = i % 2 == checkerboardX ? color1 : color2;
-                    var pixel = color.AsSpan(i * 4, 4);
+                    var pixel = color.AsSpan(i * 3, 3);
                     colorToUse.CopyTo(pixel);
                 }
 
@@ -493,30 +443,23 @@ namespace GUI.Types.Renderer
             return ErrorTexture;
         }
 
-        private static RenderTexture CreateSolidTexture(float r, float g, float b)
-            => GenerateColorTexture(1, 1, [r, g, b, 1f]);
+        private static RenderTexture CreateSolidTexture(byte r, byte g, byte b) => GenerateColorTexture(1, 1, [r, g, b]);
+        private RenderTexture GetDefaultNormal() => DefaultNormal ??= CreateSolidTexture(127, 127, 255);
+        private RenderTexture GetDefaultMask() => DefaultMask ??= CreateSolidTexture(255, 255, 255);
 
-        private RenderTexture GetDefaultNormal()
-        {
-            DefaultNormal ??= CreateSolidTexture(0.5f, 0.5f, 1.0f);
-            return DefaultNormal;
-        }
-
-        private RenderTexture GetDefaultMask()
-        {
-            DefaultMask ??= CreateSolidTexture(1.0f, 1.0f, 1.0f);
-            return DefaultMask;
-        }
-
-        private static RenderTexture GenerateColorTexture(int width, int height, float[] color)
+        private static RenderTexture GenerateColorTexture(int width, int height, byte[] color)
         {
             var texture = new RenderTexture(TextureTarget.Texture2D, width, height, 1, 1);
-            using var _ = texture.BindingContext();
-
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba32f, width, height, 0, PixelFormat.Rgba, PixelType.Float, color);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 0);
             texture.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
             texture.SetWrapMode(TextureWrapMode.Repeat);
+
+            GL.TextureStorage2D(texture.Handle, 1, SizedInternalFormat.Rgb8, width, height);
+            GL.TextureSubImage2D(texture.Handle, 0, 0, 0, width, height, PixelFormat.Rgb, PixelType.UnsignedByte, color);
+
+#if DEBUG
+            var label = width > 1 ? "ErrorTexture" : "ColorTexture";
+            GL.ObjectLabel(ObjectLabelIdentifier.Texture, texture.Handle, label.Length, label);
+#endif
 
             return texture;
         }

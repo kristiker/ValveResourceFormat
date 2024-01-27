@@ -21,6 +21,7 @@ namespace GUI.Types.Renderer
         private bool ShowBaseGrid;
         public bool ShowSkybox { get; set; } = true;
         public bool IsWireframe { get; set; }
+        public bool DepthPassEnabled { get; set; } = true;
 
         public float Uptime { get; private set; }
 
@@ -43,6 +44,7 @@ namespace GUI.Types.Renderer
         private OctreeDebugRenderer<SceneNode> staticOctreeRenderer;
         private OctreeDebugRenderer<SceneNode> dynamicOctreeRenderer;
         protected SelectedNodeRenderer selectedNodeRenderer;
+        private Shader depthOnlyShader;
 
         protected GLSceneViewer(VrfGuiContext guiContext, Frustum cullFrustum) : base(guiContext)
         {
@@ -293,6 +295,7 @@ namespace GUI.Types.Renderer
             Camera.SetViewportSize(GLControl.Width, GLControl.Height);
 
             Camera.Picker = new PickingTexture(Scene.GuiContext, OnPicked);
+            depthOnlyShader = GuiContext.ShaderLoader.LoadShader("vrf.depth_only"); // TODO: Morph support
 
             CreateBuffers();
 
@@ -322,6 +325,11 @@ namespace GUI.Types.Renderer
             Uptime += e.FrameTime;
             viewBuffer.Data.Time = Uptime;
 
+#if DEBUG
+            const string UpdateLoop = "Update Loop";
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, UpdateLoop.Length, UpdateLoop);
+#endif
+
             Scene.Update(e.FrameTime);
 
             if (SkyboxScene != null)
@@ -337,6 +345,12 @@ namespace GUI.Types.Renderer
 
             Scene.CollectSceneDrawCalls(Camera, lockedCullFrustum);
             SkyboxScene?.CollectSceneDrawCalls(skyboxCamera, skyboxLockedCullFrustum);
+
+#if DEBUG
+            const string ScenesRender = "Scenes Render";
+            GL.PopDebugGroup();
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, ScenesRender.Length, ScenesRender);
+#endif
 
             var renderContext = new Scene.RenderContext
             {
@@ -361,6 +375,12 @@ namespace GUI.Types.Renderer
 
             RenderScenesWithView(renderContext);
 
+#if DEBUG
+            const string LinesRender = "Lines Render";
+            GL.PopDebugGroup();
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, LinesRender.Length, LinesRender);
+#endif
+
             selectedNodeRenderer.Render(renderContext);
 
             if (showStaticOctree)
@@ -377,6 +397,10 @@ namespace GUI.Types.Renderer
             {
                 baseGrid.Render(renderContext);
             }
+
+#if DEBUG
+            GL.PopDebugGroup();
+#endif
         }
 
         private void RenderScenesWithView(Scene.RenderContext renderContext)
@@ -384,22 +408,63 @@ namespace GUI.Types.Renderer
             GL.Viewport(0, 0, renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
             renderContext.Framebuffer.Clear();
 
+            GL.DepthRange(0.05, 1);
+            UpdateSceneBuffersGpu(Scene, Camera);
+
+            // Depth pass
+            if (DepthPassEnabled)
+            {
+#if DEBUG
+                const string DepthPass = "Depth Pass";
+                GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, DepthPass.Length, DepthPass);
+#endif
+
+                GL.ColorMask(false, false, false, false);
+                GL.DepthFunc(DepthFunction.Greater);
+
+                var oldReplacementShader = renderContext.ReplacementShader;
+                renderContext.ReplacementShader = depthOnlyShader;
+
+                renderContext.Scene = Scene;
+                Scene.DepthPassOpaque(renderContext);
+
+                renderContext.ReplacementShader = oldReplacementShader;
+
+                GL.ColorMask(true, true, true, true);
+                GL.DepthFunc(DepthFunction.Gequal);
+
+#if DEBUG
+                GL.PopDebugGroup();
+#endif
+            }
+
             // TODO: check if renderpass allows wireframe mode
             if (IsWireframe)
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
             }
 
-            GL.DepthRange(0.05, 1);
-            UpdateSceneBuffersGpu(Scene, Camera);
+#if DEBUG
+            const string MainSceneOpaqueRender = "Main Scene Opaque Render";
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, MainSceneOpaqueRender.Length, MainSceneOpaqueRender);
+#endif
 
             renderContext.Scene = Scene;
             Scene.RenderOpaqueLayer(renderContext);
+
+#if DEBUG
+            GL.PopDebugGroup();
+#endif
 
             // 3D Sky
             GL.DepthRange(0, 0.05);
             if (ShowSkybox && SkyboxScene != null)
             {
+#if DEBUG
+                const string SkySceneRender = "3D Sky Scene Render";
+                GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, SkySceneRender.Length, SkySceneRender);
+#endif
+
                 renderContext.Camera = skyboxCamera;
 
                 UpdateSceneBuffersGpu(SkyboxScene, skyboxCamera);
@@ -410,13 +475,39 @@ namespace GUI.Types.Renderer
 
                 // Back to main Scene
                 UpdateSceneBuffersGpu(Scene, Camera);
+
+#if DEBUG
+                GL.PopDebugGroup();
+#endif
             }
 
             // 2D Sky
-            Scene.Sky?.Render(renderContext);
+            if (Scene.Sky != null)
+            {
+#if DEBUG
+                const string SkyRender = "2D Sky Render";
+                GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, SkyRender.Length, SkyRender);
+#endif
+
+                Scene.Sky.Render(renderContext);
+
+#if DEBUG
+                GL.PopDebugGroup();
+#endif
+            }
+
             GL.DepthRange(0.05, 1);
 
+#if DEBUG
+            const string MainSceneTranslucentRender = "Main Scene Translucent Render";
+            GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, MainSceneTranslucentRender.Length, MainSceneTranslucentRender);
+#endif
+
             Scene.RenderTranslucentLayer(renderContext);
+
+#if DEBUG
+            GL.PopDebugGroup();
+#endif
 
             if (IsWireframe)
             {
@@ -434,6 +525,7 @@ namespace GUI.Types.Renderer
         protected void AddWireframeToggleControl()
         {
             AddCheckBox("Show Wireframe", false, (v) => IsWireframe = v);
+            AddCheckBox("Enable Depth Pass", DepthPassEnabled, (v) => DepthPassEnabled = v);
         }
 
         protected void AddRenderModeSelectionControl()

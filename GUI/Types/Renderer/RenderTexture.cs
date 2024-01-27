@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.ResourceTypes;
 
@@ -19,10 +18,8 @@ namespace GUI.Types.Renderer
         RenderTexture(TextureTarget target)
         {
             Target = target;
-            Handle = GL.GenTexture();
-
-            BindAction = Bind;
-            UnbindAction = Unbind;
+            GL.CreateTextures(target, 1, out int handle);
+            Handle = handle;
         }
 
         public RenderTexture(TextureTarget target, Texture data) : this(target)
@@ -43,68 +40,30 @@ namespace GUI.Types.Renderer
             NumMipLevels = mipcount;
         }
 
-        public void Bind() => GL.BindTexture(Target, Handle);
-        public void Unbind() => GL.BindTexture(Target, 0);
-        // TODO: Replace binding with opengl DSA apis, these fields is to prevent Action() allocs
-        private readonly Action BindAction;
-        private readonly Action UnbindAction;
-        public BindingContext BindingContext() => new(BindAction, UnbindAction);
-
-        // todo: bindless parameters TexParameter -> TextureParameter
         public void SetWrapMode(TextureWrapMode wrap)
         {
-            Assert_IsBound();
-            GL.TexParameter(Target, TextureParameterName.TextureWrapS, (int)wrap);
+            GL.TextureParameter(Handle, TextureParameterName.TextureWrapS, (int)wrap);
 
             if (Height > 1)
             {
-                GL.TexParameter(Target, TextureParameterName.TextureWrapT, (int)wrap);
+                GL.TextureParameter(Handle, TextureParameterName.TextureWrapT, (int)wrap);
             }
 
             if (Depth > 1)
             {
-                GL.TexParameter(Target, TextureParameterName.TextureWrapR, (int)wrap);
+                GL.TextureParameter(Handle, TextureParameterName.TextureWrapR, (int)wrap);
             }
         }
 
         public void SetFiltering(TextureMinFilter min, TextureMagFilter mag)
         {
-            Assert_IsBound();
-            GL.TexParameter(Target, TextureParameterName.TextureMinFilter, (int)min);
-            GL.TexParameter(Target, TextureParameterName.TextureMagFilter, (int)mag);
+            GL.TextureParameter(Handle, TextureParameterName.TextureMinFilter, (int)min);
+            GL.TextureParameter(Handle, TextureParameterName.TextureMagFilter, (int)mag);
         }
 
         public void Dispose()
         {
             GL.DeleteTexture(Handle);
         }
-
-#if DEBUG
-        private void Assert_IsBound()
-        {
-            // no GetPName for this
-            if (Target == TextureTarget.TextureCubeMapArray)
-            {
-                return;
-            }
-
-            var current = GL.GetInteger(Target switch
-            {
-                TextureTarget.Texture2D => GetPName.TextureBinding2D,
-                TextureTarget.Texture2DArray => GetPName.TextureBinding2DArray,
-                TextureTarget.TextureCubeMap => GetPName.TextureBindingCubeMap,
-                TextureTarget.TextureCubeMapArray => GetPName.TextureBindingCubeMap,
-                TextureTarget.Texture2DMultisample => GetPName.TextureBinding2DMultisample,
-                _ => GetPName.TextureBinding2D,
-            });
-
-            Debug.Assert(current == Handle, $"Texture {Handle} is not bound, current is {current}");
-        }
-#else
-        private static void Assert_IsBound()
-        {
-            // noop
-        }
-#endif
     }
 }
