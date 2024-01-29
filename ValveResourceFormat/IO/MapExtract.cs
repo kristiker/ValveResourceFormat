@@ -415,31 +415,41 @@ public sealed class MapExtract
 
                 var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
 
-                //extract everything but nodraw and clip, these tend to have the most complicated geo in them and still make hammer hand
+                //extract everything but nodraw and clip, these tend to have the most complicated geo in them and still make hammer han
                 //gotta find where the issue with them is within plankton...
-                if (tooltexture != "nodraw" && tooltexture != "clip")
+                //if (tooltexture == "playerclip")
+                //{
+                var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+
+                var hammerMeshBuilder = new HammerMeshBuilder();
+                //
+                //var collisionAttributeIndex = mesh.CollisionAttributeIndex;
+                ////var surfacePropertyIndex = capsule.SurfacePropertyIndex;
+                //
+                //foreach (var Vertex in mesh.Shape.Vertices)
+                //{
+                //    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
+                //}
+                //
+                //foreach (var Face in mesh.Shape.Triangles)
+                //{
+                //    hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z, material);
+                //}
+
+                var testVertices = new Vector3[4] { new Vector3(0, 0, 0), new Vector3(16, 0, 0), new Vector3(16, 16, 0), new Vector3(0, 16, 0) };
+                var testIndices = new int[4] { 0, 1, 2, 3 };
+
+                foreach (var Vertex in testVertices)
                 {
-                    var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
-
-                    var hammerMeshBuilder = new HammerMeshBuilder();
-
-                    var collisionAttributeIndex = mesh.CollisionAttributeIndex;
-                    //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
-
-                    foreach (var Vertex in mesh.Shape.Vertices)
-                    {
-                        hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex, material));
-                    }
-
-                    foreach (var Face in mesh.Shape.Triangles)
-                    {
-                        hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z);
-                    }
-
-                    var hammermesh = hammerMeshBuilder.GenerateMesh();
-                    MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
-
+                    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
                 }
+
+                hammerMeshBuilder.AddFace(testIndices);
+
+                var hammermesh = hammerMeshBuilder.GenerateMesh();
+                MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
+
+                //}
             }
         }
 
