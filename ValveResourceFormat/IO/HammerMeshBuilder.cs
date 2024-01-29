@@ -11,6 +11,7 @@ using System.Linq;
 using SharpGLTF.Geometry.VertexTypes;
 using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
+using System.Runtime.Intrinsics;
 
 namespace ValveResourceFormat.IO
 {
@@ -78,7 +79,7 @@ namespace ValveResourceFormat.IO
                     var heIndex = initHalfEdgeCount + j;
 
                     //if the previous half edge is -1 it means this is the start of the new face so remember the first half edge added
-                    //if the previous half edge is not -1, then connect the current half edge with it's previous one
+                    //if the previous half edge is not -1, then connect the current half edge with its previous one
                     if (prevHalfEdge == -1)
                     {
                         firstHalfEdge = heIndex;
@@ -250,9 +251,10 @@ namespace ValveResourceFormat.IO
 
                 mesh.FaceVertexData.Size += 1;
 
+                var normal = new Vector3(0, 0, 1);
                 if (halfEdge.face != -1)
                 {
-                    var normal = CalculateNormal(halfEdge.next);
+                    normal = CalculateNormal(halfEdge.next);
                     var tangents = CalculateTangentFromNormal(normal);
                     normals.Data.Add(normal);
                     tangent.Data.Add(tangents);
@@ -264,9 +266,9 @@ namespace ValveResourceFormat.IO
                     tangent.Data.Add(new Vector4(0, 0, 0, 0));
                 }
 
-                var startVertex = Vertices[halfEdge.origVert];
+                var startVertex = Vertices[halfEdge.destVert];
 
-                textureCoords.Data.Add(new Vector2(startVertex.pos.Length() % 1.0f));
+                textureCoords.Data.Add(CalculateTriPlanarUVs(startVertex.pos, normal));
             }
 
             foreach (var Face in Faces)
@@ -362,6 +364,19 @@ namespace ValveResourceFormat.IO
             Vector3 tangent2 = Vector3.Cross(normal, new Vector3(0, 0, 1));
             return new Vector4(tangent1.Length() > tangent2.Length() ? tangent1 : tangent2, 1.0f);
         }
+
+        private static Vector2 CalculateTriPlanarUVs(Vector3 vertexPos, Vector3 normal, float textureScale = 0.03125f)
+        {
+            var weights = Vector3.Abs(normal);
+            var top = new Vector2(vertexPos.Y, vertexPos.X) * weights.Z;
+            var front = new Vector2(vertexPos.Z, vertexPos.X) * weights.Y;
+            var side = new Vector2(vertexPos.Z, vertexPos.Y) * weights.X;
+
+            var UV = (top + front + side);
+
+            return UV * textureScale;
+        }
+
 
         public static CDmePolygonMeshDataStream<T> CreateStream<TArray, T>(int dataStateFlags, string name, params T[] data)
             where TArray : Datamodel.Array<T>, new()

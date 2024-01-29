@@ -422,29 +422,29 @@ public sealed class MapExtract
                 var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
 
                 var hammerMeshBuilder = new HammerMeshBuilder();
-                //
-                //var collisionAttributeIndex = mesh.CollisionAttributeIndex;
-                ////var surfacePropertyIndex = capsule.SurfacePropertyIndex;
-                //
-                //foreach (var Vertex in mesh.Shape.Vertices)
-                //{
-                //    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
-                //}
-                //
-                //foreach (var Face in mesh.Shape.Triangles)
-                //{
-                //    hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z, material);
-                //}
 
-                var testVertices = new Vector3[4] { new Vector3(0, 0, 0), new Vector3(16, 0, 0), new Vector3(16, 16, 0), new Vector3(0, 16, 0) };
-                var testIndices = new int[4] { 0, 1, 2, 3 };
+                var collisionAttributeIndex = mesh.CollisionAttributeIndex;
+                //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
 
-                foreach (var Vertex in testVertices)
+                foreach (var Vertex in mesh.Shape.Vertices)
                 {
                     hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
                 }
 
-                hammerMeshBuilder.AddFace(testIndices);
+                foreach (var Face in mesh.Shape.Triangles)
+                {
+                    hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z, material);
+                }
+
+                //var testVertices = new Vector3[4] { new Vector3(0, 0, 0), new Vector3(16, 0, 0), new Vector3(16, 16, 0), new Vector3(0, 16, 0) };
+                //var testIndices = new int[4] { 0, 1, 2, 3 };
+                //
+                //foreach (var Vertex in testVertices)
+                //{
+                //    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
+                //}
+
+                //hammerMeshBuilder.AddFace(testIndices);
 
                 var hammermesh = hammerMeshBuilder.GenerateMesh();
                 MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
