@@ -61,6 +61,12 @@ public sealed class MapExtract
         public static readonly uint Model = StringToken.Get("model");
     }
 
+
+
+
+
+
+
     /// <summary>
     /// Extract a map from a resource. Accepted types include Map, World. TODO: WorldNode and EntityLump.
     /// </summary>
@@ -80,6 +86,14 @@ public sealed class MapExtract
                 throw new InvalidDataException($"Resource type {resource.ResourceType} is not supported in {nameof(MapExtract)}.");
         }
     }
+
+
+
+
+
+
+
+
 
     /// <summary>
     /// Extract a map by name and a vpk-based file loader.
@@ -243,7 +257,7 @@ public sealed class MapExtract
                 Type = ModelExtract.ModelExtractType.Map_PhysicsToRenderMesh,
                 PhysicsToRenderMaterialNameProvider = GetToolTextureNameForCollisionTags,
             }
-            .ToContentFile();
+.ToContentFile();
             //vmap.AdditionalFiles.Add(original);
             vmap.AdditionalFiles.Add(editable);
         }
@@ -322,15 +336,21 @@ public sealed class MapExtract
         {
             var physModelNames = WorldPhysicsNamesToExtract(WorldPhysicsName);
 
+
+
+
+
+
+
             /*MapDocument.World.Children.Add(new CMapEntity() { Name = "World Physics", EditorOnly = true }
                 .WithClassName("prop_static")
                 .WithProperty("model", physModelNames.Original)
             );*/
 
             MapDocument.World.Children.Add(new CMapEntity() { Name = "Editable World Physics" }
-                .WithClassName("prop_static")
-                .WithProperty("model", physModelNames.Editable)
-            );
+.WithClassName("prop_static")
+.WithProperty("model", physModelNames.Editable)
+);
         }
 
 
@@ -417,37 +437,40 @@ public sealed class MapExtract
 
                 //extract everything but nodraw and clip, these tend to have the most complicated geo in them and still make hammer han
                 //gotta find where the issue with them is within plankton...
-                //if (tooltexture == "playerclip")
+                //if (tooltexture != "nodraw")
                 //{
-                var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+                    var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
 
-                var hammerMeshBuilder = new HammerMeshBuilder();
 
-                var collisionAttributeIndex = mesh.CollisionAttributeIndex;
-                //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
+                    var collisionAttributeIndex = mesh.CollisionAttributeIndex;
+                    //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
 
-                foreach (var Vertex in mesh.Shape.Vertices)
-                {
-                    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
-                }
+                    var hammerMeshBuilder = new HammerMeshBuilder();
 
-                foreach (var Face in mesh.Shape.Triangles)
-                {
-                    hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z, material);
-                }
+                    foreach (var Vertex in mesh.Shape.Vertices)
+                    {
+                        hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
+                    }
 
-                //var testVertices = new Vector3[4] { new Vector3(0, 0, 0), new Vector3(16, 0, 0), new Vector3(16, 16, 0), new Vector3(0, 16, 0) };
-                //var testIndices = new int[4] { 0, 1, 2, 3 };
-                //
-                //foreach (var Vertex in testVertices)
-                //{
-                //    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
-                //}
+                    foreach (var Face in mesh.Shape.Triangles)
+                    {
+                        hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z, material);
+                    }
 
-                //hammerMeshBuilder.AddFace(testIndices);
+                    //var testVertices = new Vector3[4] { new Vector3(0, 0, 0), new Vector3(16, 0, 0), new Vector3(16, 16, 0), new Vector3(0, 16, 0) };
+                    //var testIndices = new int[3] { 0, 1, 2 };
+                    //var testIndices2 = new int[3] { 0, 1, 3 };
+                    //
+                    //foreach (var Vertex in testVertices)
+                    //{
+                    //    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
+                    //}
+                    //
+                    //hammerMeshBuilder.AddFace(testIndices);
+                    //hammerMeshBuilder.AddFace(testIndices2);
 
-                var hammermesh = hammerMeshBuilder.GenerateMesh();
-                MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
+                    var hammermesh = hammerMeshBuilder.GenerateMesh();
+                    MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
 
                 //}
             }
@@ -520,8 +543,8 @@ public sealed class MapExtract
 
             // Only use this group in the base world layer
             var bakedGroup = isBakedToWorld && destNode == MapDocument.World
-                ? "Baked World Models"
-                : null;
+? "Baked World Models"
+: null;
 
             AddChildMaybeGrouped(destNode, node, bakedGroup);
         }
@@ -586,6 +609,14 @@ public sealed class MapExtract
             {
                 SetTintAlpha(propStatic, tintColor * 255f);
             }
+
+
+
+
+
+
+
+
 
             /* // TODO: check for values being 0
             if (!sceneObject.ContainsKey("m_nLightProbeVolumePrecomputedHandshake") || !sceneObject.ContainsKey("m_nCubeMapPrecomputedHandshake"))
@@ -779,6 +810,8 @@ public sealed class MapExtract
             // TODO: Clutter
         }
     }
+
+
 
     #region Entities
     private void GatherEntitiesFromLump(EntityLump entityLump)
@@ -1048,8 +1081,8 @@ public sealed class MapExtract
             _ => data.ToString()
         };
     }
-    #endregion Entities
 
+    #endregion Entities
     private static Vector3 SrgbLinearToGamma(Vector3 vLinearColor)
     {
         var vLinearSegment = vLinearColor * 12.92f;

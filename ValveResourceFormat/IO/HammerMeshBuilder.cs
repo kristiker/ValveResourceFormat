@@ -59,6 +59,10 @@ namespace ValveResourceFormat.IO
         public List<HalfEdge> HalfEdges = new();
         public List<Face> Faces = new();
 
+        public Dictionary<Tuple<int, int>, int> VertsToEdgeDict = new();
+
+        public List<int> facesToRemove = new();
+
         public void ComputeHalfEdgeStructure()
         {
             //loops trough all the faces and generates only the inner half edges of the face
@@ -72,11 +76,50 @@ namespace ValveResourceFormat.IO
                 //generate inner half edge loop
                 for (int j = 0; j < face.indices.Count; j++)
                 {
-                    var v1 = face.indices[j];
-                    var v2 = face.indices[(j + 1) % face.indices.Count];
+                    var v1idx = face.indices[j];
+                    var v2idx = face.indices[(j + 1) % face.indices.Count];
 
-                    var he = new HalfEdge { origVert = v1, destVert = v2, face = i };
+                    var v1 = Vertices[v1idx];
+                    var v2 = Vertices[v2idx];
+
                     var heIndex = initHalfEdgeCount + j;
+
+                    //if the current internal half edge were trying to add already exists something is wrong
+                    //break out of the loop (discard face)
+                    try
+                    {
+                        VertsToEdgeDict.Add(new Tuple<int, int>(v1idx, v2idx), heIndex);
+                    }
+                    catch (ArgumentException)
+                    {
+                        Faces.RemoveAt(i);
+                        for (int k = j - 1; k >= 0; k--)
+                        {
+                            var heToRemoveIndex = initHalfEdgeCount + k;
+                            var heToRemove = HalfEdges[heToRemoveIndex];
+                            Vertices[heToRemove.origVert].relatedEdges.Remove(heToRemoveIndex);
+                            Vertices[heToRemove.destVert].relatedEdges.Remove(heToRemoveIndex);
+                            HalfEdges.RemoveAt(heToRemoveIndex);
+
+                            if (Vertices[heToRemove.origVert].relatedEdges.Count == 0)
+                            {
+                                Vertices[heToRemove.origVert].outGoingHalfEdge = -1;
+                                Vertices[heToRemove.origVert].pos = new Vector3(-1);
+                            }
+
+                            if (Vertices[heToRemove.destVert].relatedEdges.Count == 0)
+                            {
+                                Vertices[heToRemove.destVert].outGoingHalfEdge = -1;
+                                Vertices[heToRemove.destVert].pos = new Vector3(-1);
+                            }
+                        }
+
+                        i--;
+
+                        break;
+                    }
+
+                    var he = new HalfEdge { origVert = v1idx, destVert = v2idx, face = i };
 
                     //if the previous half edge is -1 it means this is the start of the new face so remember the first half edge added
                     //if the previous half edge is not -1, then connect the current half edge with its previous one
@@ -100,20 +143,26 @@ namespace ValveResourceFormat.IO
                     }
 
                     HalfEdges.Add(he);
-                    Vertices[v1].outGoingHalfEdge = heIndex;
+                    v1.outGoingHalfEdge = heIndex;
                     face.halfEdge = heIndex;
 
                     //build vertex-halfedge relationships for later use
-                    if (!Vertices[v1].relatedEdges.Contains(heIndex))
+                    if (!v1.relatedEdges.Contains(heIndex))
                     {
-                        Vertices[v1].relatedEdges.Add(heIndex);
+                        v1.relatedEdges.Add(heIndex);
                     }
 
-                    if (!Vertices[v2].relatedEdges.Contains(heIndex))
+                    if (!v2.relatedEdges.Contains(heIndex))
                     {
-                        Vertices[v2].relatedEdges.Add(heIndex);
+                        v2.relatedEdges.Add(heIndex);
                     }
+
                 }
+            }
+
+            for (var i = 0; i < facesToRemove.Count; i++)
+            {
+                Faces.RemoveAt(facesToRemove[i]);
             }
 
             //link twins and generate outer edges
@@ -158,30 +207,65 @@ namespace ValveResourceFormat.IO
             //loop trough all outer half edges, and find the correct next/prev outer halfedges then link them
             foreach (var halfEdge in outerEdges)
             {
+                var potentialNextOuters = new List<HalfEdge>();
+
                 for (var i = 0; i < outerEdges.Count; i++)
                 {
                     var potentialOuterNext = outerEdges[i];
 
                     var potentialOuterNextId = (HalfEdges.Count - outerEdges.Count) + i;
 
-                    //if the potential outer next doesnt have a previous halfedge, and its origin vert is our destination vert
-                    //we found a valid next, connect them
-                    if (potentialOuterNext.prev == -1 && potentialOuterNext.origVert == halfEdge.destVert)
+                    //if the potential outer next origin vert is our destination vert
+                    //we found a valid next, add it to the list
+                    if (potentialOuterNext.origVert == halfEdge.destVert)
                     {
-                        halfEdge.next = potentialOuterNextId;
-                        potentialOuterNext.prev = HalfEdges.IndexOf(halfEdge);
+                        potentialNextOuters.Add(potentialOuterNext);
                     }
 
                     var potentialOuterPrev = outerEdges[i];
 
-                    //if the potential outer prev doesnt have a next halfedge, and its destination vert is our origin vert
+                    //if the potential outer prev doesnt have a next halfedge, and its destination vert is our origin vert, and we don't already have a prev
                     //we found a valid prev, connect them
-                    if (potentialOuterPrev.next == -1 && potentialOuterPrev.destVert == halfEdge.origVert)
+                    if (potentialOuterPrev.next == -1 && potentialOuterPrev.destVert == halfEdge.origVert && halfEdge.prev == -1)
                     {
                         halfEdge.prev = potentialOuterNextId;
                         potentialOuterNext.next = HalfEdges.IndexOf(halfEdge);
                     }
 
+                }
+
+                //if the list is bigger than 1, go trough the list of potential next edges, this is where it gets funky
+                if (potentialNextOuters.Count == 1)
+                {
+                    halfEdge.next = HalfEdges.IndexOf(potentialNextOuters[0]);
+                    potentialNextOuters[0].prev = HalfEdges.IndexOf(halfEdge);
+                }
+                //find the oppsite edge of the current potential next (edge that points directly into it)
+                //then circle around its destination vertex until a suitable next edge is found
+                else if (potentialNextOuters.Count > 1)
+                {
+                    HalfEdge oppositeEdge = null;
+                    for (var i = 0; i < outerEdges.Count; i++)
+                    {
+                        if (outerEdges[i].destVert == halfEdge.destVert && outerEdges[i].face == -1 && halfEdge != outerEdges[i])
+                        {
+                            oppositeEdge = outerEdges[i];
+                        }
+                    }
+
+                    var outerCandidate = HalfEdges[oppositeEdge.twin];
+                    do
+                    {
+                        outerCandidate = HalfEdges[HalfEdges[outerCandidate.prev].twin];
+
+                    } while(outerCandidate.face != -1);
+
+
+                    if (outerCandidate.face == -1 && outerCandidate.origVert == halfEdge.destVert)
+                    {
+                        halfEdge.next = HalfEdges.IndexOf(outerCandidate);
+                        outerCandidate.prev = HalfEdges.IndexOf(halfEdge);
+                    }
                 }
             }
         }
@@ -268,7 +352,7 @@ namespace ValveResourceFormat.IO
 
                 var startVertex = Vertices[halfEdge.destVert];
 
-                textureCoords.Data.Add(CalculateTriPlanarUVs(startVertex.pos, normal));
+                textureCoords.Data.Add(CalculateTriplanarUVs(startVertex.pos, normal));
             }
 
             foreach (var Face in Faces)
@@ -365,12 +449,12 @@ namespace ValveResourceFormat.IO
             return new Vector4(tangent1.Length() > tangent2.Length() ? tangent1 : tangent2, 1.0f);
         }
 
-        private static Vector2 CalculateTriPlanarUVs(Vector3 vertexPos, Vector3 normal, float textureScale = 0.03125f)
+        private static Vector2 CalculateTriplanarUVs(Vector3 vertexPos, Vector3 normal, float textureScale = 0.03125f)
         {
             var weights = Vector3.Abs(normal);
             var top = new Vector2(vertexPos.Y, vertexPos.X) * weights.Z;
-            var front = new Vector2(vertexPos.Z, vertexPos.X) * weights.Y;
-            var side = new Vector2(vertexPos.Z, vertexPos.Y) * weights.X;
+            var front = new Vector2(vertexPos.X, vertexPos.Z) * weights.Y;
+            var side = new Vector2(vertexPos.Y, vertexPos.Z) * weights.X;
 
             var UV = (top + front + side);
 
