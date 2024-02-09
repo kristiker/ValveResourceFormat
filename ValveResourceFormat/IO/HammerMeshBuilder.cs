@@ -29,8 +29,9 @@ namespace ValveResourceFormat.IO
         {
             public Vector3 pos;
             public int outGoingHalfEdge = -1;
-            public List<int> outgoingEdges = new();
-            public List<int> relatedEdges = new();
+            public List<int> outgoingEdges = [];
+            public List<int> relatedEdges = [];
+            public bool isDead;
 
             public Vertex(Vector3 pos)
             {
@@ -51,17 +52,18 @@ namespace ValveResourceFormat.IO
         public class Face
         {
             public int halfEdge = -1;
-            public List<int> indices = new();
+            public List<int> indices = [];
             public string mat = "unassigned";
+            public bool toExtract;
         }
 
-        public List<Vertex> Vertices = new();
-        public List<HalfEdge> HalfEdges = new();
-        public List<Face> Faces = new();
+        public List<Vertex> Vertices = [];
+        public List<HalfEdge> HalfEdges = [];
+        public List<Face> Faces = [];
 
-        public Dictionary<Tuple<int, int>, int> VertsToEdgeDict = new();
+        public Dictionary<Tuple<int, int>, int> VertsToEdgeDict = [];
 
-        public List<int> facesToRemove = new();
+        public List<int> facesToRemove = [];
 
         public void ComputeHalfEdgeStructure()
         {
@@ -99,18 +101,17 @@ namespace ValveResourceFormat.IO
                             var heToRemove = HalfEdges[heToRemoveIndex];
                             Vertices[heToRemove.origVert].relatedEdges.Remove(heToRemoveIndex);
                             Vertices[heToRemove.destVert].relatedEdges.Remove(heToRemoveIndex);
+
                             HalfEdges.RemoveAt(heToRemoveIndex);
 
                             if (Vertices[heToRemove.origVert].relatedEdges.Count == 0)
                             {
-                                Vertices[heToRemove.origVert].outGoingHalfEdge = -1;
-                                Vertices[heToRemove.origVert].pos = new Vector3(-1);
+                                Vertices[heToRemove.origVert].isDead = true;
                             }
 
                             if (Vertices[heToRemove.destVert].relatedEdges.Count == 0)
                             {
-                                Vertices[heToRemove.destVert].outGoingHalfEdge = -1;
-                                Vertices[heToRemove.destVert].pos = new Vector3(-1);
+                                Vertices[heToRemove.destVert].isDead = true;
                             }
                         }
 
@@ -143,7 +144,12 @@ namespace ValveResourceFormat.IO
                     }
 
                     HalfEdges.Add(he);
-                    v1.outGoingHalfEdge = heIndex;
+
+                    if (v1.outGoingHalfEdge == -1)
+                    {
+                        v1.outGoingHalfEdge = heIndex;
+                    }
+
                     face.halfEdge = heIndex;
 
                     //build vertex-halfedge relationships for later use
@@ -158,11 +164,6 @@ namespace ValveResourceFormat.IO
                     }
 
                 }
-            }
-
-            for (var i = 0; i < facesToRemove.Count; i++)
-            {
-                Faces.RemoveAt(facesToRemove[i]);
             }
 
             //link twins and generate outer edges
@@ -203,6 +204,145 @@ namespace ValveResourceFormat.IO
             //adding the outers to the main half edge list here because if we were to add them in the loop above as they are generated
             //HalfEdges would change size as were looping over it, and thats bad
             HalfEdges.AddRange(outerEdges);
+
+            for (var i = 0; i < Vertices.Count; i++)
+            {
+                var VertexIdx = i;
+                var Vertex = Vertices[VertexIdx];
+
+                var edgesPointingTowardsVertex = 0;
+                var outerTotal = 0;
+                foreach (var halfEdgeIdx in Vertex.relatedEdges)
+                {
+                    var halfEdge = HalfEdges[halfEdgeIdx];
+                    if (halfEdge.destVert == VertexIdx && HalfEdges[halfEdge.twin].face == -1)
+                    {
+                        edgesPointingTowardsVertex++;
+
+                        if (edgesPointingTowardsVertex > 2)
+                        {
+                            Faces[halfEdge.face].toExtract = true;
+                        }
+                    }
+
+                    if(halfEdge.face == -1)
+                    {
+                        outerTotal++;
+
+                        if(outerTotal > 4)
+                        {
+                            Faces[halfEdge.face].toExtract = true;
+                        }
+                    }
+                }
+            }
+
+            //extract any invalid faces
+            var newVertsToAdd = new List<Vertex>();
+            for (int i = 0; i < Faces.Count; i++)
+            {
+                var faceIdx = i;
+                var face = Faces[faceIdx];
+
+                if (face.toExtract)
+                {
+                    Vertex prevNewVertex = null;
+                    int prevNewVertexIdx = -1;
+                    Vertex prevOriginalVertex = null;
+                    int prevOriginalVertexIdx = -1;
+
+                    var firstFaceHalfEdge = face.halfEdge;
+                    var firstFaceTwinHalfEdge = HalfEdges[face.halfEdge].twin;
+
+                    var faceHalfEdgeIdx = firstFaceHalfEdge;
+                    var faceHalfEdge = HalfEdges[faceHalfEdgeIdx];
+                    do
+                    {
+                        var originalVertexIdx = faceHalfEdge.destVert;
+                        var originalVertex = Vertices[faceHalfEdge.destVert];
+                        var newVertex = new Vertex(originalVertex.pos);
+                        var newVertexIdx = Vertices.Count + newVertsToAdd.Count;
+                        var twinHalfEdgeIdx = faceHalfEdge.twin;
+                        var twinHalfEdge = HalfEdges[twinHalfEdgeIdx];
+
+                        newVertsToAdd.Add(newVertex);
+                        faceHalfEdge.destVert = newVertexIdx;
+
+                        //check if the twin half edge is internal or external
+                        if (twinHalfEdge.face == -1)
+                        {
+                            twinHalfEdge.origVert = faceHalfEdge.destVert;
+                        }
+                        else
+                        {
+                            var newExternalOriginalMesh = new HalfEdge();
+                            var newExternalOriginalMeshIdx = HalfEdges.Count;
+                            newExternalOriginalMesh.twin = twinHalfEdgeIdx;
+                            twinHalfEdge.twin = newExternalOriginalMeshIdx;
+                            newExternalOriginalMesh.origVert = twinHalfEdge.destVert;
+                            newExternalOriginalMesh.destVert = twinHalfEdge.origVert;
+                            Vertices[twinHalfEdge.destVert].relatedEdges.Add(newExternalOriginalMeshIdx);
+                            Vertices[twinHalfEdge.origVert].relatedEdges.Add(newExternalOriginalMeshIdx);
+                            HalfEdges.Add(newExternalOriginalMesh);
+                            outerEdges.Add(newExternalOriginalMesh);
+
+                            var newExternalDetachedFace = new HalfEdge();
+                            var newExternalDetachedFaceIdx = HalfEdges.Count;
+                            newExternalDetachedFace.twin = faceHalfEdgeIdx;
+                            faceHalfEdge.twin = newExternalDetachedFaceIdx;
+                            newExternalDetachedFace.origVert = faceHalfEdge.destVert;
+                            twinHalfEdge = newExternalDetachedFace;
+                            outerEdges.Add(newExternalDetachedFace);
+
+                            HalfEdges.Add(newExternalDetachedFace);
+                        }
+
+                        newVertex.outGoingHalfEdge = faceHalfEdge.next;
+                        newVertex.relatedEdges.Add(faceHalfEdgeIdx);
+                        originalVertex.relatedEdges.Remove(faceHalfEdgeIdx);
+
+                        if (prevNewVertex != null)
+                        {
+                            prevNewVertex.relatedEdges.Add(faceHalfEdgeIdx);
+                            prevOriginalVertex.relatedEdges.Remove(faceHalfEdgeIdx);
+                            faceHalfEdge.origVert = prevNewVertexIdx;
+                            twinHalfEdge.destVert = faceHalfEdge.origVert;
+                        }
+
+                        if (faceHalfEdge.next == firstFaceHalfEdge)
+                        {
+                            originalVertex.relatedEdges.Remove(firstFaceHalfEdge);
+                            HalfEdges[firstFaceHalfEdge].origVert = newVertexIdx;
+                            HalfEdges[firstFaceTwinHalfEdge].destVert = newVertexIdx;
+                        }
+
+                        var foundHalfEdge = false;
+                        foreach (var potentialHalfEdgeIdx in originalVertex.relatedEdges)
+                        {
+                            var potentialHalfEdge = HalfEdges[potentialHalfEdgeIdx];
+                            if (potentialHalfEdge.origVert == originalVertexIdx && potentialHalfEdge.face != faceIdx)
+                            {
+                                originalVertex.outGoingHalfEdge = potentialHalfEdgeIdx;
+                                foundHalfEdge = true;
+                            }
+                        }
+                        if (!foundHalfEdge)
+                        {
+                            originalVertex.isDead = true;
+                        }
+
+                        prevNewVertex = newVertex;
+                        prevNewVertexIdx = newVertexIdx;
+                        prevOriginalVertex = originalVertex;
+                        prevOriginalVertexIdx = originalVertexIdx;
+                        faceHalfEdgeIdx = HalfEdges[faceHalfEdgeIdx].next;
+                        faceHalfEdge = HalfEdges[faceHalfEdgeIdx];
+                    }
+                    while (faceHalfEdgeIdx != face.halfEdge);
+                }
+            }
+
+            Vertices.AddRange(newVertsToAdd);
 
             //loop trough all outer half edges, and find the correct next/prev outer halfedges then link them
             foreach (var halfEdge in outerEdges)
@@ -258,7 +398,7 @@ namespace ValveResourceFormat.IO
                     {
                         outerCandidate = HalfEdges[HalfEdges[outerCandidate.prev].twin];
 
-                    } while(outerCandidate.face != -1);
+                    } while (outerCandidate.face != -1);
 
 
                     if (outerCandidate.face == -1 && outerCandidate.origVert == halfEdge.destVert)
@@ -297,7 +437,16 @@ namespace ValveResourceFormat.IO
             foreach (var Vertex in Vertices)
             {
                 var vertexDataIndex = mesh.VertexData.Size;
-                mesh.VertexEdgeIndices.Add(Vertex.outGoingHalfEdge);
+
+                if (!Vertex.isDead)
+                {
+                    mesh.VertexEdgeIndices.Add(Vertex.outGoingHalfEdge);
+                }
+                else
+                {
+                    mesh.VertexEdgeIndices.Add(-1);
+                }
+
                 mesh.VertexDataIndices.Add(vertexDataIndex);
                 mesh.VertexData.Size++;
 
@@ -350,9 +499,16 @@ namespace ValveResourceFormat.IO
                     tangent.Data.Add(new Vector4(0, 0, 0, 0));
                 }
 
-                var startVertex = Vertices[halfEdge.destVert];
+                try
+                {
+                    var startVertex = Vertices[halfEdge.destVert];
+                    textureCoords.Data.Add(CalculateTriplanarUVs(startVertex.pos, normal));
+                }
+                catch
+                {
 
-                textureCoords.Data.Add(CalculateTriplanarUVs(startVertex.pos, normal));
+                }
+               
             }
 
             foreach (var Face in Faces)
@@ -388,6 +544,10 @@ namespace ValveResourceFormat.IO
 
         public void AddFace(Face face)
         {
+            if (Faces.Contains(face))
+            {
+
+            }
             Faces.Add(face);
         }
 
