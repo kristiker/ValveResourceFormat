@@ -12,6 +12,10 @@ using SharpGLTF.Geometry.VertexTypes;
 using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
 using System.Runtime.Intrinsics;
+using static System.Net.Mime.MediaTypeNames;
+using ValveResourceFormat.ResourceTypes.ModelAnimation;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics;
+using System.Collections;
 
 namespace ValveResourceFormat.IO
 {
@@ -29,9 +33,7 @@ namespace ValveResourceFormat.IO
         {
             public Vector3 pos;
             public int outGoingHalfEdge = -1;
-            public List<int> outgoingEdges = [];
-            public List<int> relatedEdges = [];
-            public bool isDead;
+            public List<int> relatedEdges = new();
 
             public Vertex(Vector3 pos)
             {
@@ -47,6 +49,8 @@ namespace ValveResourceFormat.IO
             public int prev = -1;
             public int destVert = -1;
             public int origVert = -1;
+            public bool skipInRollback;
+            public bool overridOuter;
         }
 
         public class Face
@@ -57,362 +61,19 @@ namespace ValveResourceFormat.IO
             public bool toExtract;
         }
 
+        public int FacesRemoved;
+        public int OriginalFaceCount;
+
         public List<Vertex> Vertices = [];
         public List<HalfEdge> HalfEdges = [];
         public List<Face> Faces = [];
 
         public Dictionary<Tuple<int, int>, int> VertsToEdgeDict = [];
 
-        public List<int> facesToRemove = [];
-
-        public void ComputeHalfEdgeStructure()
-        {
-            //loops trough all the faces and generates only the inner half edges of the face
-            for (int i = 0; i < Faces.Count; i++)
-            {
-                var face = Faces[i];
-                int prevHalfEdge = -1;
-                int firstHalfEdge = -1;
-                int initHalfEdgeCount = HalfEdges.Count;
-
-                //generate inner half edge loop
-                for (int j = 0; j < face.indices.Count; j++)
-                {
-                    var v1idx = face.indices[j];
-                    var v2idx = face.indices[(j + 1) % face.indices.Count];
-
-                    var v1 = Vertices[v1idx];
-                    var v2 = Vertices[v2idx];
-
-                    var heIndex = initHalfEdgeCount + j;
-
-                    //if the current internal half edge were trying to add already exists something is wrong
-                    //break out of the loop (discard face)
-                    try
-                    {
-                        VertsToEdgeDict.Add(new Tuple<int, int>(v1idx, v2idx), heIndex);
-                    }
-                    catch (ArgumentException)
-                    {
-                        Faces.RemoveAt(i);
-                        for (int k = j - 1; k >= 0; k--)
-                        {
-                            var heToRemoveIndex = initHalfEdgeCount + k;
-                            var heToRemove = HalfEdges[heToRemoveIndex];
-                            Vertices[heToRemove.origVert].relatedEdges.Remove(heToRemoveIndex);
-                            Vertices[heToRemove.destVert].relatedEdges.Remove(heToRemoveIndex);
-
-                            HalfEdges.RemoveAt(heToRemoveIndex);
-
-                            if (Vertices[heToRemove.origVert].relatedEdges.Count == 0)
-                            {
-                                Vertices[heToRemove.origVert].isDead = true;
-                            }
-
-                            if (Vertices[heToRemove.destVert].relatedEdges.Count == 0)
-                            {
-                                Vertices[heToRemove.destVert].isDead = true;
-                            }
-                        }
-
-                        i--;
-
-                        break;
-                    }
-
-                    var he = new HalfEdge { origVert = v1idx, destVert = v2idx, face = i };
-
-                    //if the previous half edge is -1 it means this is the start of the new face so remember the first half edge added
-                    //if the previous half edge is not -1, then connect the current half edge with its previous one
-                    if (prevHalfEdge == -1)
-                    {
-                        firstHalfEdge = heIndex;
-                    }
-                    else
-                    {
-                        he.prev = prevHalfEdge;
-                        HalfEdges[prevHalfEdge].next = heIndex;
-                    }
-
-                    prevHalfEdge = heIndex;
-
-                    //if we are on the last inner half edge of the face, connect it with the first
-                    if (j == face.indices.Count - 1)
-                    {
-                        he.next = firstHalfEdge;
-                        HalfEdges[firstHalfEdge].prev = heIndex;
-                    }
-
-                    HalfEdges.Add(he);
-
-                    if (v1.outGoingHalfEdge == -1)
-                    {
-                        v1.outGoingHalfEdge = heIndex;
-                    }
-
-                    face.halfEdge = heIndex;
-
-                    //build vertex-halfedge relationships for later use
-                    if (!v1.relatedEdges.Contains(heIndex))
-                    {
-                        v1.relatedEdges.Add(heIndex);
-                    }
-
-                    if (!v2.relatedEdges.Contains(heIndex))
-                    {
-                        v2.relatedEdges.Add(heIndex);
-                    }
-
-                }
-            }
-
-            //link twins and generate outer edges
-            var outerEdges = new List<HalfEdge>();
-
-            for (var i = 0; i < HalfEdges.Count; i++)
-            {
-                var he = HalfEdges[i];
-                var vert = Vertices[he.destVert];
-
-                //loop trough all the related edges of destination vert of this half edge
-                foreach (var potentialTwinId in vert.relatedEdges)
-                {
-                    var potentialTwin = HalfEdges[potentialTwinId];
-
-                    //if the destination vertex of our edge is the same as the origin vertex of the potential twin and
-                    //if the origin vertex of our edge is the same as the destination vertex of the potential twin and
-                    //if the potential twin doesn't already have a twin, we can be sure this is the correct twin
-                    if (he.destVert == potentialTwin.origVert && he.origVert == potentialTwin.destVert && potentialTwin.twin == -1)
-                    {
-                        he.twin = potentialTwinId;
-                        potentialTwin.twin = i;
-                    }
-                }
-
-                //if the half edge hasnt found a twin, then it means it's twin has to be a boundary half edge
-                //generate a bondary half edge, and set twin relationships
-                if (he.twin == -1)
-                {
-                    var outerHalfEdge = new HalfEdge();
-                    he.twin = HalfEdges.Count + outerEdges.Count;
-                    outerHalfEdge.twin = i;
-                    outerHalfEdge.destVert = he.origVert;
-                    outerHalfEdge.origVert = he.destVert;
-                    outerEdges.Add(outerHalfEdge);
-                }
-            }
-            //adding the outers to the main half edge list here because if we were to add them in the loop above as they are generated
-            //HalfEdges would change size as were looping over it, and thats bad
-            HalfEdges.AddRange(outerEdges);
-
-            for (var i = 0; i < Vertices.Count; i++)
-            {
-                var VertexIdx = i;
-                var Vertex = Vertices[VertexIdx];
-
-                var edgesPointingTowardsVertex = 0;
-                var outerTotal = 0;
-                foreach (var halfEdgeIdx in Vertex.relatedEdges)
-                {
-                    var halfEdge = HalfEdges[halfEdgeIdx];
-                    if (halfEdge.destVert == VertexIdx && HalfEdges[halfEdge.twin].face == -1)
-                    {
-                        edgesPointingTowardsVertex++;
-
-                        if (edgesPointingTowardsVertex > 2)
-                        {
-                            Faces[halfEdge.face].toExtract = true;
-                        }
-                    }
-
-                    if(halfEdge.face == -1)
-                    {
-                        outerTotal++;
-
-                        if(outerTotal > 4)
-                        {
-                            Faces[halfEdge.face].toExtract = true;
-                        }
-                    }
-                }
-            }
-
-            //extract any invalid faces
-            var newVertsToAdd = new List<Vertex>();
-            for (int i = 0; i < Faces.Count; i++)
-            {
-                var faceIdx = i;
-                var face = Faces[faceIdx];
-
-                if (face.toExtract)
-                {
-                    Vertex prevNewVertex = null;
-                    int prevNewVertexIdx = -1;
-                    Vertex prevOriginalVertex = null;
-                    int prevOriginalVertexIdx = -1;
-
-                    var firstFaceHalfEdge = face.halfEdge;
-                    var firstFaceTwinHalfEdge = HalfEdges[face.halfEdge].twin;
-
-                    var faceHalfEdgeIdx = firstFaceHalfEdge;
-                    var faceHalfEdge = HalfEdges[faceHalfEdgeIdx];
-                    do
-                    {
-                        var originalVertexIdx = faceHalfEdge.destVert;
-                        var originalVertex = Vertices[faceHalfEdge.destVert];
-                        var newVertex = new Vertex(originalVertex.pos);
-                        var newVertexIdx = Vertices.Count + newVertsToAdd.Count;
-                        var twinHalfEdgeIdx = faceHalfEdge.twin;
-                        var twinHalfEdge = HalfEdges[twinHalfEdgeIdx];
-
-                        newVertsToAdd.Add(newVertex);
-                        faceHalfEdge.destVert = newVertexIdx;
-
-                        //check if the twin half edge is internal or external
-                        if (twinHalfEdge.face == -1)
-                        {
-                            twinHalfEdge.origVert = faceHalfEdge.destVert;
-                        }
-                        else
-                        {
-                            var newExternalOriginalMesh = new HalfEdge();
-                            var newExternalOriginalMeshIdx = HalfEdges.Count;
-                            newExternalOriginalMesh.twin = twinHalfEdgeIdx;
-                            twinHalfEdge.twin = newExternalOriginalMeshIdx;
-                            newExternalOriginalMesh.origVert = twinHalfEdge.destVert;
-                            newExternalOriginalMesh.destVert = twinHalfEdge.origVert;
-                            Vertices[twinHalfEdge.destVert].relatedEdges.Add(newExternalOriginalMeshIdx);
-                            Vertices[twinHalfEdge.origVert].relatedEdges.Add(newExternalOriginalMeshIdx);
-                            HalfEdges.Add(newExternalOriginalMesh);
-                            outerEdges.Add(newExternalOriginalMesh);
-
-                            var newExternalDetachedFace = new HalfEdge();
-                            var newExternalDetachedFaceIdx = HalfEdges.Count;
-                            newExternalDetachedFace.twin = faceHalfEdgeIdx;
-                            faceHalfEdge.twin = newExternalDetachedFaceIdx;
-                            newExternalDetachedFace.origVert = faceHalfEdge.destVert;
-                            twinHalfEdge = newExternalDetachedFace;
-                            outerEdges.Add(newExternalDetachedFace);
-
-                            HalfEdges.Add(newExternalDetachedFace);
-                        }
-
-                        newVertex.outGoingHalfEdge = faceHalfEdge.next;
-                        newVertex.relatedEdges.Add(faceHalfEdgeIdx);
-                        originalVertex.relatedEdges.Remove(faceHalfEdgeIdx);
-
-                        if (prevNewVertex != null)
-                        {
-                            prevNewVertex.relatedEdges.Add(faceHalfEdgeIdx);
-                            prevOriginalVertex.relatedEdges.Remove(faceHalfEdgeIdx);
-                            faceHalfEdge.origVert = prevNewVertexIdx;
-                            twinHalfEdge.destVert = faceHalfEdge.origVert;
-                        }
-
-                        if (faceHalfEdge.next == firstFaceHalfEdge)
-                        {
-                            originalVertex.relatedEdges.Remove(firstFaceHalfEdge);
-                            HalfEdges[firstFaceHalfEdge].origVert = newVertexIdx;
-                            HalfEdges[firstFaceTwinHalfEdge].destVert = newVertexIdx;
-                        }
-
-                        var foundHalfEdge = false;
-                        foreach (var potentialHalfEdgeIdx in originalVertex.relatedEdges)
-                        {
-                            var potentialHalfEdge = HalfEdges[potentialHalfEdgeIdx];
-                            if (potentialHalfEdge.origVert == originalVertexIdx && potentialHalfEdge.face != faceIdx)
-                            {
-                                originalVertex.outGoingHalfEdge = potentialHalfEdgeIdx;
-                                foundHalfEdge = true;
-                            }
-                        }
-                        if (!foundHalfEdge)
-                        {
-                            originalVertex.isDead = true;
-                        }
-
-                        prevNewVertex = newVertex;
-                        prevNewVertexIdx = newVertexIdx;
-                        prevOriginalVertex = originalVertex;
-                        prevOriginalVertexIdx = originalVertexIdx;
-                        faceHalfEdgeIdx = HalfEdges[faceHalfEdgeIdx].next;
-                        faceHalfEdge = HalfEdges[faceHalfEdgeIdx];
-                    }
-                    while (faceHalfEdgeIdx != face.halfEdge);
-                }
-            }
-
-            Vertices.AddRange(newVertsToAdd);
-
-            //loop trough all outer half edges, and find the correct next/prev outer halfedges then link them
-            foreach (var halfEdge in outerEdges)
-            {
-                var potentialNextOuters = new List<HalfEdge>();
-
-                for (var i = 0; i < outerEdges.Count; i++)
-                {
-                    var potentialOuterNext = outerEdges[i];
-
-                    var potentialOuterNextId = (HalfEdges.Count - outerEdges.Count) + i;
-
-                    //if the potential outer next origin vert is our destination vert
-                    //we found a valid next, add it to the list
-                    if (potentialOuterNext.origVert == halfEdge.destVert)
-                    {
-                        potentialNextOuters.Add(potentialOuterNext);
-                    }
-
-                    var potentialOuterPrev = outerEdges[i];
-
-                    //if the potential outer prev doesnt have a next halfedge, and its destination vert is our origin vert, and we don't already have a prev
-                    //we found a valid prev, connect them
-                    if (potentialOuterPrev.next == -1 && potentialOuterPrev.destVert == halfEdge.origVert && halfEdge.prev == -1)
-                    {
-                        halfEdge.prev = potentialOuterNextId;
-                        potentialOuterNext.next = HalfEdges.IndexOf(halfEdge);
-                    }
-
-                }
-
-                //if the list is bigger than 1, go trough the list of potential next edges, this is where it gets funky
-                if (potentialNextOuters.Count == 1)
-                {
-                    halfEdge.next = HalfEdges.IndexOf(potentialNextOuters[0]);
-                    potentialNextOuters[0].prev = HalfEdges.IndexOf(halfEdge);
-                }
-                //find the oppsite edge of the current potential next (edge that points directly into it)
-                //then circle around its destination vertex until a suitable next edge is found
-                else if (potentialNextOuters.Count > 1)
-                {
-                    HalfEdge oppositeEdge = null;
-                    for (var i = 0; i < outerEdges.Count; i++)
-                    {
-                        if (outerEdges[i].destVert == halfEdge.destVert && outerEdges[i].face == -1 && halfEdge != outerEdges[i])
-                        {
-                            oppositeEdge = outerEdges[i];
-                        }
-                    }
-
-                    var outerCandidate = HalfEdges[oppositeEdge.twin];
-                    do
-                    {
-                        outerCandidate = HalfEdges[HalfEdges[outerCandidate.prev].twin];
-
-                    } while (outerCandidate.face != -1);
-
-
-                    if (outerCandidate.face == -1 && outerCandidate.origVert == halfEdge.destVert)
-                    {
-                        halfEdge.next = HalfEdges.IndexOf(outerCandidate);
-                        outerCandidate.prev = HalfEdges.IndexOf(halfEdge);
-                    }
-                }
-            }
-        }
-
         public CDmePolygonMesh GenerateMesh()
         {
-            ComputeHalfEdgeStructure();
+            if (FacesRemoved > 0)
+                Console.WriteLine($"HammerMeshBuilder: removed '{FacesRemoved}' of '{OriginalFaceCount}' faces");
 
             var mesh = new CDmePolygonMesh();
 
@@ -438,14 +99,7 @@ namespace ValveResourceFormat.IO
             {
                 var vertexDataIndex = mesh.VertexData.Size;
 
-                if (!Vertex.isDead)
-                {
-                    mesh.VertexEdgeIndices.Add(Vertex.outGoingHalfEdge);
-                }
-                else
-                {
-                    mesh.VertexEdgeIndices.Add(-1);
-                }
+                mesh.VertexEdgeIndices.Add(Vertex.outGoingHalfEdge);
 
                 mesh.VertexDataIndices.Add(vertexDataIndex);
                 mesh.VertexData.Size++;
@@ -508,7 +162,7 @@ namespace ValveResourceFormat.IO
                 {
 
                 }
-               
+
             }
 
             foreach (var Face in Faces)
@@ -542,12 +196,597 @@ namespace ValveResourceFormat.IO
             Vertices.Add(Vertex);
         }
 
+        internal class HalfEdgeMeshModifier
+        {
+            private List<HalfEdgeModification> HalfEdgeModifications = new();
+            private List<VertsToEdgeDictModification> VertsToEdgeDictModifications = new();
+            private List<HalfEdgesModification> HalfEdgesModifications = new();
+            private List<VertexModification> VertexModifications = new();
+            private HammerMeshBuilder builderRef;
+
+            public HalfEdgeMeshModifier(HammerMeshBuilder c_builderRef)
+            {
+                builderRef = c_builderRef;
+            }
+
+            // remember half edge states
+            internal class HalfEdgeModification
+            {
+                public HalfEdge he;
+                public string propertyName;
+                public int property;
+
+                public HalfEdgeModification(HalfEdge c_he, string c_propertyName, int c_property)
+                {
+                    he = c_he;
+                    propertyName = c_propertyName;
+                    property = c_property;
+                }
+            }
+            internal void RememberHalfEdgeModification(HalfEdge he, string propertyName, int property)
+            {
+                HalfEdgeModifications.Add(new HalfEdgeModification(he, propertyName, property));
+            }
+
+            public void ChangeHalfEdgeFace(HalfEdge he, int face)
+            {
+                if (he.face == face)
+                {
+                    return;
+                }
+
+                RememberHalfEdgeModification(he, "face", he.face);
+                he.face = face;
+            }
+
+            public void ChangeHalfEdgePrev(HalfEdge he, int prev)
+            {
+                if (he.prev == prev)
+                {
+                    return;
+                }
+
+                RememberHalfEdgeModification(he, "prev", he.prev);
+                he.prev = prev;
+            }
+
+            public void ChangeHalfEdgeNext(HalfEdge he, int next)
+            {
+                if (he.next == next)
+                {
+                    return;
+                }
+
+                RememberHalfEdgeModification(he, "next", he.next);
+                he.next = next;
+            }
+
+            // remember vertxtoedgedict states
+            internal class VertsToEdgeDictModification
+            {
+                public Tuple<int, int> heKey;
+
+                public VertsToEdgeDictModification(Tuple<int, int> c_heKey)
+                {
+                    heKey = c_heKey;
+                }
+            }
+
+            internal void RememberVertsToEdgeDictModification(Tuple<int, int> heKey)
+            {
+                VertsToEdgeDictModifications.Add(new VertsToEdgeDictModification(heKey));
+            }
+
+            public bool TryAddVertsToEdgeDict(Tuple<int, int> heKey, int heIndex)
+            {
+                if (builderRef.VertsToEdgeDict.TryAdd(heKey, heIndex))
+                {
+                    RememberVertsToEdgeDictModification(heKey);
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            // remember HalfEdges states
+            internal class HalfEdgesModification
+            {
+                public HalfEdge he;
+
+                public HalfEdgesModification(HalfEdge c_he)
+                {
+                    he = c_he;
+                }
+            }
+
+            internal void RememberHalfEdgesModification(HalfEdge he)
+            {
+                HalfEdgesModifications.Add(new HalfEdgesModification(he));
+            }
+
+            public void AddHalfEdgeToHalfEdgesList(HalfEdge he)
+            {
+                RememberHalfEdgesModification(he);
+                builderRef.HalfEdges.Add(he);
+            }
+
+            // remember Vertex states
+            internal class VertexModification
+            {
+                public Vertex vertex;
+                public int outGoingHalfEdge;
+                public int relatedEdge;
+                public string proprtyName;
+                public int proprty;
+
+                public VertexModification(Vertex c_vertex, string c_proprtyName, int c_proprty)
+                {
+                    vertex = c_vertex;
+                    proprtyName = c_proprtyName;
+                    proprty = c_proprty;
+                }
+            }
+
+            internal void RememberVertexModification(Vertex vertex, string proprtyName, int proprty)
+            {
+                VertexModifications.Add(new VertexModification(vertex, proprtyName, proprty));
+            }
+
+            public void SetVertexOutGoing(Vertex vertex, int outGoingHalfEdge)
+            {
+                RememberVertexModification(vertex, "outGoingHalfEdge", vertex.outGoingHalfEdge);
+                vertex.outGoingHalfEdge = outGoingHalfEdge;
+            }
+
+            public void AddVertexRelatedEdge(Vertex vertex, int he)
+            {
+                RememberVertexModification(vertex, "relatedEdge", he);
+                vertex.relatedEdges.Add(he);
+            }
+
+            // roll back
+            public void RollBack(string error)
+            {
+                builderRef.FacesRemoved++;
+
+                HalfEdgeModifications.Reverse();
+                VertsToEdgeDictModifications.Reverse();
+                HalfEdgesModifications.Reverse();
+                VertexModifications.Reverse();
+
+                foreach (var VertexModification in VertexModifications)
+                {
+                    switch (VertexModification.proprtyName)
+                    {
+                        case "outGoingHalfEdge":
+                            VertexModification.vertex.outGoingHalfEdge = VertexModification.proprty;
+                            break;
+
+                        case "relatedEdge":
+                            VertexModification.vertex.relatedEdges.Remove(VertexModification.proprty);
+                            break;
+                    }
+                }
+
+                foreach (var HalfEdgesModification in HalfEdgesModifications)
+                {
+                    builderRef.HalfEdges.Remove(HalfEdgesModification.he);
+                    HalfEdgesModification.he.skipInRollback = true;
+                }
+
+                foreach (var VertsToEdgeDictModification in VertsToEdgeDictModifications)
+                {
+                    builderRef.VertsToEdgeDict.Remove(VertsToEdgeDictModification.heKey);
+                }
+
+                foreach (var HalfEdgeModification in HalfEdgeModifications)
+                {
+                    var he = HalfEdgeModification.he;
+
+                    if (he.skipInRollback)
+                        continue;
+
+                    switch (HalfEdgeModification.propertyName)
+                    {
+                        case "face":
+                            he.face = HalfEdgeModification.property;
+                            break;
+
+                        case "prev":
+                            he.prev = HalfEdgeModification.property;
+                            break;
+
+                        case "next":
+                            he.next = HalfEdgeModification.property;
+                            break;
+                    }
+                }
+
+                Console.WriteLine("HammerMeshBuilder error: " + error);
+            }
+        }
+
+        public IEnumerable<int> VertexCirculator(int heidx, string direction)
+        {
+            if (heidx < 0) { yield break; }
+            int h = heidx;
+            int count = 0;
+            do
+            {
+                yield return h;
+
+                if (direction == "into")
+                {
+                    h = HalfEdges[HalfEdges[h].twin].prev;
+                }
+
+                if (direction == "away")
+                {
+                    h = HalfEdges[HalfEdges[h].twin].next;
+                }
+
+                if (h < 0) { throw new InvalidOperationException("Vertex circulator returned an invalid half edge index"); }
+                if (count++ > 999) { throw new InvalidOperationException("Runaway vertex circulator"); }
+            }
+            while (h != heidx);
+        }
+
+
         public void AddFace(Face face)
         {
-            if (Faces.Contains(face))
-            {
+            var halfEdgeModifier = new HalfEdgeMeshModifier(this);
 
+            List<HalfEdge> newBoundaryList = new();
+
+            OriginalFaceCount++;
+
+            var IndexCount = face.indices.Count;
+
+            // don't allow degenerate faces
+            if (IndexCount < 3)
+            {
+                Console.WriteLine($"HammerMeshBuilder error: failed to add face '{Faces.Count}', face has less than 3 vertices.");
+                FacesRemoved++;
+                return;
             }
+
+            var firstinnerFaceHeidx = -1;
+            var lastinnerFaceHeidx = -1;
+
+            for (int i = 0; i < face.indices.Count; i++)
+            {
+                var faceidx = Faces.Count;
+                var v1idx = face.indices[i];
+                var v2idx = face.indices[(i + 1) % face.indices.Count]; // will cause v2idx to wrap around
+                var v1 = Vertices[v1idx];
+                var v2 = Vertices[v2idx];
+
+                var innerHeIndex = HalfEdges.Count; // since we haven't yet added this edge, its index is just the count of the list + newHalfEdges list
+                var boundaryHeIndex = HalfEdges.Count + 1;
+                var innerHeKey = new Tuple<int, int>(v1idx, v2idx);
+                var boundaryHeKey = new Tuple<int, int>(v2idx, v1idx);
+                HalfEdge innerHe = null;
+                HalfEdge boundaryHe = null;
+
+                if (v1.outGoingHalfEdge != -1)
+                {
+                    var hasBoundary = false;
+                    foreach (var he in v1.relatedEdges)
+                    {
+                        if (HalfEdges[he].face == -1)
+                        {
+                            hasBoundary = true;
+                        }
+                    }
+                    if (!hasBoundary)
+                    {
+                        halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, Face specified a vertex which had edges attached, but none that were open.");
+                        return;
+                    }
+                }
+
+                if (v2.outGoingHalfEdge != -1)
+                {
+                    var hasBoundary = false;
+                    foreach (var he in v2.relatedEdges)
+                    {
+                        if (HalfEdges[he].face == -1)
+                        {
+                            hasBoundary = true;
+                        }
+                    }
+                    if (!hasBoundary)
+                    {
+                        halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, Face specified a vertex which had edges attached, but none that were open.");
+                        return;
+                    }
+                }
+
+                // check if the inner already exists
+                if (!halfEdgeModifier.TryAddVertsToEdgeDict(innerHeKey, innerHeIndex))
+                {
+                    // failed to add the key to the dict, this either means we hit a set of inner twins
+                    // or that the face being added is wrong
+
+                    VertsToEdgeDict.TryGetValue(innerHeKey, out innerHeIndex); // get the half edge that already exists and assign to innerHeIndex
+
+                    innerHe = HalfEdges[innerHeIndex];
+
+                    // already existing half edge doesn't have a face, which means this is a boundary, don't add a new half edge
+                    // but instead just set its face to be the current face (turning it into an inner)
+                    if (innerHe.face == -1)
+                    {
+                        if (lastinnerFaceHeidx != -1)
+                        {
+                            if (HalfEdges[lastinnerFaceHeidx].overridOuter)
+                            {
+                                if (innerHe.prev != lastinnerFaceHeidx && HalfEdges[lastinnerFaceHeidx].next != innerHeIndex)
+                                {
+                                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, Face specified two edges that are connected by a vertex but have or more existing edges separating them.");
+                                    return;
+                                }
+                            }
+
+                            if (i == face.indices.Count - 1)
+                            {
+                                if (HalfEdges[firstinnerFaceHeidx].overridOuter)
+                                {
+                                    if (innerHe.next != firstinnerFaceHeidx && HalfEdges[firstinnerFaceHeidx].prev != innerHeIndex)
+                                    {
+                                        halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, Face specified two edges that are connected by a vertex but have or more existing edges separating them.");
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+
+                        halfEdgeModifier.ChangeHalfEdgeFace(innerHe, faceidx);
+                        innerHe.overridOuter = true;
+                    }
+                    else
+                    {
+                        halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, Face specified an edge which already had two faces attached");
+                        return;
+                    }
+                }
+                else
+                {
+                    innerHe = new HalfEdge
+                    {
+                        face = faceidx,
+                        origVert = v1idx,
+                        destVert = v2idx,
+                        twin = boundaryHeIndex
+                    };
+
+                    boundaryHe = new HalfEdge
+                    {
+                        origVert = v2idx,
+                        destVert = v1idx,
+                        twin = innerHeIndex
+                    };
+
+                    halfEdgeModifier.TryAddVertsToEdgeDict(boundaryHeKey, boundaryHeIndex);
+
+                    halfEdgeModifier.AddHalfEdgeToHalfEdgesList(innerHe);
+                    halfEdgeModifier.AddHalfEdgeToHalfEdgesList(boundaryHe);
+
+                    halfEdgeModifier.AddVertexRelatedEdge(v1, innerHeIndex);
+                    halfEdgeModifier.AddVertexRelatedEdge(v1, boundaryHeIndex);
+                    halfEdgeModifier.AddVertexRelatedEdge(v2, innerHeIndex);
+                    halfEdgeModifier.AddVertexRelatedEdge(v2, boundaryHeIndex);
+
+                    halfEdgeModifier.SetVertexOutGoing(v2, boundaryHeIndex);
+
+                    newBoundaryList.Add(boundaryHe);
+                }
+
+                //link inners
+                halfEdgeModifier.ChangeHalfEdgePrev(innerHe, lastinnerFaceHeidx);
+                halfEdgeModifier.ChangeHalfEdgeNext(innerHe, firstinnerFaceHeidx);
+
+                // link current inner with the previous half edge
+                if (lastinnerFaceHeidx != -1)
+                {
+                    var lastinnerFaceHe = HalfEdges[lastinnerFaceHeidx];
+                    halfEdgeModifier.ChangeHalfEdgeNext(lastinnerFaceHe, innerHeIndex);
+                }
+
+                // if i is 0 this is the first inner of the face, remember it
+                if (i == 0)
+                {
+                    firstinnerFaceHeidx = innerHeIndex;
+                    face.halfEdge = firstinnerFaceHeidx;
+                }
+
+                // if i is max indices - 1 it means this is the end of the loop, link current inner with the first
+                if (i == face.indices.Count - 1)
+                {
+                    var firstinnerFaceHe = HalfEdges[firstinnerFaceHeidx];
+                    halfEdgeModifier.ChangeHalfEdgePrev(firstinnerFaceHe, innerHeIndex);
+                    halfEdgeModifier.ChangeHalfEdgeNext(innerHe, firstinnerFaceHeidx);
+                }
+
+                lastinnerFaceHeidx = innerHeIndex;
+            }
+
+            foreach (var boundary in newBoundaryList)
+            {
+                var origVert = Vertices[boundary.origVert];
+                var destVert = Vertices[boundary.destVert];
+                var boundaryIdx = HalfEdges.IndexOf(boundary);
+
+                //
+                // link prev boundary
+                //
+
+                var totalPotentialPrevBoundary = 0;
+                var potentialBoundaryWithAnInnerAsNextIdx = -1; // if not -1 it means that an edge merge removed one boundary, and we are still at a valid 4 bondaries on a vertex
+                var oppositePrevBoundary = -1;
+
+                foreach (var potentialPrevBoundaryIdx in origVert.relatedEdges)
+                {
+                    var potentialPrevBoundary = HalfEdges[potentialPrevBoundaryIdx];
+
+                    if (potentialPrevBoundary != boundary && potentialPrevBoundary.origVert == boundary.origVert && potentialPrevBoundary.face == -1)
+                    {
+                        oppositePrevBoundary = potentialPrevBoundaryIdx;
+                    }
+
+                    if (potentialPrevBoundary != boundary && potentialPrevBoundary.destVert == boundary.origVert)
+                    {
+                        if (potentialPrevBoundary.face == -1)
+                        {
+                            totalPotentialPrevBoundary++;
+
+                            if (potentialPrevBoundary.next != -1)
+                            {
+                                if (HalfEdges[potentialPrevBoundary.next].face != -1)
+                                {
+                                    potentialBoundaryWithAnInnerAsNextIdx = potentialPrevBoundaryIdx;
+                                }
+                            }
+                            else if (oppositePrevBoundary == -1)
+                            {
+                                halfEdgeModifier.ChangeHalfEdgePrev(boundary, potentialPrevBoundaryIdx);
+                                halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[potentialPrevBoundaryIdx], boundaryIdx);
+                            }
+                        }
+                    }
+                }
+
+                if (potentialBoundaryWithAnInnerAsNextIdx == -1 && totalPotentialPrevBoundary > 2)
+                {
+                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, a vertex specified by the face has multiple boundary edges but shares no existing edge");
+                    return;
+                }
+
+
+                if (totalPotentialPrevBoundary == 2)
+                {
+                    if (potentialBoundaryWithAnInnerAsNextIdx != -1)
+                    {
+                        halfEdgeModifier.ChangeHalfEdgePrev(boundary, potentialBoundaryWithAnInnerAsNextIdx);
+                        halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[potentialBoundaryWithAnInnerAsNextIdx], boundaryIdx);
+                    }
+                    else
+                    {
+                        foreach (var heidx in VertexCirculator(oppositePrevBoundary, "away"))
+                        {
+                            var possiblePrev = HalfEdges[heidx];
+                            if (HalfEdges[possiblePrev.twin].face == -1)
+                            {
+                                halfEdgeModifier.ChangeHalfEdgePrev(boundary, possiblePrev.twin);
+                                halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[possiblePrev.twin], boundaryIdx);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (totalPotentialPrevBoundary == 1)
+                {
+                    if (potentialBoundaryWithAnInnerAsNextIdx == -1)
+                    {
+                        var prev = HalfEdges[HalfEdges[boundary.twin].next].twin;
+                        halfEdgeModifier.ChangeHalfEdgePrev(boundary, prev);
+                        halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[prev], boundaryIdx);
+                    }
+                    else
+                    {
+                        halfEdgeModifier.ChangeHalfEdgePrev(boundary, potentialBoundaryWithAnInnerAsNextIdx);
+                        halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[potentialBoundaryWithAnInnerAsNextIdx], boundaryIdx);
+                    }
+                }
+
+                //
+                // link next boundary
+                //
+
+                var totalPotentialNextBoundary = 0;
+                var potentialBoundaryWithAnInnerAsPrevIdx = -1; // if not -1 it means that an edge merge removed one boundary, and we are still at a valid 4 bondaries on a vertex
+                var oppositeNextBoundary = -1; // if not -1 it means that an edge merge removed one boundary, and we are still at a valid 4 bondaries on a vertex
+
+                foreach (var potentialNextBoundaryIdx in destVert.relatedEdges)
+                {
+                    var potentialNextBoundary = HalfEdges[potentialNextBoundaryIdx];
+
+                    if (potentialNextBoundary != boundary && potentialNextBoundary.destVert == boundary.destVert && potentialNextBoundary.face == -1)
+                    {
+                        oppositeNextBoundary = potentialNextBoundaryIdx;
+                    }
+
+                    if (potentialNextBoundary != boundary && potentialNextBoundary.origVert == boundary.destVert)
+                    {
+                        if (potentialNextBoundary.face == -1)
+                        {
+                            totalPotentialNextBoundary++;
+
+                            if (potentialNextBoundary.prev != -1)
+                            {
+                                if (HalfEdges[potentialNextBoundary.prev].face != -1)
+                                {
+                                    potentialBoundaryWithAnInnerAsPrevIdx = potentialNextBoundaryIdx;
+                                }
+                            }
+                            else if (oppositeNextBoundary == -1)
+                            {
+                                halfEdgeModifier.ChangeHalfEdgeNext(boundary, potentialNextBoundaryIdx);
+                                halfEdgeModifier.ChangeHalfEdgePrev(HalfEdges[potentialNextBoundaryIdx], boundaryIdx);
+                                totalPotentialNextBoundary = 0;
+                            }
+                        }
+                    }
+                }
+
+                if (potentialBoundaryWithAnInnerAsPrevIdx == -1 && totalPotentialNextBoundary > 2)
+                {
+                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount}`, a vertex specified by the face has multiple boundary edges but shares no existing edge");
+                    return;
+                }
+
+
+                if (totalPotentialNextBoundary == 2)
+                {
+                    if (potentialBoundaryWithAnInnerAsPrevIdx != -1)
+                    {
+                        halfEdgeModifier.ChangeHalfEdgeNext(boundary, potentialBoundaryWithAnInnerAsPrevIdx);
+                        halfEdgeModifier.ChangeHalfEdgePrev(HalfEdges[potentialBoundaryWithAnInnerAsPrevIdx], boundaryIdx);
+                    }
+                    else
+                    {
+                        foreach (var heidx in VertexCirculator(oppositeNextBoundary, "into"))
+                        {
+                            var possibleNext = HalfEdges[heidx];
+                            if (HalfEdges[possibleNext.twin].face == -1)
+                            {
+                                halfEdgeModifier.ChangeHalfEdgeNext(boundary, possibleNext.twin);
+                                halfEdgeModifier.ChangeHalfEdgePrev(HalfEdges[possibleNext.twin], boundaryIdx);
+                                break;
+                            }
+                        }
+                    }
+
+                }
+
+                if (totalPotentialNextBoundary == 1)
+                {
+                    if (potentialBoundaryWithAnInnerAsPrevIdx == -1)
+                    {
+                        var next = HalfEdges[HalfEdges[boundary.twin].prev].twin;
+                        halfEdgeModifier.ChangeHalfEdgeNext(boundary, next);
+                        halfEdgeModifier.ChangeHalfEdgePrev(HalfEdges[next], boundaryIdx);
+                    }
+                    else
+                    {
+                        halfEdgeModifier.ChangeHalfEdgeNext(boundary, potentialBoundaryWithAnInnerAsPrevIdx);
+                        halfEdgeModifier.ChangeHalfEdgePrev(HalfEdges[potentialBoundaryWithAnInnerAsPrevIdx], boundaryIdx);
+                    }
+                }
+            }
+
             Faces.Add(face);
         }
 
