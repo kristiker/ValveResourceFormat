@@ -8,6 +8,7 @@
 #include "complex_features.glsl"
 
 // Render modes -- Switched on/off by code
+#define renderMode_LightmapShadows 0
 #define renderMode_Diffuse 0
 #define renderMode_Specular 0
 #define renderMode_PBR 0
@@ -659,6 +660,10 @@ void main()
 
 #if renderMode_Irradiance == 1 && (F_GLASS == 0)
     outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseIndirect), 1.0);
+#endif
+
+#if renderMode_LightmapShadows == 1 && (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
+    outputColor = vec4(vec3(1.0) - texture(g_tDirectLightShadows, vLightmapUVScaled).ggg, 1.0);
 #endif
 
 #if renderMode_Tint == 1
