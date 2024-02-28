@@ -437,8 +437,8 @@ public sealed class MapExtract
 
                 //extract everything but nodraw and clip, these tend to have the most complicated geo in them and still make hammer han
                 //gotta find where the issue with them is within plankton...
-                //if (tooltexture != "nodraw")
-                //{
+                if (tooltexture != "nodraw")
+                {
                     var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
 
 
@@ -472,7 +472,7 @@ public sealed class MapExtract
                     var hammermesh = hammerMeshBuilder.GenerateMesh();
                     MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
 
-                //}
+                }
                 //}
             }
         }
