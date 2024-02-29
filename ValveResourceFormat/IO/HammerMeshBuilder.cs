@@ -5,6 +5,10 @@ using ValveResourceFormat.IO.ContentFormats.ValveMap;
 using static ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull;
 using static ValveResourceFormat.IO.HammerMeshBuilder;
 using System.Linq;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics;
+using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Serialization;
 
 
 namespace ValveResourceFormat.IO
@@ -835,6 +839,62 @@ namespace ValveResourceFormat.IO
         public void AddFace(int v1, int v2, int v3, string material = "unassigned")
         {
             AddFace(new int[3] { v1, v2, v3 }, material);
+        }
+
+        public void AddPhysHull(HullDescriptor hull, PhysAggregateData phys, Vector3 vertexOffset = new Vector3(), string materialOverride = "")
+        {
+            var attributes = phys.CollisionAttributes[hull.CollisionAttributeIndex];
+            var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
+            var group = attributes.GetStringProperty("m_CollisionGroupString");
+            var material = MapExtract.GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+            if(materialOverride.Length > 0)
+            {
+                material = materialOverride;
+            }
+
+            foreach (var v in hull.Shape.VertexPositions)
+            {
+                AddVertex(new HammerMeshBuilder.Vertex(v + vertexOffset));
+            }
+
+            foreach (var face in hull.Shape.Faces)
+            {
+                var Indices = new List<int>();
+
+                var startHe = face.Edge;
+                var he = startHe;
+
+                do
+                {
+                    Indices.Add(hull.Shape.Edges[he].Origin);
+                    he = hull.Shape.Edges[he].Next;
+                }
+                while (he != startHe);
+
+                AddFace(Indices, material);
+            }
+        }
+
+        public void AddPhysMesh(MeshDescriptor mesh, PhysAggregateData phys, Vector3 vertexOffset = new Vector3(), string materialOverride = "")
+        {
+            var attributes = phys.CollisionAttributes[mesh.CollisionAttributeIndex];
+            var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
+            var group = attributes.GetStringProperty("m_CollisionGroupString");
+            var material = MapExtract.GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+            if (materialOverride.Length > 0)
+            {
+                material = materialOverride;
+            }
+
+            foreach (var Vertex in mesh.Shape.Vertices)
+            {
+                AddVertex(new HammerMeshBuilder.Vertex(Vertex + vertexOffset));
+            }
+
+            foreach (var Face in mesh.Shape.Triangles)
+            {
+                AddFace(Face.X, Face.Y, Face.Z, material);
+            }
         }
 
         private bool VerifyIndicesWithinBounds(IEnumerable<int> indices)

@@ -303,11 +303,36 @@ public class ModelExtract
 
             foreach (var (physHull, fileName) in PhysHullsToExtract)
             {
+                var attributes = physAggregateData.CollisionAttributes[physHull.CollisionAttributeIndex];
+                var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
+                var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
+
+                // dont extract tool brushes for map decompile phys
+                if (Type == ModelExtractType.Map_PhysicsToRenderMesh)
+                {
+                    if (tooltexture != "nodraw")
+                    {
+                        continue;
+                    }
+                }
+
                 HandlePhysMeshNode(physHull, fileName);
             }
 
             foreach (var (physMesh, fileName) in PhysMeshesToExtract)
             {
+                var attributes = physAggregateData.CollisionAttributes[physMesh.CollisionAttributeIndex];
+                var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
+                var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
+
+                // dont extract tool brushes for map decompile phys
+                if (Type == ModelExtractType.Map_PhysicsToRenderMesh)
+                {
+                    if (tooltexture != "nodraw")
+                    {
+                        continue;
+                    }
+                }
                 HandlePhysMeshNode(physMesh, fileName);
             }
         }
@@ -792,7 +817,7 @@ public class ModelExtract
         return dmx;
     }
 
-    private static Datamodel.Datamodel ConvertMeshToDmxMesh(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures, bool splitDrawCallsIntoSeparateSubmeshes)
+    public static Datamodel.Datamodel ConvertMeshToDmxMesh(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures, bool splitDrawCallsIntoSeparateSubmeshes)
     {
         var mdat = mesh.Data;
         var mbuf = mesh.VBIB;
