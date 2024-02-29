@@ -227,7 +227,7 @@ namespace ValveResourceFormat.IO
                 builderRef.AddVertex(new Vertex(builderRef.Vertices[vertex].pos));
             }
 
-            var vertCount = builderRef.Vertices.Count();
+            var vertCount = builderRef.Vertices.Count;
 
             var newIndices = new List<int>();
 

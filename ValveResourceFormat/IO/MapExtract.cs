@@ -1,3 +1,4 @@
+using SharpGLTF.Schema2;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -10,8 +11,10 @@ using ValveResourceFormat.Blocks;
 using ValveResourceFormat.IO.ContentFormats.DmxModel;
 using ValveResourceFormat.IO.ContentFormats.ValveMap;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Utils;
+using static ValveResourceFormat.IO.HammerMeshBuilder;
 
 namespace ValveResourceFormat.IO;
 
@@ -268,7 +271,7 @@ public sealed class MapExtract
             using var mesh = FileLoader.LoadFile(meshNameCompiled);
             if (mesh is not null)
             {
-                var vmdl = new ModelExtract((Mesh)mesh.DataBlock, meshName).ToContentFile();
+                var vmdl = new ModelExtract((ResourceTypes.Mesh)mesh.DataBlock, meshName).ToContentFile();
                 FolderExtractFilter.Add(meshNameCompiled); // TODO: put vmesh on vmdl.AdditionalFiles
                 vmap.AdditionalFiles.Add(vmdl);
             }
@@ -382,52 +385,56 @@ public sealed class MapExtract
         var phys = LoadWorldPhysics();
         for (var i = 0; i < phys.Parts.Length; i++)
         {
+
             var shape = phys.Parts[i].Shape;
 
-            // Hulls
-            //foreach (var hull in shape.Hulls)
-            //{
-            //    foreach (var v in hull.Shape.VertexPositions)
-            //    {
-            //        var vec = v;
-            //        if (bindPose.Length != 0)
-            //        {
-            //            vec = Vector3.Transform(vec, bindPose[p]);
-            //        }
-            //
-            //        verts[collisionAttributeIndex].Add(vec.X);
-            //        verts[collisionAttributeIndex].Add(vec.Y);
-            //        verts[collisionAttributeIndex].Add(vec.Z);
-            //    }
-            //
-            //    foreach (var face in hull.Shape.Faces)
-            //    {
-            //        var startEdge = face.Edge;
-            //
-            //        for (var edge = hull.Shape.Edges[startEdge].Next; edge != startEdge;)
-            //        {
-            //            var nextEdge = hull.Shape.Edges[edge].Next;
-            //
-            //            if (nextEdge == startEdge)
-            //            {
-            //                break;
-            //            }
-            //
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[edge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[nextEdge].Origin);
-            //            inds[collisionAttributeIndex].Add(vertOffset + hull.Shape.Edges[startEdge].Origin);
-            //
-            //            edge = nextEdge;
-            //        }
-            //    }
-            //}
+            //Hulls
+            foreach (var hull in shape.Hulls)
+            {
+                var hammerMeshBuilder = new HammerMeshBuilder();
+
+                var attributes = phys.CollisionAttributes[hull.CollisionAttributeIndex];
+
+                var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
+                var group = attributes.GetStringProperty("m_CollisionGroupString");
+
+                var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
+                var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
+
+                if (tooltexture != "nodraw")
+                {
+                    foreach (var v in hull.Shape.VertexPositions)
+                    {
+                        hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(v));
+                    }
+
+                    foreach (var face in hull.Shape.Faces)
+                    {
+                        var Indices = new List<int>();
+
+                        var startHe = face.Edge;
+                        var he = startHe;
+
+                        do
+                        {
+                            Indices.Add(hull.Shape.Edges[he].Origin);
+                            he = hull.Shape.Edges[he].Next;
+                        }
+                        while (he != startHe);
+
+                        hammerMeshBuilder.AddFace(Indices, material);
+                    }
+
+                    var hammermesh = hammerMeshBuilder.GenerateMesh();
+                    MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
+                }
+            }
 
             //Meshes
             foreach (var mesh in shape.Meshes)
             {
+                var hammerMeshBuilder = new HammerMeshBuilder();
+
                 var attributes = phys.CollisionAttributes[mesh.CollisionAttributeIndex];
 
                 var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
@@ -435,8 +442,7 @@ public sealed class MapExtract
 
                 var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
 
-                //extract everything but nodraw and clip, these tend to have the most complicated geo in them and still make hammer han
-                //gotta find where the issue with them is within plankton...
+                //extract everything but nodraw
                 if (tooltexture != "nodraw")
                 {
                     var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
@@ -445,7 +451,6 @@ public sealed class MapExtract
                     var collisionAttributeIndex = mesh.CollisionAttributeIndex;
                     //var surfacePropertyIndex = capsule.SurfacePropertyIndex;
 
-                    var hammerMeshBuilder = new HammerMeshBuilder();
 
                     foreach (var Vertex in mesh.Shape.Vertices)
                     {
@@ -456,18 +461,6 @@ public sealed class MapExtract
                     {
                         hammerMeshBuilder.AddFace(Face.X, Face.Y, Face.Z, material);
                     }
-
-                    //var testVertices = new Vector3[4] { new Vector3(0, 0, 0), new Vector3(16, 0, 0), new Vector3(16, 16, 0), new Vector3(0, 16, 0) };
-                    //var testIndices = new int[3] { 0, 1, 2 };
-                    //var testIndices2 = new int[3] { 0, 1, 3 };
-                    //
-                    //foreach (var Vertex in testVertices)
-                    //{
-                    //    hammerMeshBuilder.AddVertex(new HammerMeshBuilder.Vertex(Vertex));
-                    //}
-                    //
-                    //hammerMeshBuilder.AddFace(testIndices);
-                    //hammerMeshBuilder.AddFace(testIndices2);
 
                     var hammermesh = hammerMeshBuilder.GenerateMesh();
                     MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
