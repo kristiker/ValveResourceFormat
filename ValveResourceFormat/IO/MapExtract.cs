@@ -868,37 +868,9 @@ public sealed class MapExtract
                     {
                         var hammermeshbuilder = new HammerMeshBuilder();
 
-                        var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), null, false);
+                        using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), null, false);
 
-                        var mesh = (DmeModel)dmxMesh.Root["model"];
-                        var dag = (DmeDag)mesh.JointList[0];
-                        var shape = (DmeMesh)dag.Shape;
-                        var facesets = shape.FaceSets;
-
-                        var vertexdata = (DmeVertexData)shape.BaseStates[0];
-                        var vertices = vertexdata.Get<Vector3[]>("position$0");
-
-                        foreach (var vertex in vertices)
-                        {
-                            hammermeshbuilder.AddVertex(new HammerMeshBuilder.Vertex(vertex + offset));
-                        }
-
-                        foreach (DmeFaceSet faceset in facesets)
-                        {
-                            var faces = faceset.Faces;
-
-                            List<int> face = new();
-                            foreach (var index in faces)
-                            {
-                                if (index == -1)
-                                {
-                                    hammermeshbuilder.AddFace(face, faceset.Material.MaterialName);
-                                    face.Clear();
-                                    continue;
-                                }
-                                face.Add(index);
-                            }
-                        }
+                        hammermeshbuilder.AddRenderMesh(dmxMesh, offset);
 
                         var hammermesh = hammermeshbuilder.GenerateMesh();
                         var uselocaloffset = compiledEntity.GetProperty<bool>("uselocaloffset");
