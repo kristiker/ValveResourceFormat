@@ -9,11 +9,250 @@ using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization;
-using ValveResourceFormat.IO.ContentFormats.DmxModel;
 
 
 namespace ValveResourceFormat.IO
 {
+    internal class HalfEdgeMeshModifier
+    {
+        private List<HalfEdgeModification> HalfEdgeModifications = new();
+        private List<VertsToEdgeDictModification> VertsToEdgeDictModifications = new();
+        private List<HalfEdgesModification> HalfEdgesModifications = new();
+        private List<VertexModification> VertexModifications = new();
+
+        public HammerMeshBuilder.Face Face;
+
+        private HammerMeshBuilder builderRef;
+
+        public HalfEdgeMeshModifier(HammerMeshBuilder c_builderRef)
+        {
+            builderRef = c_builderRef;
+        }
+
+        // remember half edge states
+        internal class HalfEdgeModification
+        {
+            public HammerMeshBuilder.HalfEdge he;
+            public string propertyName;
+            public int property;
+
+            public HalfEdgeModification(HammerMeshBuilder.HalfEdge c_he, string c_propertyName, int c_property)
+            {
+                he = c_he;
+                propertyName = c_propertyName;
+                property = c_property;
+            }
+        }
+        internal void RememberHalfEdgeModification(HammerMeshBuilder.HalfEdge he, string propertyName, int property)
+        {
+            HalfEdgeModifications.Add(new HalfEdgeModification(he, propertyName, property));
+        }
+
+        public void ChangeHalfEdgeFace(HammerMeshBuilder.HalfEdge he, int face)
+        {
+            if (he.face == face)
+            {
+                return;
+            }
+
+            RememberHalfEdgeModification(he, "face", he.face);
+            he.face = face;
+        }
+
+        public void ChangeHalfEdgePrev(HammerMeshBuilder.HalfEdge he, int prev)
+        {
+            if (he.prev == prev)
+            {
+                return;
+            }
+
+            RememberHalfEdgeModification(he, "prev", he.prev);
+            he.prev = prev;
+        }
+
+        public void ChangeHalfEdgeNext(HammerMeshBuilder.HalfEdge he, int next)
+        {
+            if (he.next == next)
+            {
+                return;
+            }
+
+            RememberHalfEdgeModification(he, "next", he.next);
+            he.next = next;
+        }
+
+        // remember vertxtoedgedict states
+        internal class VertsToEdgeDictModification
+        {
+            public Tuple<int, int> heKey;
+
+            public VertsToEdgeDictModification(Tuple<int, int> c_heKey)
+            {
+                heKey = c_heKey;
+            }
+        }
+
+        internal void RememberVertsToEdgeDictModification(Tuple<int, int> heKey)
+        {
+            VertsToEdgeDictModifications.Add(new VertsToEdgeDictModification(heKey));
+        }
+
+        public bool TryAddVertsToEdgeDict(Tuple<int, int> heKey, int heIndex)
+        {
+            if (builderRef.VertsToEdgeDict.TryAdd(heKey, heIndex))
+            {
+                RememberVertsToEdgeDictModification(heKey);
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        // remember HalfEdges states
+        internal class HalfEdgesModification
+        {
+            public HammerMeshBuilder.HalfEdge he;
+
+            public HalfEdgesModification(HammerMeshBuilder.HalfEdge c_he)
+            {
+                he = c_he;
+            }
+        }
+
+        internal void RememberHalfEdgesModification(HammerMeshBuilder.HalfEdge he)
+        {
+            HalfEdgesModifications.Add(new HalfEdgesModification(he));
+        }
+
+        public void AddHalfEdgeToHalfEdgesList(HammerMeshBuilder.HalfEdge he)
+        {
+            RememberHalfEdgesModification(he);
+            builderRef.HalfEdges.Add(he);
+        }
+
+        // remember Vertex states
+        internal class VertexModification
+        {
+            public Vertex vertex;
+            public int outGoingHalfEdge;
+            public int relatedEdge;
+            public string proprtyName;
+            public int proprty;
+
+            public VertexModification(Vertex c_vertex, string c_proprtyName, int c_proprty)
+            {
+                vertex = c_vertex;
+                proprtyName = c_proprtyName;
+                proprty = c_proprty;
+            }
+        }
+
+        internal void RememberVertexModification(Vertex vertex, string proprtyName, int proprty)
+        {
+            VertexModifications.Add(new VertexModification(vertex, proprtyName, proprty));
+        }
+
+        public void SetVertexOutGoing(Vertex vertex, int outGoingHalfEdge)
+        {
+            RememberVertexModification(vertex, "outGoingHalfEdge", vertex.outGoingHalfEdge);
+            vertex.outGoingHalfEdge = outGoingHalfEdge;
+        }
+
+        public void AddVertexRelatedEdge(Vertex vertex, int he)
+        {
+            RememberVertexModification(vertex, "relatedEdge", he);
+            vertex.relatedEdges.Add(he);
+        }
+
+        // roll back
+        public void RollBack(string error)
+        {
+            builderRef.FacesRemoved++;
+
+            HalfEdgeModifications.Reverse();
+            VertsToEdgeDictModifications.Reverse();
+            HalfEdgesModifications.Reverse();
+            VertexModifications.Reverse();
+
+            foreach (var VertexModification in VertexModifications)
+            {
+                switch (VertexModification.proprtyName)
+                {
+                    case "outGoingHalfEdge":
+                        VertexModification.vertex.outGoingHalfEdge = VertexModification.proprty;
+                        break;
+
+                    case "relatedEdge":
+                        VertexModification.vertex.relatedEdges.Remove(VertexModification.proprty);
+                        break;
+                }
+            }
+
+            foreach (var HalfEdgesModification in HalfEdgesModifications)
+            {
+                builderRef.HalfEdges.RemoveAt(HalfEdgesModification.he.id);
+                HalfEdgesModification.he.skipInRollback = true;
+            }
+
+            foreach (var VertsToEdgeDictModification in VertsToEdgeDictModifications)
+            {
+                builderRef.VertsToEdgeDict.Remove(VertsToEdgeDictModification.heKey);
+            }
+
+            foreach (var HalfEdgeModification in HalfEdgeModifications)
+            {
+                var he = HalfEdgeModification.he;
+
+                if (he.skipInRollback)
+                    continue;
+
+                switch (HalfEdgeModification.propertyName)
+                {
+                    case "face":
+                        he.face = HalfEdgeModification.property;
+                        break;
+
+                    case "prev":
+                        he.prev = HalfEdgeModification.property;
+                        break;
+
+                    case "next":
+                        he.next = HalfEdgeModification.property;
+                        break;
+                }
+            }
+
+            Console.WriteLine("HammerMeshBuilder error: " + error + " Extracting face...");
+
+            foreach (var vertex in Face.indices)
+            {
+                builderRef.AddVertex(new Vertex(builderRef.Vertices[vertex].pos));
+            }
+
+            var vertCount = builderRef.Vertices.Count;
+
+            var newIndices = new List<int>();
+
+            for (var i = vertCount - Face.indices.Count; i < vertCount; i++)
+            {
+                newIndices.Add(i);
+            }
+
+            builderRef.AddFace(newIndices);
+        }
+
+        public void Reset()
+        {
+            HalfEdgeModifications.Clear();
+            VertsToEdgeDictModifications.Clear();
+            HalfEdgesModifications.Clear();
+            VertexModifications.Clear();
+            Face = null;
+        }
+    }
+
     internal class HammerMeshBuilder
     {
         [Flags]
@@ -29,13 +268,10 @@ namespace ValveResourceFormat.IO
             public Vector3 pos;
             public int outGoingHalfEdge = -1;
             public List<int> relatedEdges = new();
-            public Vector2 uv;
-            public bool hasExistingUvs;
 
-            public Vertex(Vector3 pos, Vector2 uv = new Vector2())
+            public Vertex(Vector3 pos)
             {
                 this.pos = pos;
-                this.uv = uv;
             }
         }
 
@@ -159,14 +395,14 @@ namespace ValveResourceFormat.IO
                     tangent.Data.Add(new Vector4(0, 0, 0, 0));
                 }
 
-                var startVertex = Vertices[halfEdge.destVert];
-                if (startVertex.hasExistingUvs)
+                try
                 {
-                    textureCoords.Data.Add(new Vector2(startVertex.uv[0], startVertex.uv[1]));
-                }
-                else
-                {
+                    var startVertex = Vertices[halfEdge.destVert];
                     textureCoords.Data.Add(CalculateTriplanarUVs(startVertex.pos, normal));
+                }
+                catch
+                {
+
                 }
 
             }
@@ -587,246 +823,6 @@ namespace ValveResourceFormat.IO
             Faces.Add(face);
         }
 
-        internal class HalfEdgeMeshModifier
-        {
-            private List<HalfEdgeModification> HalfEdgeModifications = new();
-            private List<VertsToEdgeDictModification> VertsToEdgeDictModifications = new();
-            private List<HalfEdgesModification> HalfEdgesModifications = new();
-            private List<VertexModification> VertexModifications = new();
-
-            public HammerMeshBuilder.Face Face;
-
-            private HammerMeshBuilder builderRef;
-
-            public HalfEdgeMeshModifier(HammerMeshBuilder c_builderRef)
-            {
-                builderRef = c_builderRef;
-            }
-
-            // remember half edge states
-            internal class HalfEdgeModification
-            {
-                public HammerMeshBuilder.HalfEdge he;
-                public string propertyName;
-                public int property;
-
-                public HalfEdgeModification(HammerMeshBuilder.HalfEdge c_he, string c_propertyName, int c_property)
-                {
-                    he = c_he;
-                    propertyName = c_propertyName;
-                    property = c_property;
-                }
-            }
-            internal void RememberHalfEdgeModification(HammerMeshBuilder.HalfEdge he, string propertyName, int property)
-            {
-                HalfEdgeModifications.Add(new HalfEdgeModification(he, propertyName, property));
-            }
-
-            public void ChangeHalfEdgeFace(HammerMeshBuilder.HalfEdge he, int face)
-            {
-                if (he.face == face)
-                {
-                    return;
-                }
-
-                RememberHalfEdgeModification(he, "face", he.face);
-                he.face = face;
-            }
-
-            public void ChangeHalfEdgePrev(HammerMeshBuilder.HalfEdge he, int prev)
-            {
-                if (he.prev == prev)
-                {
-                    return;
-                }
-
-                RememberHalfEdgeModification(he, "prev", he.prev);
-                he.prev = prev;
-            }
-
-            public void ChangeHalfEdgeNext(HammerMeshBuilder.HalfEdge he, int next)
-            {
-                if (he.next == next)
-                {
-                    return;
-                }
-
-                RememberHalfEdgeModification(he, "next", he.next);
-                he.next = next;
-            }
-
-            // remember vertxtoedgedict states
-            internal class VertsToEdgeDictModification
-            {
-                public Tuple<int, int> heKey;
-
-                public VertsToEdgeDictModification(Tuple<int, int> c_heKey)
-                {
-                    heKey = c_heKey;
-                }
-            }
-
-            internal void RememberVertsToEdgeDictModification(Tuple<int, int> heKey)
-            {
-                VertsToEdgeDictModifications.Add(new VertsToEdgeDictModification(heKey));
-            }
-
-            public bool TryAddVertsToEdgeDict(Tuple<int, int> heKey, int heIndex)
-            {
-                if (builderRef.VertsToEdgeDict.TryAdd(heKey, heIndex))
-                {
-                    RememberVertsToEdgeDictModification(heKey);
-                    return true;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-
-            // remember HalfEdges states
-            internal class HalfEdgesModification
-            {
-                public HammerMeshBuilder.HalfEdge he;
-
-                public HalfEdgesModification(HammerMeshBuilder.HalfEdge c_he)
-                {
-                    he = c_he;
-                }
-            }
-
-            internal void RememberHalfEdgesModification(HammerMeshBuilder.HalfEdge he)
-            {
-                HalfEdgesModifications.Add(new HalfEdgesModification(he));
-            }
-
-            public void AddHalfEdgeToHalfEdgesList(HammerMeshBuilder.HalfEdge he)
-            {
-                RememberHalfEdgesModification(he);
-                builderRef.HalfEdges.Add(he);
-            }
-
-            // remember Vertex states
-            internal class VertexModification
-            {
-                public Vertex vertex;
-                public int outGoingHalfEdge;
-                public int relatedEdge;
-                public string proprtyName;
-                public int proprty;
-
-                public VertexModification(Vertex c_vertex, string c_proprtyName, int c_proprty)
-                {
-                    vertex = c_vertex;
-                    proprtyName = c_proprtyName;
-                    proprty = c_proprty;
-                }
-            }
-
-            internal void RememberVertexModification(Vertex vertex, string proprtyName, int proprty)
-            {
-                VertexModifications.Add(new VertexModification(vertex, proprtyName, proprty));
-            }
-
-            public void SetVertexOutGoing(Vertex vertex, int outGoingHalfEdge)
-            {
-                RememberVertexModification(vertex, "outGoingHalfEdge", vertex.outGoingHalfEdge);
-                vertex.outGoingHalfEdge = outGoingHalfEdge;
-            }
-
-            public void AddVertexRelatedEdge(Vertex vertex, int he)
-            {
-                RememberVertexModification(vertex, "relatedEdge", he);
-                vertex.relatedEdges.Add(he);
-            }
-
-            // roll back
-            public void RollBack(string error)
-            {
-                builderRef.FacesRemoved++;
-
-                HalfEdgeModifications.Reverse();
-                VertsToEdgeDictModifications.Reverse();
-                HalfEdgesModifications.Reverse();
-                VertexModifications.Reverse();
-
-                foreach (var VertexModification in VertexModifications)
-                {
-                    switch (VertexModification.proprtyName)
-                    {
-                        case "outGoingHalfEdge":
-                            VertexModification.vertex.outGoingHalfEdge = VertexModification.proprty;
-                            break;
-
-                        case "relatedEdge":
-                            VertexModification.vertex.relatedEdges.Remove(VertexModification.proprty);
-                            break;
-                    }
-                }
-
-                foreach (var HalfEdgesModification in HalfEdgesModifications)
-                {
-                    builderRef.HalfEdges.RemoveAt(HalfEdgesModification.he.id);
-                    HalfEdgesModification.he.skipInRollback = true;
-                }
-
-                foreach (var VertsToEdgeDictModification in VertsToEdgeDictModifications)
-                {
-                    builderRef.VertsToEdgeDict.Remove(VertsToEdgeDictModification.heKey);
-                }
-
-                foreach (var HalfEdgeModification in HalfEdgeModifications)
-                {
-                    var he = HalfEdgeModification.he;
-
-                    if (he.skipInRollback)
-                        continue;
-
-                    switch (HalfEdgeModification.propertyName)
-                    {
-                        case "face":
-                            he.face = HalfEdgeModification.property;
-                            break;
-
-                        case "prev":
-                            he.prev = HalfEdgeModification.property;
-                            break;
-
-                        case "next":
-                            he.next = HalfEdgeModification.property;
-                            break;
-                    }
-                }
-
-                Console.WriteLine("HammerMeshBuilder error: " + error + " Extracting face...");
-
-                foreach (var vertex in Face.indices)
-                {
-                    builderRef.AddVertex(new Vertex(builderRef.Vertices[vertex].pos));
-                }
-
-                var vertCount = builderRef.Vertices.Count;
-
-                var newIndices = new List<int>();
-
-                for (var i = vertCount - Face.indices.Count; i < vertCount; i++)
-                {
-                    newIndices.Add(i);
-                }
-
-                builderRef.AddFace(newIndices);
-            }
-
-            public void Reset()
-            {
-                HalfEdgeModifications.Clear();
-                VertsToEdgeDictModifications.Clear();
-                HalfEdgesModifications.Clear();
-                VertexModifications.Clear();
-                Face = null;
-            }
-        }
-
         public void AddFace(int[] indices, string material = "unassigned")
         {
             var face = new Face();
@@ -851,7 +847,7 @@ namespace ValveResourceFormat.IO
             var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
             var group = attributes.GetStringProperty("m_CollisionGroupString");
             var material = MapExtract.GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
-            if (materialOverride.Length > 0)
+            if(materialOverride.Length > 0)
             {
                 material = materialOverride;
             }
@@ -898,45 +894,6 @@ namespace ValveResourceFormat.IO
             foreach (var Face in mesh.Shape.Triangles)
             {
                 AddFace(Face.X, Face.Y, Face.Z, material);
-            }
-        }
-
-        public void AddRenderMesh(Datamodel.Datamodel dmxMesh, Vector3 vertexOffset = new Vector3())
-        {
-            var mesh = (DmeModel)dmxMesh.Root["model"];
-            var dag = (DmeDag)mesh.JointList[0];
-            var shape = (DmeMesh)dag.Shape;
-            var facesets = shape.FaceSets;
-
-            var vertexdata = (DmeVertexData)shape.BaseStates[0];
-            var vertices = vertexdata.Get<Vector3[]>("position$0");
-            var uvs = vertexdata.Get<Vector2[]>("texcoord$0");
-
-            for (int i = 0; i < vertices.Length; i++)
-            {
-                var vertex = vertices[i];
-                var uv = uvs[i];
-
-                var newvert = new HammerMeshBuilder.Vertex(vertex + vertexOffset, uv);
-                newvert.hasExistingUvs = true;
-                AddVertex(newvert);
-            }
-
-            foreach (DmeFaceSet faceset in facesets)
-            {
-                var faces = faceset.Faces;
-
-                List<int> face = new();
-                foreach (var index in faces)
-                {
-                    if (index == -1)
-                    {
-                        AddFace(face, faceset.Material.MaterialName);
-                        face.Clear();
-                        continue;
-                    }
-                    face.Add(index);
-                }
             }
         }
 
