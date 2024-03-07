@@ -303,19 +303,7 @@ public class ModelExtract
 
             foreach (var (physHull, fileName) in PhysHullsToExtract)
             {
-                var attributes = physAggregateData.CollisionAttributes[physHull.CollisionAttributeIndex];
-                var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
-                var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
-
-                // dont extract tool brushes for map decompile phys
-                if (Type == ModelExtractType.Map_PhysicsToRenderMesh)
-                {
-                    if (tooltexture != "nodraw")
-                    {
-                        continue;
-                    }
-                }
-
+               
                 HandlePhysMeshNode(physHull, fileName);
             }
 

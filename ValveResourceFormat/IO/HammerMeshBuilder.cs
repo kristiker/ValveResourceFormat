@@ -2,13 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using ValveResourceFormat.IO.ContentFormats.ValveMap;
-using static ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Hull;
 using static ValveResourceFormat.IO.HammerMeshBuilder;
-using System.Linq;
-using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization;
+using ValveResourceFormat.IO.ContentFormats.DmxModel;
 
 
 namespace ValveResourceFormat.IO
@@ -19,6 +17,19 @@ namespace ValveResourceFormat.IO
         private List<VertsToEdgeDictModification> VertsToEdgeDictModifications = new();
         private List<HalfEdgesModification> HalfEdgesModifications = new();
         private List<VertexModification> VertexModifications = new();
+
+        public enum HalfEdgePropertyNames
+        {
+            face,
+            prev,
+            next
+        }
+
+        public enum VertexPropertyNames
+        {
+            outGoingHalfEdge,
+            relatedEdge
+        }
 
         public HammerMeshBuilder.Face Face;
 
@@ -33,17 +44,17 @@ namespace ValveResourceFormat.IO
         internal class HalfEdgeModification
         {
             public HammerMeshBuilder.HalfEdge he;
-            public string propertyName;
+            public HalfEdgePropertyNames propertyName;
             public int property;
 
-            public HalfEdgeModification(HammerMeshBuilder.HalfEdge c_he, string c_propertyName, int c_property)
+            public HalfEdgeModification(HammerMeshBuilder.HalfEdge c_he, HalfEdgePropertyNames c_propertyName, int c_property)
             {
                 he = c_he;
                 propertyName = c_propertyName;
                 property = c_property;
             }
         }
-        internal void RememberHalfEdgeModification(HammerMeshBuilder.HalfEdge he, string propertyName, int property)
+        internal void RememberHalfEdgeModification(HammerMeshBuilder.HalfEdge he, HalfEdgePropertyNames propertyName, int property)
         {
             HalfEdgeModifications.Add(new HalfEdgeModification(he, propertyName, property));
         }
@@ -55,7 +66,7 @@ namespace ValveResourceFormat.IO
                 return;
             }
 
-            RememberHalfEdgeModification(he, "face", he.face);
+            RememberHalfEdgeModification(he, HalfEdgePropertyNames.face, he.face);
             he.face = face;
         }
 
@@ -66,7 +77,7 @@ namespace ValveResourceFormat.IO
                 return;
             }
 
-            RememberHalfEdgeModification(he, "prev", he.prev);
+            RememberHalfEdgeModification(he, HalfEdgePropertyNames.prev, he.prev);
             he.prev = prev;
         }
 
@@ -77,7 +88,7 @@ namespace ValveResourceFormat.IO
                 return;
             }
 
-            RememberHalfEdgeModification(he, "next", he.next);
+            RememberHalfEdgeModification(he, HalfEdgePropertyNames.next, he.next);
             he.next = next;
         }
 
@@ -138,10 +149,10 @@ namespace ValveResourceFormat.IO
             public Vertex vertex;
             public int outGoingHalfEdge;
             public int relatedEdge;
-            public string proprtyName;
+            public VertexPropertyNames proprtyName;
             public int proprty;
 
-            public VertexModification(Vertex c_vertex, string c_proprtyName, int c_proprty)
+            public VertexModification(Vertex c_vertex, VertexPropertyNames c_proprtyName, int c_proprty)
             {
                 vertex = c_vertex;
                 proprtyName = c_proprtyName;
@@ -149,20 +160,20 @@ namespace ValveResourceFormat.IO
             }
         }
 
-        internal void RememberVertexModification(Vertex vertex, string proprtyName, int proprty)
+        internal void RememberVertexModification(Vertex vertex, VertexPropertyNames proprtyName, int proprty)
         {
             VertexModifications.Add(new VertexModification(vertex, proprtyName, proprty));
         }
 
         public void SetVertexOutGoing(Vertex vertex, int outGoingHalfEdge)
         {
-            RememberVertexModification(vertex, "outGoingHalfEdge", vertex.outGoingHalfEdge);
+            RememberVertexModification(vertex, VertexPropertyNames.outGoingHalfEdge, vertex.outGoingHalfEdge);
             vertex.outGoingHalfEdge = outGoingHalfEdge;
         }
 
         public void AddVertexRelatedEdge(Vertex vertex, int he)
         {
-            RememberVertexModification(vertex, "relatedEdge", he);
+            RememberVertexModification(vertex, VertexPropertyNames.relatedEdge, he);
             vertex.relatedEdges.Add(he);
         }
 
@@ -180,11 +191,11 @@ namespace ValveResourceFormat.IO
             {
                 switch (VertexModification.proprtyName)
                 {
-                    case "outGoingHalfEdge":
+                    case VertexPropertyNames.outGoingHalfEdge:
                         VertexModification.vertex.outGoingHalfEdge = VertexModification.proprty;
                         break;
 
-                    case "relatedEdge":
+                    case VertexPropertyNames.relatedEdge:
                         VertexModification.vertex.relatedEdges.Remove(VertexModification.proprty);
                         break;
                 }
@@ -210,15 +221,15 @@ namespace ValveResourceFormat.IO
 
                 switch (HalfEdgeModification.propertyName)
                 {
-                    case "face":
+                    case HalfEdgePropertyNames.face:
                         he.face = HalfEdgeModification.property;
                         break;
 
-                    case "prev":
+                    case HalfEdgePropertyNames.prev:
                         he.prev = HalfEdgeModification.property;
                         break;
 
-                    case "next":
+                    case HalfEdgePropertyNames.next:
                         he.next = HalfEdgeModification.property;
                         break;
                 }
@@ -268,10 +279,13 @@ namespace ValveResourceFormat.IO
             public Vector3 pos;
             public int outGoingHalfEdge = -1;
             public List<int> relatedEdges = new();
+            public Vector2 uv;
+            public bool hasExistingUvs;
 
-            public Vertex(Vector3 pos)
+            public Vertex(Vector3 pos, Vector2 uv = new Vector2())
             {
                 this.pos = pos;
+                this.uv = uv;
             }
         }
 
@@ -380,7 +394,7 @@ namespace ValveResourceFormat.IO
 
                 mesh.FaceVertexData.Size += 1;
 
-                var normal = new Vector3(0, 0, 1);
+                var normal = Vector3.UnitZ;
                 if (halfEdge.face != -1)
                 {
                     normal = CalculateNormal(halfEdge.next);
@@ -391,20 +405,20 @@ namespace ValveResourceFormat.IO
                 }
                 else
                 {
-                    normals.Data.Add(new Vector3(0, 0, 0));
-                    tangent.Data.Add(new Vector4(0, 0, 0, 0));
+                    normals.Data.Add(normal);
+                    tangent.Data.Add(Vector4.Zero);
                 }
 
-                try
+                var startVertex = Vertices[halfEdge.destVert];
+
+                if (startVertex.hasExistingUvs)
                 {
-                    var startVertex = Vertices[halfEdge.destVert];
+                    textureCoords.Data.Add(new Vector2(startVertex.uv[0], startVertex.uv[1]));
+                }
+                else
+                {
                     textureCoords.Data.Add(CalculateTriplanarUVs(startVertex.pos, normal));
                 }
-                catch
-                {
-
-                }
-
             }
 
             foreach (var Face in Faces)
@@ -645,6 +659,12 @@ namespace ValveResourceFormat.IO
                 lastinnerFaceHeidx = innerHeIndex;
             }
 
+            // link boundary half edges
+            // TODO: it would be nice to find a way to generalize this code so theres no code duplication for
+            // linking prev/next boundaries, maybe even find a way to only have to link next with some smart logic
+            // because right now if you have a triangle, processing 2/3 of its edges will also link the 3rd edge
+            // but then the algorithm still goes over the 3rd edge linking it, couldn't figure out nice logic to avoid that
+            // but i have obsessed over this too much for now
             foreach (var boundary in newBoundaryList)
             {
                 var origVert = Vertices[boundary.origVert];
@@ -654,56 +674,78 @@ namespace ValveResourceFormat.IO
                 //
                 // link prev boundary
                 //
-
                 var totalPotentialPrevBoundary = 0;
-                var potentialBoundaryWithAnInnerAsNextIdx = -1; // if not -1 it means that an edge merge removed one boundary, and we are still at a valid 4 bondaries on a vertex
+                var potentialBoundaryWithAnInnerAsNextIdx = -1;
                 var oppositePrevBoundary = -1;
 
-                foreach (var potentialPrevBoundaryIdx in origVert.relatedEdges)
+                foreach (var heIdx in origVert.relatedEdges)
                 {
-                    var potentialPrevBoundary = HalfEdges[potentialPrevBoundaryIdx];
+                    var he = HalfEdges[heIdx];
 
-                    if (potentialPrevBoundary != boundary && potentialPrevBoundary.origVert == boundary.origVert && potentialPrevBoundary.face == -1)
+                    // dont loop over ourselves
+                    if (he == boundary)
                     {
-                        oppositePrevBoundary = potentialPrevBoundaryIdx;
+                        continue;
                     }
 
-                    if (potentialPrevBoundary != boundary && potentialPrevBoundary.destVert == boundary.origVert)
+                    // only loop over boundaries
+                    if (he.face != -1)
                     {
-                        if (potentialPrevBoundary.face == -1)
-                        {
-                            totalPotentialPrevBoundary++;
+                        continue;
+                    }
 
-                            if (potentialPrevBoundary.next != -1)
+                    // TODO: im sure there has to be a smarter way of writing this code, since currently we loop over all boundaries associated with a vertex
+                    // but we only end up actually using less than half, the issue is that vertex circulation doesn't work here
+                    // because while building the data structure, some half edges won't have data filled out yet, causing it to fail
+
+                    // store the edge that opposes our current edge (they point into eachother)
+                    // this will be useful for some trickery later
+                    if (he.origVert == boundary.origVert)
+                    {
+                        oppositePrevBoundary = heIdx;
+                    }
+
+                    // if the destvert of the half edge related with the vertex is the same as our origin vertex 
+                    // and it doesn't have a next (valid prev)
+                    // and it's next HAS A FACE (boundary that got overriden as inner)
+                    // store the boundary with an inner as next for later
+                    if (he.destVert == boundary.origVert)
+                    {
+                        totalPotentialPrevBoundary++;
+
+                        if (he.next != -1)
+                        {
+                            if (HalfEdges[he.next].face != -1)
                             {
-                                if (HalfEdges[potentialPrevBoundary.next].face != -1)
-                                {
-                                    potentialBoundaryWithAnInnerAsNextIdx = potentialPrevBoundaryIdx;
-                                }
-                            }
-                            else if (oppositePrevBoundary == -1)
-                            {
-                                halfEdgeModifier.ChangeHalfEdgePrev(boundary, potentialPrevBoundaryIdx);
-                                halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[potentialPrevBoundaryIdx], boundaryIdx);
+                                potentialBoundaryWithAnInnerAsNextIdx = heIdx;
                             }
                         }
                     }
                 }
 
-                if (potentialBoundaryWithAnInnerAsNextIdx == -1 && totalPotentialPrevBoundary > 2)
+                // more than two prev boundaries to choose here means we got more than 4 half edges on one vertex, invalid
+                if (totalPotentialPrevBoundary > 2)
                 {
                     halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, a vertex specified by the face has multiple boundary edges but shares no existing edge");
                     return;
                 }
 
+                // TODO: im sure theres a way to unify this logic, but i havent found one
 
                 if (totalPotentialPrevBoundary == 2)
                 {
+                    // if totalPotentialPrevBoundary == 2 and we got a boundary that has an inner as next
+                    // it means at least one edge merge happened (two faces sharing an edge) while adding this face
+                    // we can use this information to get our prev for this boundary, since the boundary that has a next that has a face
+                    // will always be our prev
                     if (potentialBoundaryWithAnInnerAsNextIdx != -1)
                     {
                         halfEdgeModifier.ChangeHalfEdgePrev(boundary, potentialBoundaryWithAnInnerAsNextIdx);
                         halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[potentialBoundaryWithAnInnerAsNextIdx], boundaryIdx);
                     }
+                    // if no face merge happened, we can still get prev, but its a bit trickier
+                    // we have to circulate away from the opposite boundary, until we find another boundary
+                    /// checking for twin here because of how the circulator works
                     else
                     {
                         foreach (var heidx in VertexCirculator(oppositePrevBoundary, "away"))
@@ -719,14 +761,18 @@ namespace ValveResourceFormat.IO
                     }
                 }
 
+                // if there is only one potential prev, it means that this either a single separate face being added
+                // or that this is the junction of two faces being merged 
                 if (totalPotentialPrevBoundary == 1)
                 {
+                    // if this is just a single face, we can hard code the prev
                     if (potentialBoundaryWithAnInnerAsNextIdx == -1)
                     {
                         var prev = HalfEdges[HalfEdges[boundary.twin].next].twin;
                         halfEdgeModifier.ChangeHalfEdgePrev(boundary, prev);
                         halfEdgeModifier.ChangeHalfEdgeNext(HalfEdges[prev], boundaryIdx);
                     }
+                    // else if its two faces joining, just use the boundary with inner as next as before
                     else
                     {
                         halfEdgeModifier.ChangeHalfEdgePrev(boundary, potentialBoundaryWithAnInnerAsNextIdx);
@@ -738,48 +784,53 @@ namespace ValveResourceFormat.IO
                 // link next boundary
                 //
 
+                // same awful logic as obove just flipped in order to connects nexts, but with the joy of code duplication
+
                 var totalPotentialNextBoundary = 0;
-                var potentialBoundaryWithAnInnerAsPrevIdx = -1; // if not -1 it means that an edge merge removed one boundary, and we are still at a valid 4 bondaries on a vertex
-                var oppositeNextBoundary = -1; // if not -1 it means that an edge merge removed one boundary, and we are still at a valid 4 bondaries on a vertex
+                var potentialBoundaryWithAnInnerAsPrevIdx = -1;
+                var oppositeNextBoundary = -1;
 
-                foreach (var potentialNextBoundaryIdx in destVert.relatedEdges)
+                foreach (var heIdx in destVert.relatedEdges)
                 {
-                    var potentialNextBoundary = HalfEdges[potentialNextBoundaryIdx];
+                    var he = HalfEdges[heIdx];
 
-                    if (potentialNextBoundary != boundary && potentialNextBoundary.destVert == boundary.destVert && potentialNextBoundary.face == -1)
+                    // dont loop over ourselves
+                    if (he == boundary)
                     {
-                        oppositeNextBoundary = potentialNextBoundaryIdx;
+                        continue;
                     }
 
-                    if (potentialNextBoundary != boundary && potentialNextBoundary.origVert == boundary.destVert)
+                    // only loop over boundaries
+                    if (he.face != -1)
                     {
-                        if (potentialNextBoundary.face == -1)
-                        {
-                            totalPotentialNextBoundary++;
+                        continue;
+                    }
 
-                            if (potentialNextBoundary.prev != -1)
+                    if (he.destVert == boundary.destVert)
+                    {
+                        oppositeNextBoundary = heIdx;
+                    }
+
+                    if (he.origVert == boundary.destVert)
+                    {
+                        totalPotentialNextBoundary++;
+
+                        if (he.prev != -1)
+                        {
+                            if (HalfEdges[he.prev].face != -1)
                             {
-                                if (HalfEdges[potentialNextBoundary.prev].face != -1)
-                                {
-                                    potentialBoundaryWithAnInnerAsPrevIdx = potentialNextBoundaryIdx;
-                                }
-                            }
-                            else if (oppositeNextBoundary == -1)
-                            {
-                                halfEdgeModifier.ChangeHalfEdgeNext(boundary, potentialNextBoundaryIdx);
-                                halfEdgeModifier.ChangeHalfEdgePrev(HalfEdges[potentialNextBoundaryIdx], boundaryIdx);
-                                totalPotentialNextBoundary = 0;
+                                potentialBoundaryWithAnInnerAsPrevIdx = heIdx;
                             }
                         }
                     }
                 }
 
-                if (potentialBoundaryWithAnInnerAsPrevIdx == -1 && totalPotentialNextBoundary > 2)
+                // more than two prev boundaries to choose here means we got more than 4 half edges on one vertex, invalid
+                if (totalPotentialNextBoundary > 2)
                 {
                     halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, a vertex specified by the face has multiple boundary edges but shares no existing edge");
                     return;
                 }
-
 
                 if (totalPotentialNextBoundary == 2)
                 {
@@ -801,7 +852,6 @@ namespace ValveResourceFormat.IO
                             }
                         }
                     }
-
                 }
 
                 if (totalPotentialNextBoundary == 1)
@@ -847,7 +897,7 @@ namespace ValveResourceFormat.IO
             var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
             var group = attributes.GetStringProperty("m_CollisionGroupString");
             var material = MapExtract.GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
-            if(materialOverride.Length > 0)
+            if (materialOverride.Length > 0)
             {
                 material = materialOverride;
             }
@@ -897,6 +947,45 @@ namespace ValveResourceFormat.IO
             }
         }
 
+        public void AddRenderMesh(Datamodel.Datamodel dmxMesh, Vector3 vertexOffset = new Vector3())
+        {
+            var mesh = (DmeModel)dmxMesh.Root["model"];
+            var dag = (DmeDag)mesh.JointList[0];
+            var shape = (DmeMesh)dag.Shape;
+            var facesets = shape.FaceSets;
+
+            var vertexdata = (DmeVertexData)shape.BaseStates[0];
+            var vertices = vertexdata.Get<Vector3[]>("position$0");
+            var uvs = vertexdata.Get<Vector2[]>("texcoord$0");
+
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                var vertex = vertices[i];
+                var uv = uvs[i];
+
+                var newvert = new HammerMeshBuilder.Vertex(vertex + vertexOffset, uv);
+                newvert.hasExistingUvs = true;
+                AddVertex(newvert);
+            }
+
+            foreach (DmeFaceSet faceset in facesets)
+            {
+                var faces = faceset.Faces;
+
+                List<int> face = new();
+                foreach (var index in faces)
+                {
+                    if (index == -1)
+                    {
+                        AddFace(face, faceset.Material.MaterialName);
+                        face.Clear();
+                        continue;
+                    }
+                    face.Add(index);
+                }
+            }
+        }
+
         private bool VerifyIndicesWithinBounds(IEnumerable<int> indices)
         {
             foreach (var index in indices)
@@ -932,8 +1021,8 @@ namespace ValveResourceFormat.IO
 
         private static Vector4 CalculateTangentFromNormal(Vector3 normal)
         {
-            Vector3 tangent1 = Vector3.Cross(normal, new Vector3(0, 1, 0));
-            Vector3 tangent2 = Vector3.Cross(normal, new Vector3(0, 0, 1));
+            Vector3 tangent1 = Vector3.Cross(normal, Vector3.UnitY);
+            Vector3 tangent2 = Vector3.Cross(normal, Vector3.UnitZ);
             return new Vector4(tangent1.Length() > tangent2.Length() ? tangent1 : tangent2, 1.0f);
         }
 

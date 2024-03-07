@@ -236,6 +236,8 @@ public sealed class MapExtract
         {
             "env_cs_place" => "materials/tools/tools_cs_place.vmat",
             "post_processing_volume" => "materials/tools_postprocess_volume.vmat",
+            "func_nav_blocker" => "materials/tools/toolsnavattribute.vmat",
+            "func_nav_markup" => "materials/tools/toolsnavattribute.vmat",
             _ => "materials/tools/toolstrigger.vmat",
         };
     }
@@ -854,9 +856,6 @@ public sealed class MapExtract
 
                 if (!className.StartsWith("prop_", StringComparison.Ordinal))
                 {
-
-
-
                     //convert entity to hammer mesh
                     using var resource = FileLoader.LoadFile(modelName + "_c");
                     var model = (Model)resource.DataBlock;
@@ -868,43 +867,10 @@ public sealed class MapExtract
                     {
                         var hammermeshbuilder = new HammerMeshBuilder();
 
-                        var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), null, false);
+                        using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), null, false);
 
-                        var mesh = (DmeModel)dmxMesh.Root["model"];
-                        var dag = (DmeDag)mesh.JointList[0];
-                        var shape = (DmeMesh)dag.Shape;
-                        var facesets = shape.FaceSets;
-
-                        var vertexdata = (DmeVertexData)shape.BaseStates[0];
-                        var vertices = vertexdata.Get<Vector3[]>("position$0");
-
-                        foreach (var vertex in vertices)
-                        {
-                            hammermeshbuilder.AddVertex(new HammerMeshBuilder.Vertex(vertex + offset));
-                        }
-
-                        foreach (DmeFaceSet faceset in facesets)
-                        {
-                            var faces = faceset.Faces;
-
-                            List<int> face = new();
-                            foreach (var index in faces)
-                            {
-                                if (index == -1)
-                                {
-                                    hammermeshbuilder.AddFace(face, faceset.Material.MaterialName);
-                                    face.Clear();
-                                    continue;
-                                }
-                                face.Add(index);
-                            }
-                        }
-
+                        hammermeshbuilder.AddRenderMesh(dmxMesh, offset);
                         var hammermesh = hammermeshbuilder.GenerateMesh();
-                        var uselocaloffset = compiledEntity.GetProperty<bool>("uselocaloffset");
-
-                        hammermesh.Origin = offset;
-
                         mapEntity.Children.Add(new CMapMesh() { MeshData = hammermesh });
 
                         dmxMesh.Dispose();
@@ -920,9 +886,12 @@ public sealed class MapExtract
                         }
                     }
                 }
+                else
+                {
+                    ModelsToExtract.Add(modelName);
+                    Debug.Assert(ModelEntityAssociations.TryAdd(modelName, className), "Model referenced by more than one entity!");
+                }
 
-                ModelsToExtract.Add(modelName);
-                Debug.Assert(ModelEntityAssociations.TryAdd(modelName, className), "Model referenced by more than one entity!");
 
                 ReadOnlySpan<char> entityIdFull = Path.GetFileNameWithoutExtension(modelName);
                 var nameCutoff = entityIdFull.Length;
