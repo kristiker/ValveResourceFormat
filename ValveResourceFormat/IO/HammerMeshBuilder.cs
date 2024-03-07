@@ -31,7 +31,7 @@ namespace ValveResourceFormat.IO
             relatedEdge
         }
 
-        public HammerMeshBuilder.Face Face;
+        public Face Face;
 
         private HammerMeshBuilder builderRef;
 
@@ -182,13 +182,9 @@ namespace ValveResourceFormat.IO
         {
             builderRef.FacesRemoved++;
 
-            HalfEdgeModifications.Reverse();
-            VertsToEdgeDictModifications.Reverse();
-            HalfEdgesModifications.Reverse();
-            VertexModifications.Reverse();
-
-            foreach (var VertexModification in VertexModifications)
+            for (var i = VertexModifications.Count - 1; i >= 0; i--)
             {
+                var VertexModification = VertexModifications[i];
                 switch (VertexModification.proprtyName)
                 {
                     case VertexPropertyNames.outGoingHalfEdge:
@@ -201,19 +197,22 @@ namespace ValveResourceFormat.IO
                 }
             }
 
-            foreach (var HalfEdgesModification in HalfEdgesModifications)
+            for (var i = HalfEdgesModifications.Count - 1; i >= 0; i--)
             {
+                var HalfEdgesModification = HalfEdgesModifications[i];
                 builderRef.HalfEdges.RemoveAt(HalfEdgesModification.he.id);
                 HalfEdgesModification.he.skipInRollback = true;
             }
 
-            foreach (var VertsToEdgeDictModification in VertsToEdgeDictModifications)
+            for (var i = VertsToEdgeDictModifications.Count - 1; i >= 0; i--)
             {
+                var VertsToEdgeDictModification = VertsToEdgeDictModifications[i];
                 builderRef.VertsToEdgeDict.Remove(VertsToEdgeDictModification.heKey);
             }
 
-            foreach (var HalfEdgeModification in HalfEdgeModifications)
+            for (var i = HalfEdgeModifications.Count - 1; i >= 0; i--)
             {
+                var HalfEdgeModification = HalfEdgeModifications[i];
                 var he = HalfEdgeModification.he;
 
                 if (he.skipInRollback)
@@ -592,7 +591,7 @@ namespace ValveResourceFormat.IO
                     }
                     else
                     {
-                        halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, Face specified an edge which already had two faces attached");
+                        halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, Face specified an edge which already had two faces attached.");
                         return;
                     }
                 }
@@ -726,7 +725,7 @@ namespace ValveResourceFormat.IO
                 // more than two prev boundaries to choose here means we got more than 4 half edges on one vertex, invalid
                 if (totalPotentialPrevBoundary > 2)
                 {
-                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, a vertex specified by the face has multiple boundary edges but shares no existing edge");
+                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, a vertex specified by the face has multiple boundary edges but shares no existing edge.");
                     return;
                 }
 
@@ -828,7 +827,7 @@ namespace ValveResourceFormat.IO
                 // more than two prev boundaries to choose here means we got more than 4 half edges on one vertex, invalid
                 if (totalPotentialNextBoundary > 2)
                 {
-                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, a vertex specified by the face has multiple boundary edges but shares no existing edge");
+                    halfEdgeModifier.RollBack($"Removed face `{OriginalFaceCount - FacesRemoved}`, a vertex specified by the face has multiple boundary edges but shares no existing edge.");
                     return;
                 }
 

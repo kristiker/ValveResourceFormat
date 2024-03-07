@@ -327,7 +327,7 @@ public class CDmePolygonMeshDataArray : DMElement
 [CamelCaseProperties]
 public class CDmePolygonMeshSubdivisionData : DMElement
 {
-    public Datamodel.IntArray SubdivisionLevels { get; set; } = [];
+    public Datamodel.IntArray SubdivisionLevels { get; } = [];
     /// <summary>
     /// Array of <see cref="CDmePolygonMeshDataStream"/>.
     /// </summary>

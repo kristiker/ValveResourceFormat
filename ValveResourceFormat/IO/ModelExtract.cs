@@ -303,7 +303,6 @@ public class ModelExtract
 
             foreach (var (physHull, fileName) in PhysHullsToExtract)
             {
-               
                 HandlePhysMeshNode(physHull, fileName);
             }
 
