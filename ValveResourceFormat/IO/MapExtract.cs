@@ -394,7 +394,7 @@ public sealed class MapExtract
 
     }
 
-    public static IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 vertexOffset = new Vector3(), string entityClassname = "")
+    public static IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 positionOffset = new Vector3(), string entityClassname = "")
     {
         for (var i = 0; i < phys.Parts.Length; i++)
         {
@@ -415,9 +415,7 @@ public sealed class MapExtract
                 if (entityClassname.Length == 0)
                 {
                     var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
-
                     var material = GetToolTextureNameForCollisionTags(new ModelExtract.SurfaceTagCombo(group, tags));
-
 
                     if (tooltexture == "nodraw" && onlyClips)
                     {
@@ -429,7 +427,7 @@ public sealed class MapExtract
                     materialOverride = GetToolTextureForEntity(entityClassname);
                 }
 
-                hammerMeshBuilder.AddPhysHull(hull, phys, vertexOffset, materialOverride);
+                hammerMeshBuilder.AddPhysHull(hull, phys, positionOffset, materialOverride);
 
                 yield return hammerMeshBuilder.GenerateMesh();
             }
@@ -460,7 +458,7 @@ public sealed class MapExtract
                     materialOverride = GetToolTextureForEntity(entityClassname);
                 }
 
-                hammerMeshBuilder.AddPhysMesh(mesh, phys, vertexOffset, materialOverride);
+                hammerMeshBuilder.AddPhysMesh(mesh, phys, positionOffset, materialOverride);
 
                 yield return hammerMeshBuilder.GenerateMesh();
             }
@@ -859,9 +857,7 @@ public sealed class MapExtract
                     //convert entity to hammer mesh
                     using var resource = FileLoader.LoadFile(modelName + "_c");
                     var model = (Model)resource.DataBlock;
-                    var originString = compiledEntity.GetProperty<string>("origin");
-                    var splitOrigin = originString.Split(" ");
-                    var offset = new Vector3(float.Parse(splitOrigin[0]), float.Parse(splitOrigin[1]), float.Parse(splitOrigin[2]));
+                    var offset = EntityTransformHelper.CalculateTransformationMatrix(compiledEntity).Translation;
 
                     foreach (var embedded in model.GetEmbeddedMeshes())
                     {

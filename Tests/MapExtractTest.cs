@@ -64,5 +64,22 @@ namespace Tests
             Assert.That(contentFile, Is.Not.Null);
             Assert.That(contentFile.Data, Is.Not.Null);
         }
+
+
+        [TestFixture]
+        public class HammerMeshBuilderTest
+        {
+            [Test]
+            public void TestHammerMeshBuilder()
+            {
+                var builder = new HammerMeshBuilder();
+
+                var mesh = builder.BuildMesh(new Vector3(0, 0, 0), new Vector3(1, 1, 1), new Vector3(0, 0, 0), new Vector3(1, 1, 1), new Vector3(0, 0, 0), new Vector3(1, 1, 1), new Vector3(0, 0, 0), new Vector3(1, 1, 1), new Vector3(0, 0, 0), new Vector3(1, 1, 1), new Vector3(0, 0, 0), new Vector3(1, 1, 1));
+
+                Assert.That(mesh, Is.Not.Null);
+                Assert.That(mesh.Vertices, Has.Count.EqualTo(8));
+                Assert.That(mesh.Indices, Has.Count.EqualTo(36));
+            }
+        }
     }
 }
