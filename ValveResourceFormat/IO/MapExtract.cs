@@ -246,7 +246,7 @@ public sealed class MapExtract
     {
         var vmap = new ContentFile
         {
-            Data = Encoding.UTF8.GetBytes(ToValveMap()),
+            Data = ToValveMap(),
             FileName = LumpFolder + ".vmap",
         };
 
@@ -332,7 +332,7 @@ public sealed class MapExtract
         return vmap;
     }
 
-    public string ToValveMap()
+    public byte[] ToValveMap()
     {
         using var datamodel = new Datamodel.Datamodel("vmap", 29);
 
@@ -390,8 +390,7 @@ public sealed class MapExtract
         using var stream = new MemoryStream();
         datamodel.Save(stream, "keyvalues2", 4);
 
-        return Encoding.UTF8.GetString(stream.ToArray());
-
+        return stream.ToArray();
     }
 
     public static IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 positionOffset = new Vector3(), string entityClassname = "")
