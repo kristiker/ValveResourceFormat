@@ -961,9 +961,9 @@ namespace ValveResourceFormat.IO
         private static Vector2 CalculateTriplanarUVs(Vector3 vertexPos, Vector3 normal, float textureScale = 0.03125f)
         {
             var weights = Vector3.Abs(normal);
-            var top = new Vector2(vertexPos.Y, vertexPos.X) * weights.Z;
-            var front = new Vector2(vertexPos.X, vertexPos.Z) * weights.Y;
-            var side = new Vector2(vertexPos.Y, vertexPos.Z) * weights.X;
+            var top = new Vector2(vertexPos.X, -vertexPos.Y) * weights.Z;
+            var front = new Vector2(vertexPos.X, -vertexPos.Z) * weights.Y;
+            var side = new Vector2(vertexPos.Y, -vertexPos.Z) * weights.X;
 
             var UV = (top + front + side);
 
