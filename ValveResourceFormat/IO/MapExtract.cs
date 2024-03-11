@@ -388,7 +388,7 @@ public sealed class MapExtract
         }
 
         using var stream = new MemoryStream();
-        datamodel.Save(stream, "keyvalues2", 4);
+        datamodel.Save(stream, "binary", 9);
 
         return stream.ToArray();
     }
