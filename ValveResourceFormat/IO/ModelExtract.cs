@@ -690,7 +690,7 @@ public class ModelExtract
             return;
         }
 
-        GrabMaterialInputSignatures(modelResource);
+        GrabMaterialInputSignatures(modelResource, MaterialInputSignatures);
 
         var i = 0;
         foreach (var embedded in model.GetEmbeddedMeshes())
@@ -707,18 +707,18 @@ public class ModelExtract
                 continue;
             }
 
-            GrabMaterialInputSignatures(resource);
+            GrabMaterialInputSignatures(resource, MaterialInputSignatures);
             RenderMeshesToExtract.Add(new((Mesh)resource.DataBlock, GetDmxFileName_ForReferenceMesh(reference.MeshName)));
         }
+    }
 
-        void GrabMaterialInputSignatures(Resource resource)
+    internal void GrabMaterialInputSignatures(Resource resource, Dictionary<string, IKeyValueCollection> MaterialInputSignatures)
+    {
+        var materialReferences = resource?.ExternalReferences?.ResourceRefInfoList.Where(r => r.Name[^4..] == "vmat");
+        foreach (var material in materialReferences ?? Enumerable.Empty<ResourceExtRefList.ResourceReferenceInfo>())
         {
-            var materialReferences = resource?.ExternalReferences?.ResourceRefInfoList.Where(r => r.Name[^4..] == "vmat");
-            foreach (var material in materialReferences ?? Enumerable.Empty<ResourceExtRefList.ResourceReferenceInfo>())
-            {
-                using var materialResource = fileLoader.LoadFile(material.Name + "_c");
-                MaterialInputSignatures[material.Name] = (materialResource?.DataBlock as Material)?.GetInputSignature();
-            }
+            using var materialResource = fileLoader.LoadFile(material.Name + "_c");
+            MaterialInputSignatures[material.Name] = (materialResource?.DataBlock as Material)?.GetInputSignature();
         }
     }
 

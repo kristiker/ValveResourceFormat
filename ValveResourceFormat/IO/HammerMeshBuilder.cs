@@ -12,6 +12,8 @@ using System.Runtime.InteropServices;
 
 #nullable enable
 using HalfEdgeSlim = (int SrcVertexId, int DstVertexId);
+using static System.Formats.Asn1.AsnWriter;
+using System.Data;
 
 namespace ValveResourceFormat.IO
 {
@@ -237,12 +239,13 @@ namespace ValveResourceFormat.IO
             public int OutGoingHalfEdge = -1;
             public List<int> RelatedEdges = [];
             public Vector2? UV;
-            public bool HasExistingUvs;
+            public Vector4? VertexPaint;
 
-            public Vertex(Vector3 position, Vector2? uv = null)
+            public Vertex(Vector3 position, Vector2? uv = null, Vector4? vertexpaint = null)
             {
                 Position = position;
                 UV = uv;
+                VertexPaint = vertexpaint;
             }
         }
 
@@ -276,10 +279,14 @@ namespace ValveResourceFormat.IO
 
         public HalfEdgeMeshModifier halfEdgeModifier;
 
-        public HammerMeshBuilder()
+        private readonly IFileLoader FileLoader;
+
+        public HammerMeshBuilder(IFileLoader fileLoader)
         {
             halfEdgeModifier = new HalfEdgeMeshModifier(this);
+            this.FileLoader = fileLoader;
         }
+
 
         public CDmePolygonMesh GenerateMesh()
         {
@@ -294,9 +301,11 @@ namespace ValveResourceFormat.IO
             mesh.FaceData.Streams.Add(faceFlags);
 
             var texcoords = CreateStream<Datamodel.Vector2Array, Vector2>(1, "texcoord:0");
+            var vertexpaintblendparams = CreateStream<Datamodel.Vector4Array, Vector4>(1, "VertexPaintBlendParams:0");
             var normals = CreateStream<Datamodel.Vector3Array, Vector3>(1, "normal:0");
             var tangents = CreateStream<Datamodel.Vector4Array, Vector4>(1, "tangent:0");
             mesh.FaceVertexData.Streams.Add(texcoords);
+            mesh.FaceVertexData.Streams.Add(vertexpaintblendparams);
             mesh.FaceVertexData.Streams.Add(normals);
             mesh.FaceVertexData.Streams.Add(tangents);
 
@@ -362,13 +371,19 @@ namespace ValveResourceFormat.IO
                 tangents.Data.Add(tangent);
 
                 var startVertex = Vertices[halfEdge.destVert];
+
                 var uv = startVertex.UV.HasValue switch
                 {
                     true => startVertex.UV.Value,
                     false => CalculateTriplanarUVs(startVertex.Position, normal),
                 };
-
                 texcoords.Data.Add(uv);
+
+                if (startVertex.VertexPaint.HasValue)
+                {
+                    vertexpaintblendparams.Data.Add(startVertex.VertexPaint.Value);
+                };
+
             }
 
             foreach (var face in Faces)
@@ -455,6 +470,19 @@ namespace ValveResourceFormat.IO
                 Console.WriteLine($"HammerMeshBuilder error: failed to add face '{Faces.Count}', face has less than 3 vertices.");
                 FacesRemoved++;
                 return;
+            }
+
+            // some map render meshes have faces with 0 area, check for that
+            // only checking triangular faces because doing this for n-gons would be too expensive
+            // and I doubt we'll ever get n-gons that are this fucked up
+            if (indices.Length == 3)
+            {
+                if (AreVerticesCollinear(Vertices[indices[0]].Position, Vertices[indices[1]].Position, Vertices[indices[2]].Position))
+                {
+                    Console.WriteLine($"HammerMeshBuilder error: failed to add face '{Faces.Count}', face had 0 area");
+                    FacesRemoved++;
+                    return;
+                }
             }
 
             var firstHalfEdgeId = -1;
@@ -884,7 +912,7 @@ namespace ValveResourceFormat.IO
             }
         }
 
-        public void AddRenderMesh(Datamodel.Datamodel dmxMesh, Vector3 positionOffset)
+        public void AddRenderMesh(Datamodel.Datamodel dmxMesh, Vector3 positionOffset = new Vector3())
         {
             var mesh = (DmeModel)dmxMesh.Root["model"];
             var dag = (DmeDag)mesh.JointList[0];
@@ -893,21 +921,59 @@ namespace ValveResourceFormat.IO
 
             var vertexdata = (DmeVertexData)shape.BaseStates[0];
 
-            var positions = vertexdata.Get<Vector3[]>("position$0");
-
             var baseVertex = Vertices.Count;
-            DefinePointCloud(positions, positionOffset);
 
-            // TODO: more streams
-            var uvs = vertexdata.Get<Vector2[]>("texcoord$0");
 
-            for (var i = baseVertex; i < positions.Length; i++)
+            Vector3[] position = [];
+            Vector2[] texcoord = [];
+            Vector3[] normals = [];
+            Vector4[] tangents = [];
+            Vector4[] VertexPaintBlendParams = [];
+
+            foreach (var stream in vertexdata)
             {
-                Vertices[i].UV = uvs[i];
+                if (stream.Key == "position$0")
+                {
+                    position = (Vector3[])stream.Value;
+                }
+
+                if (stream.Key == "texcoord$0")
+                {
+                    texcoord = (Vector2[])stream.Value;
+                }
+
+                if (stream.Key == "normal$0")
+                {
+                    normals = (Vector3[])stream.Value;
+                }
+
+                if (stream.Key == "tangent$0")
+                {
+                    tangents = (Vector4[])stream.Value;
+                }
+
+                if (stream.Key == "VertexPaintBlendParams$0")
+                {
+                    VertexPaintBlendParams = (Vector4[])stream.Value;
+                }
+            }
+
+            DefinePointCloud(position, positionOffset);
+
+            for (var i = baseVertex; i < position.Length; i++)
+            {
+                Vertices[i].UV = texcoord[i];
+            }
+
+            for (var i = baseVertex; i < VertexPaintBlendParams.Length; i++)
+            {
+                Vertices[i].VertexPaint = VertexPaintBlendParams[i];
             }
 
             foreach (var faceset in facesets.Cast<DmeFaceSet>())
             {
+                var materialName = faceset.Material.MaterialName;
+
                 var facesetIndices = faceset.Faces;
 
                 List<int> inds = new(capacity: 3);
@@ -920,10 +986,11 @@ namespace ValveResourceFormat.IO
                         continue;
                     }
 
-                    AddFace(CollectionsMarshal.AsSpan(inds), faceset.Material.MaterialName);
+                    AddFace(CollectionsMarshal.AsSpan(inds), materialName);
                     inds.Clear();
                 }
             }
+
         }
 
         private bool VerifyIndicesWithinBounds(Span<int> indices)
@@ -970,6 +1037,18 @@ namespace ValveResourceFormat.IO
             return UV * textureScale;
         }
 
+        private static bool AreVerticesCollinear(Vector3 vertex1, Vector3 vertex2, Vector3 vertex3)
+        {
+            // Calculate the cross product of the vectors
+            Vector3 vector1 = vertex2 - vertex1;
+            Vector3 vector2 = vertex3 - vertex1;
+
+            Vector3 crossProduct = Vector3.Cross(vector1, vector2);
+
+            // Check if the magnitude of the cross product is close to zero
+            float epsilon = 1e-10f;
+            return crossProduct.Length() < epsilon;
+        }
 
         public static CDmePolygonMeshDataStream<T> CreateStream<TArray, T>(int dataStateFlags, string name, params T[] data)
             where TArray : Datamodel.Array<T>, new()

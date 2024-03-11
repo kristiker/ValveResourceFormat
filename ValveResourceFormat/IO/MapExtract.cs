@@ -393,7 +393,28 @@ public sealed class MapExtract
         return stream.ToArray();
     }
 
-    public static IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 positionOffset = new Vector3(), string entityClassname = "")
+    public IEnumerable<CDmePolygonMesh> RenderMeshToHammerMesh(Model model, Resource resource, Vector3 offset = new Vector3())
+    {
+        Dictionary<string, IKeyValueCollection> MaterialInputSignatures = [];
+        var mdlextract = new ModelExtract(resource, FileLoader);
+        mdlextract.GrabMaterialInputSignatures(resource, MaterialInputSignatures);
+
+        foreach (var embedded in model.GetEmbeddedMeshes())
+        {
+            var hammermeshbuilder = new HammerMeshBuilder(FileLoader);
+
+            using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), MaterialInputSignatures, false);
+
+            hammermeshbuilder.AddRenderMesh(dmxMesh, offset);
+            yield return hammermeshbuilder.GenerateMesh();
+
+            dmxMesh.Dispose();
+        }
+
+        yield break;
+    }
+
+    public IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 positionOffset = new Vector3(), string entityClassname = "")
     {
         for (var i = 0; i < phys.Parts.Length; i++)
         {
@@ -402,7 +423,7 @@ public sealed class MapExtract
             //Hulls
             foreach (var hull in shape.Hulls)
             {
-                var hammerMeshBuilder = new HammerMeshBuilder();
+                var hammerMeshBuilder = new HammerMeshBuilder(FileLoader);
 
                 var attributes = phys.CollisionAttributes[hull.CollisionAttributeIndex];
 
@@ -434,7 +455,7 @@ public sealed class MapExtract
             //Meshes
             foreach (var mesh in shape.Meshes)
             {
-                var hammerMeshBuilder = new HammerMeshBuilder();
+                var hammerMeshBuilder = new HammerMeshBuilder(FileLoader);
 
                 var attributes = phys.CollisionAttributes[mesh.CollisionAttributeIndex];
 
@@ -623,147 +644,159 @@ public sealed class MapExtract
             StaticPropFinalize(propStatic, layerIndex, layerNodes, isEmbeddedModel);
         }
 
-        void AggregateToStaticProps(IKeyValueCollection agg, int layerIndex, List<MapNode> layerNodes)
+        void ProcessAggregate(IKeyValueCollection agg, int layerIndex, List<MapNode> layerNodes)
         {
             var modelName = agg.GetProperty<string>("m_renderableModel");
             var anyFlags = agg.GetEnumValue<ObjectTypeFlags>("m_anyFlags", normalize: true);
             var allFlags = agg.GetEnumValue<ObjectTypeFlags>("m_allFlags", normalize: true);
 
-            var aggregateMeshes = agg.GetArray("m_aggregateMeshes");
+            var isModel = allFlags.HasFlag(ObjectTypeFlags.Model);
 
-            //ModelsToExtract.Add(modelName);
-            var drawCalls = Array.Empty<IKeyValueCollection>();
-            var drawCenters = Array.Empty<Vector3>();
-
-            var transformIndex = 0;
-            var fragmentTransforms = agg.ContainsKey("m_fragmentTransforms")
-                ? agg.GetArray("m_fragmentTransforms")
-                : [];
-
-            var aggregateHasTransforms = fragmentTransforms.Length > 0;
-
-            // maybe not load and export model here
-            using (var modelRes = FileLoader.LoadFile(modelName + "_c"))
+            // extract static props
+            if (isModel)
             {
-                // TODO: reference meshes
-                var mesh = ((Model)modelRes.DataBlock).GetEmbeddedMeshes().First();
-                var sceneObject = mesh.Mesh.Data.GetArray("m_sceneObjects").First();
-                drawCalls = sceneObject.GetArray("m_drawCalls");
+                var aggregateMeshes = agg.GetArray("m_aggregateMeshes");
 
-                if (!aggregateHasTransforms)
+                var drawCalls = Array.Empty<IKeyValueCollection>();
+                var drawCenters = Array.Empty<Vector3>();
+
+                var transformIndex = 0;
+                var fragmentTransforms = agg.ContainsKey("m_fragmentTransforms")
+                    ? agg.GetArray("m_fragmentTransforms")
+                    : [];
+
+                var aggregateHasTransforms = fragmentTransforms.Length > 0;
+
+                // maybe not load and export model here
+                using (var modelRes = FileLoader.LoadFile(modelName + "_c"))
                 {
-                    drawCenters = (sceneObject.ContainsKey("m_drawBounds") ? sceneObject.GetArray("m_drawBounds") : [])
-                        .Select(aabb => (aabb.GetSubCollection("m_vMinBounds").ToVector3() + aabb.GetSubCollection("m_vMaxBounds").ToVector3()) / 2f)
-                        .ToArray();
-                }
+                    // TODO: reference meshes
+                    var mesh = ((Model)modelRes.DataBlock).GetEmbeddedMeshes().First();
+                    var sceneObject = mesh.Mesh.Data.GetArray("m_sceneObjects").First();
+                    drawCalls = sceneObject.GetArray("m_drawCalls");
 
-                PreExportedFragments.AddRange(ModelExtract.GetContentFiles_DrawCallSplit(modelRes, FileLoader, drawCenters, drawCalls.Length));
-            }
-
-
-
-            BaseEntity NewPropStatic(string modelName) => new CMapEntity()
-                .WithClassName("prop_static")
-                .WithProperty("model", modelName)
-                .WithProperty("baketoworld", StringBool(true))
-                .WithProperty("disablemerging", StringBool(true))
-                .WithProperty("visoccluder", StringBool(true));
-
-            var UseHammerInstances = false;
-            CMapGroup instanceGroup = null;
-
-            foreach (var fragment in aggregateMeshes)
-            {
-                var i = fragment.GetInt32Property("m_nDrawCallIndex");
-
-                var tint = Vector3.One * 255f;
-                var alpha = 255f;
-
-                var drawCall = drawCalls[i];
-
-                var fragmentModelName = ModelExtract.GetFragmentModelName(modelName, i);
-
-                var instance = NewPropStatic(fragmentModelName);
-                AssetReferences.Add(fragmentModelName);
-
-                var fragmentFlags = fragment.GetEnumValue<ObjectTypeFlags>("m_objectFlags", normalize: true);
-
-                if (fragment.ContainsKey("m_vTintColor"))
-                {
-                    tint = fragment.GetSubCollection("m_vTintColor").ToVector3();
-                }
-
-                var drawCallTint = drawCall.GetSubCollection("m_vTintColor").ToVector3();
-                tint *= SrgbLinearToGamma(drawCallTint);
-                alpha *= drawCall.GetFloatProperty("m_flAlpha");
-
-                if (aggregateHasTransforms)
-                {
-                    if (instanceGroup is null)
+                    if (!aggregateHasTransforms)
                     {
-                        instanceGroup = new CMapGroup
+                        drawCenters = (sceneObject.ContainsKey("m_drawBounds") ? sceneObject.GetArray("m_drawBounds") : [])
+                            .Select(aabb => (aabb.GetSubCollection("m_vMinBounds").ToVector3() + aabb.GetSubCollection("m_vMaxBounds").ToVector3()) / 2f)
+                            .ToArray();
+                    }
+
+                    PreExportedFragments.AddRange(ModelExtract.GetContentFiles_DrawCallSplit(modelRes, FileLoader, drawCenters, drawCalls.Length));
+                }
+
+                BaseEntity NewPropStatic(string modelName) => new CMapEntity()
+                    .WithClassName("prop_static")
+                    .WithProperty("model", modelName)
+                    .WithProperty("baketoworld", StringBool(true))
+                    .WithProperty("disablemerging", StringBool(true))
+                    .WithProperty("visoccluder", StringBool(true));
+
+                var UseHammerInstances = false;
+                CMapGroup instanceGroup = null;
+
+                foreach (var fragment in aggregateMeshes)
+                {
+                    var i = fragment.GetInt32Property("m_nDrawCallIndex");
+
+                    var tint = Vector3.One * 255f;
+                    var alpha = 255f;
+
+                    var drawCall = drawCalls[i];
+
+                    var fragmentModelName = ModelExtract.GetFragmentModelName(modelName, i);
+
+                    var instance = NewPropStatic(fragmentModelName);
+                    AssetReferences.Add(fragmentModelName);
+
+                    var fragmentFlags = fragment.GetEnumValue<ObjectTypeFlags>("m_objectFlags", normalize: true);
+
+                    if (fragment.ContainsKey("m_vTintColor"))
+                    {
+                        tint = fragment.GetSubCollection("m_vTintColor").ToVector3();
+                    }
+
+                    var drawCallTint = drawCall.GetSubCollection("m_vTintColor").ToVector3();
+                    tint *= SrgbLinearToGamma(drawCallTint);
+                    alpha *= drawCall.GetFloatProperty("m_flAlpha");
+
+                    if (aggregateHasTransforms)
+                    {
+                        if (instanceGroup is null)
                         {
-                            Name = "[Instances] " + Path.GetFileNameWithoutExtension(modelName),
-                        };
+                            instanceGroup = new CMapGroup
+                            {
+                                Name = "[Instances] " + Path.GetFileNameWithoutExtension(modelName),
+                            };
+
+                            if (UseHammerInstances)
+                            {
+                                // One shared prop when using hammer instances
+                                instanceGroup.Children.Add(instance);
+                            }
+
+                            // Add group to world
+                            GetWorldLayerNode(layerIndex, layerNodes).Children.Add(instanceGroup);
+                        }
 
                         if (UseHammerInstances)
                         {
-                            // One shared prop when using hammer instances
+                            instance = new CMapInstance() { Target = instanceGroup };
+                            GetWorldLayerNode(layerIndex, layerNodes).Children.Add(instance);
+                        }
+                        else
+                        {
+                            // Keep adding new props to the group
                             instanceGroup.Children.Add(instance);
                         }
 
-                        // Add group to world
+                        var transform = fragmentTransforms[transformIndex++].ToMatrix4x4();
+                        Matrix4x4.Decompose(transform, out var scales, out var rotation, out var translation);
+
+                        instance.Origin = translation;
+                        var angles = ModelExtract.ToEulerAngles(rotation);
+                        instance.Angles = angles;
+                        instance.Scales = scales;
+
+                        SetPropertiesFromFlags(instance, fragmentFlags);
+                        SetTintAlpha(instance, new Vector4(tint, alpha));
+
+                        continue;
+                    }
+
+                    if (drawCenters.Length > 0)
+                    {
+                        // fragment recentering
+                        // apply positive vector in the vmap, and negative vector in the vmdl
+                        instance.Origin = drawCenters[i];
+                    }
+
+                    if (instanceGroup is null)
+                    {
+                        Debug.Assert(aggregateHasTransforms == false, "aggregate also has instanced transforms");
+
+                        instanceGroup = new CMapGroup
+                        {
+                            Name = "[MultiDraw] " + Path.GetFileNameWithoutExtension(modelName),
+                        };
+
                         GetWorldLayerNode(layerIndex, layerNodes).Children.Add(instanceGroup);
                     }
-
-                    if (UseHammerInstances)
-                    {
-                        instance = new CMapInstance() { Target = instanceGroup };
-                        GetWorldLayerNode(layerIndex, layerNodes).Children.Add(instance);
-                    }
-                    else
-                    {
-                        // Keep adding new props to the group
-                        instanceGroup.Children.Add(instance);
-                    }
-
-                    var transform = fragmentTransforms[transformIndex++].ToMatrix4x4();
-                    Matrix4x4.Decompose(transform, out var scales, out var rotation, out var translation);
-
-                    instance.Origin = translation;
-                    var angles = ModelExtract.ToEulerAngles(rotation);
-                    instance.Angles = angles;
-                    instance.Scales = scales;
 
                     SetPropertiesFromFlags(instance, fragmentFlags);
                     SetTintAlpha(instance, new Vector4(tint, alpha));
 
-                    continue;
+                    instanceGroup.Children.Add(instance);
                 }
-
-                if (drawCenters.Length > 0)
+            }
+            else
+            {
+                var resource = FileLoader.LoadFile(modelName + "_c");
+                var model = (Model)resource.DataBlock;
+                foreach (var hammermesh in RenderMeshToHammerMesh(model, resource))
                 {
-                    // fragment recentering
-                    // apply positive vector in the vmap, and negative vector in the vmdl
-                    instance.Origin = drawCenters[i];
+                    MapDocument.World.Children.Add(new CMapMesh() { MeshData = hammermesh });
                 }
-
-                if (instanceGroup is null)
-                {
-                    Debug.Assert(aggregateHasTransforms == false, "aggregate also has instanced transforms");
-
-                    instanceGroup = new CMapGroup
-                    {
-                        Name = "[MultiDraw] " + Path.GetFileNameWithoutExtension(modelName),
-                    };
-
-                    GetWorldLayerNode(layerIndex, layerNodes).Children.Add(instanceGroup);
-                }
-
-                SetPropertiesFromFlags(instance, fragmentFlags);
-                SetTintAlpha(instance, new Vector4(tint, alpha));
-
-                instanceGroup.Children.Add(instance);
             }
         }
 
@@ -777,7 +810,7 @@ public sealed class MapExtract
         foreach (var aggregateSceneObject in node.AggregateSceneObjects)
         {
             var layerIndex = (int)aggregateSceneObject.GetIntegerProperty("m_nLayer");
-            AggregateToStaticProps(aggregateSceneObject, layerIndex, layerNodes);
+            ProcessAggregate(aggregateSceneObject, layerIndex, layerNodes);
         }
 
         foreach (var clutterSceneObject in node.ClutterSceneObjects)
@@ -785,8 +818,6 @@ public sealed class MapExtract
             // TODO: Clutter
         }
     }
-
-
 
     #region Entities
     private void GatherEntitiesFromLump(EntityLump entityLump)
@@ -853,31 +884,25 @@ public sealed class MapExtract
 
                 if (!className.StartsWith("prop_", StringComparison.Ordinal))
                 {
-                    //convert entity to hammer mesh
-                    using var resource = FileLoader.LoadFile(modelName + "_c");
+                    var resource = FileLoader.LoadFile(modelName + "_c");
                     var model = (Model)resource.DataBlock;
                     var offset = EntityTransformHelper.CalculateTransformationMatrix(compiledEntity).Translation;
 
-                    foreach (var embedded in model.GetEmbeddedMeshes())
+                    foreach (var hammermesh in RenderMeshToHammerMesh(model, resource, offset))
                     {
-                        var hammermeshbuilder = new HammerMeshBuilder();
-
-                        using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), null, false);
-
-                        hammermeshbuilder.AddRenderMesh(dmxMesh, offset);
-                        var hammermesh = hammermeshbuilder.GenerateMesh();
                         mapEntity.Children.Add(new CMapMesh() { MeshData = hammermesh });
-
-                        dmxMesh.Dispose();
                     }
 
-                    var phys = model.GetEmbeddedPhys();
-                    if (phys != null)
+                    // only extract physics if there are no render meshes
+                    if (!model.GetEmbeddedMeshes().Any())
                     {
-                        foreach (var hammermesh in PhysToHammerMeshes(phys, false, offset, className))
+                        var phys = model.GetEmbeddedPhys();
+                        if (phys != null)
                         {
-                            hammermesh.Origin = offset;
-                            mapEntity.Children.Add(new CMapMesh() { MeshData = hammermesh });
+                            foreach (var hammermesh in PhysToHammerMeshes(phys, false, offset, className))
+                            {
+                                mapEntity.Children.Add(new CMapMesh() { MeshData = hammermesh });
+                            }
                         }
                     }
                 }
