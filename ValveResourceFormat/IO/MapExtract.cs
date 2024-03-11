@@ -393,24 +393,29 @@ public sealed class MapExtract
         return stream.ToArray();
     }
 
-    public IEnumerable<CDmePolygonMesh> RenderMeshToHammerMesh(Model model, Resource resource, Vector3 offset = new Vector3())
+    internal IEnumerable<CDmePolygonMesh> RenderMeshToHammerMesh(Model model, Resource resource, Vector3 offset = new Vector3())
     {
+        var modelExtract = new ModelExtract(resource, FileLoader);
         Dictionary<string, IKeyValueCollection> MaterialInputSignatures = [];
-        var mdlextract = new ModelExtract(resource, FileLoader);
-        mdlextract.GrabMaterialInputSignatures(resource, MaterialInputSignatures);
+        modelExtract.GrabMaterialInputSignatures(resource, MaterialInputSignatures);
+
+        var dmxOptions = new ModelExtract.DatamodelRenderMeshExtractOptions
+        {
+            MaterialInputSignatures = MaterialInputSignatures,
+            SplitDrawCallsIntoSeparateSubmeshes = true,
+        };
 
         foreach (var embedded in model.GetEmbeddedMeshes())
         {
-
-            using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), MaterialInputSignatures, true);
+            using var dmxMesh = ModelExtract.ConvertMeshToDatamodelMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), dmxOptions);
 
             var mesh = (DmeModel)dmxMesh.Root["model"];
-            foreach (DmeDag dag in mesh.JointList)
+            foreach (var dag in mesh.JointList.Cast<DmeDag>())
             {
-                var hammermeshbuilder = new HammerMeshBuilder(FileLoader);
-                var shape = (DmeMesh)dag.Shape;
-                hammermeshbuilder.AddRenderMesh(shape, offset);
-                yield return hammermeshbuilder.GenerateMesh();
+                var builder = new HammerMeshBuilder(FileLoader);
+                var meshShape = dag.Shape;
+                builder.AddRenderMesh(meshShape, offset);
+                yield return builder.GenerateMesh();
             }
 
             dmxMesh.Dispose();
@@ -419,7 +424,7 @@ public sealed class MapExtract
         yield break;
     }
 
-    public IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 positionOffset = new Vector3(), string entityClassname = "")
+    internal IEnumerable<CDmePolygonMesh> PhysToHammerMeshes(PhysAggregateData phys, bool onlyClips = true, Vector3 positionOffset = new Vector3(), string entityClassname = "")
     {
         for (var i = 0; i < phys.Parts.Length; i++)
         {

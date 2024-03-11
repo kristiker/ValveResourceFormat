@@ -131,7 +131,7 @@ public class ModelExtract
         {
             vmdl.AddSubFile(
                 Path.GetFileName(renderMesh.FileName),
-                () => ToDmxMesh(renderMesh.Mesh, Path.GetFileNameWithoutExtension(renderMesh.FileName), MaterialInputSignatures)
+                () => ToDmxMesh(renderMesh.Mesh, Path.GetFileNameWithoutExtension(renderMesh.FileName), new() { MaterialInputSignatures = MaterialInputSignatures })
             );
         }
 
@@ -308,18 +308,6 @@ public class ModelExtract
 
             foreach (var (physMesh, fileName) in PhysMeshesToExtract)
             {
-                var attributes = physAggregateData.CollisionAttributes[physMesh.CollisionAttributeIndex];
-                var tags = attributes.GetArray<string>("m_InteractAsStrings") ?? attributes.GetArray<string>("m_PhysicsTagStrings");
-                var tooltexture = MapExtract.GetToolTextureShortenedName_ForInteractStrings(new HashSet<string>(tags));
-
-                // dont extract tool brushes for map decompile phys
-                if (Type == ModelExtractType.Map_PhysicsToRenderMesh)
-                {
-                    if (tooltexture != "nodraw")
-                    {
-                        continue;
-                    }
-                }
                 HandlePhysMeshNode(physMesh, fileName);
             }
         }
@@ -607,11 +595,16 @@ public class ModelExtract
         var mesh = extract.RenderMeshesToExtract[0].Mesh;
         var fileName = extract.RenderMeshesToExtract[0].FileName;
 
+        var options = new DatamodelRenderMeshExtractOptions
+        {
+            MaterialInputSignatures = extract.MaterialInputSignatures,
+            SplitDrawCallsIntoSeparateSubmeshes = true
+        };
+
         byte[] sharedDmxExtractMethod() => ToDmxMesh(
             mesh,
             Path.GetFileNameWithoutExtension(fileName),
-            extract.MaterialInputSignatures,
-            splitDrawCallsIntoSeparateSubmeshes: true
+            options
         );
 
         var sharedMeshExtractConfiguration = new RenderMeshExtractConfiguration(mesh, fileName, new(true, new(1)));
@@ -786,30 +779,30 @@ public class ModelExtract
         }
     }
 
-    public static byte[] ToDmxMesh(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures = null,
-        bool splitDrawCallsIntoSeparateSubmeshes = false)
+    public readonly struct DatamodelRenderMeshExtractOptions
     {
-        using var dmx = ConvertMeshToDmxMesh(mesh, name, materialInputSignatures, splitDrawCallsIntoSeparateSubmeshes);
+        /// <summary>Split draw calls into sub-meshes named draw0, draw1, draw2...</summary>
+        public bool SplitDrawCallsIntoSeparateSubmeshes { get; init; }
+
+        /// <summary>Pre-parsed input signatures used to map DirectX semantic names to engine semantic names.</summary>
+        public Dictionary<string, IKeyValueCollection> MaterialInputSignatures { get; init; }
+    }
+
+    public static byte[] ToDmxMesh(Mesh mesh, string name, DatamodelRenderMeshExtractOptions options = default)
+    {
+        using var dmx = ConvertMeshToDatamodelMesh(mesh, name, options);
         using var stream = new MemoryStream();
         dmx.Save(stream, "keyvalues2", 4);
 
         return stream.ToArray();
     }
 
-    public static Datamodel.Datamodel ToDmxMeshReturn(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures = null,
-    bool splitDrawCallsIntoSeparateSubmeshes = false)
-    {
-        var dmx = ConvertMeshToDmxMesh(mesh, name, materialInputSignatures, splitDrawCallsIntoSeparateSubmeshes);
-
-        return dmx;
-    }
-
-    public static Datamodel.Datamodel ConvertMeshToDmxMesh(Mesh mesh, string name, Dictionary<string, IKeyValueCollection> materialInputSignatures, bool splitDrawCallsIntoSeparateSubmeshes)
+    public static Datamodel.Datamodel ConvertMeshToDatamodelMesh(Mesh mesh, string name, DatamodelRenderMeshExtractOptions options)
     {
         var mdat = mesh.Data;
         var mbuf = mesh.VBIB;
         var indexBuffers = mbuf.IndexBuffers.Select(ib => new Lazy<int[]>(() => GltfModelExporter.ReadIndices(ib, 0, (int)ib.ElementCount, 0))).ToArray();
-        var dmx = new Datamodel.Datamodel("model", 22);
+        var datamodel = new Datamodel.Datamodel("model", 22);
         DmxModelMultiVertexBufferLayout(name, mbuf.VertexBuffers.Count, out var dmeModel, out var dags, out var dmeVertexBuffers);
 
         IKeyValueCollection materialInputSignature = null;
@@ -827,7 +820,7 @@ public class ModelExtract
                 ReadOnlySpan<int> indexBuffer = indexBuffers[indexBufferIndex].Value;
 
                 var material = drawCall.GetProperty<string>("m_material");
-                materialInputSignature ??= materialInputSignatures?.GetValueOrDefault(material);
+                materialInputSignature ??= options.MaterialInputSignatures?.GetValueOrDefault(material);
 
                 var baseVertex = drawCall.GetInt32Property("m_nBaseVertex");
                 var startIndex = drawCall.GetInt32Property("m_nStartIndex");
@@ -835,7 +828,7 @@ public class ModelExtract
 
                 var dag = dags[vertexBufferIndex];
 
-                if (splitDrawCallsIntoSeparateSubmeshes)
+                if (options.SplitDrawCallsIntoSeparateSubmeshes)
                 {
                     if (drawCallIndex > 0)
                     {
@@ -867,8 +860,8 @@ public class ModelExtract
             FillDatamodelVertexData(mbuf.VertexBuffers[i], dmeVertexBuffers[i], materialInputSignature);
         }
 
-        TieElementRoot(dmx, dmeModel);
-        return dmx;
+        TieElementRoot(datamodel, dmeModel);
+        return datamodel;
     }
 
     private static DmeModel BuildDmeDagSkeleton(Skeleton skeleton, out DmeTransform[] transforms)

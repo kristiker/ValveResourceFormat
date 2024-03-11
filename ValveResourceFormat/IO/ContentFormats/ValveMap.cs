@@ -54,7 +54,7 @@ internal class CStoredCameras : DMElement
 }
 
 [CamelCaseProperties]
-public abstract class MapNode : DMElement
+internal abstract class MapNode : DMElement
 {
     public Vector3 Origin { get; set; }
     public Datamodel.QAngle Angles { get; set; }
@@ -234,7 +234,7 @@ internal class CMapMesh : MapNode
 }
 
 [CamelCaseProperties]
-public class CDmePolygonMesh : MapNode
+internal class CDmePolygonMesh : MapNode
 {
     /// <summary>
     /// Index to one of the edges stemming from this vertex.
@@ -315,7 +315,7 @@ public class CDmePolygonMesh : MapNode
 }
 
 [CamelCaseProperties]
-public class CDmePolygonMeshDataArray : DMElement
+internal class CDmePolygonMeshDataArray : DMElement
 {
     public int Size { get; set; }
     /// <summary>
@@ -325,7 +325,7 @@ public class CDmePolygonMeshDataArray : DMElement
 }
 
 [CamelCaseProperties]
-public class CDmePolygonMeshSubdivisionData : DMElement
+internal class CDmePolygonMeshSubdivisionData : DMElement
 {
     public Datamodel.IntArray SubdivisionLevels { get; } = [];
     /// <summary>
