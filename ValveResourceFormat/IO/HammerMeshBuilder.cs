@@ -912,17 +912,13 @@ namespace ValveResourceFormat.IO
             }
         }
 
-        public void AddRenderMesh(Datamodel.Datamodel dmxMesh, Vector3 positionOffset = new Vector3())
+        public void AddRenderMesh(DmeMesh shape, Vector3 positionOffset = new Vector3())
         {
-            var mesh = (DmeModel)dmxMesh.Root["model"];
-            var dag = (DmeDag)mesh.JointList[0];
-            var shape = (DmeMesh)dag.Shape;
             var facesets = shape.FaceSets;
 
             var vertexdata = (DmeVertexData)shape.BaseStates[0];
 
             var baseVertex = Vertices.Count;
-
 
             Vector3[] position = [];
             Vector2[] texcoord = [];
@@ -990,7 +986,6 @@ namespace ValveResourceFormat.IO
                     inds.Clear();
                 }
             }
-
         }
 
         private bool VerifyIndicesWithinBounds(Span<int> indices)

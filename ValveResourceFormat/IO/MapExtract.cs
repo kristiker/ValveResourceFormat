@@ -401,12 +401,17 @@ public sealed class MapExtract
 
         foreach (var embedded in model.GetEmbeddedMeshes())
         {
-            var hammermeshbuilder = new HammerMeshBuilder(FileLoader);
 
-            using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), MaterialInputSignatures, false);
+            using var dmxMesh = ModelExtract.ConvertMeshToDmxMesh(embedded.Mesh, Path.GetFileNameWithoutExtension(resource.FileName), MaterialInputSignatures, true);
 
-            hammermeshbuilder.AddRenderMesh(dmxMesh, offset);
-            yield return hammermeshbuilder.GenerateMesh();
+            var mesh = (DmeModel)dmxMesh.Root["model"];
+            foreach (DmeDag dag in mesh.JointList)
+            {
+                var hammermeshbuilder = new HammerMeshBuilder(FileLoader);
+                var shape = (DmeMesh)dag.Shape;
+                hammermeshbuilder.AddRenderMesh(shape, offset);
+                yield return hammermeshbuilder.GenerateMesh();
+            }
 
             dmxMesh.Dispose();
         }
