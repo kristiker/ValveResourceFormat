@@ -388,7 +388,7 @@ public sealed class MapExtract
         }
 
         using var stream = new MemoryStream();
-        datamodel.Save(stream, "binary", 9);
+        datamodel.Save(stream, "keyvalues2", 4);
 
         return stream.ToArray();
     }
@@ -414,7 +414,7 @@ public sealed class MapExtract
             {
                 var builder = new HammerMeshBuilder(FileLoader);
                 var meshShape = dag.Shape;
-                builder.AddRenderMesh(meshShape, offset);
+                builder.AddRenderMesh(mesh, meshShape, offset);
                 yield return builder.GenerateMesh();
             }
 

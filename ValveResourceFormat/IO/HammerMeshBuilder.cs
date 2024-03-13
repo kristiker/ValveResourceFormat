@@ -912,7 +912,7 @@ namespace ValveResourceFormat.IO
             }
         }
 
-        public void AddRenderMesh(DmeMesh shape, Vector3 positionOffset = new Vector3())
+        public void AddRenderMesh(DmeModel model, DmeMesh shape, Vector3 positionOffset = new Vector3())
         {
             var facesets = shape.FaceSets;
 
@@ -954,38 +954,74 @@ namespace ValveResourceFormat.IO
                 }
             }
 
-            DefinePointCloud(position, positionOffset);
-
-            for (var i = baseVertex; i < position.Length; i++)
-            {
-                Vertices[i].UV = texcoord[i];
-            }
-
-            for (var i = baseVertex; i < VertexPaintBlendParams.Length; i++)
-            {
-                Vertices[i].VertexPaint = VertexPaintBlendParams[i];
-            }
+            List<Tuple<List<int>, DmeFaceSet>> faceList = new();
+            Dictionary<Vector3, int> newVerticesDictionary = new();
+            List<Vector3> newVertices = new();
 
             foreach (var faceset in facesets.Cast<DmeFaceSet>())
             {
-                var materialName = faceset.Material.MaterialName;
-
                 var facesetIndices = faceset.Faces;
 
                 List<int> inds = new(capacity: 3);
 
+                var newIndexCounter = -1;
                 foreach (var index in facesetIndices)
                 {
+
                     if (index != -1)
                     {
                         inds.Add(index);
                         continue;
                     }
 
-                    AddFace(CollectionsMarshal.AsSpan(inds), materialName);
+                    // if all the indices are the same abort
+                    if (inds[0] == inds[1] && inds[0] == inds[2])
+                    {
+                        inds.Clear();
+                        continue;
+                    }
+
+                    List<int> newFaceInds = new(capacity: 3);
+
+                    foreach (var faceIndex in inds)
+                    {
+                        var vertex = position[faceIndex];
+
+                        int vertexInd;
+                        if (!newVerticesDictionary.TryGetValue(vertex, out vertexInd))
+                        {
+                            vertexInd = ++newIndexCounter;
+                            newVerticesDictionary.Add(vertex, newIndexCounter);
+                        }
+
+                        newFaceInds.Add(vertexInd);
+                    }
+                    faceList.Add(new Tuple<List<int>, DmeFaceSet>(newFaceInds, faceset));
                     inds.Clear();
                 }
             }
+
+            foreach (var kv in newVerticesDictionary)
+            {
+                newVertices.Add(kv.Key);
+            }
+
+            DefinePointCloud(newVertices, positionOffset);
+
+            foreach (var face in faceList)
+            {
+                AddFace(CollectionsMarshal.AsSpan(face.Item1), face.Item2.Material.MaterialName);
+            }
+
+            //for (var i = 0; i < position.Length; i++)
+            //{
+            //    Vertices[i].UV = texcoord[i];
+            //}
+            //
+            //for (var i = 0; i < VertexPaintBlendParams.Length; i++)
+            //{
+            //    Vertices[i].VertexPaint = VertexPaintBlendParams[i];
+            //}
         }
 
         private bool VerifyIndicesWithinBounds(Span<int> indices)
