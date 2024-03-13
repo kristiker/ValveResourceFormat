@@ -413,8 +413,8 @@ public sealed class MapExtract
             foreach (var dag in mesh.JointList.Cast<DmeDag>())
             {
                 var builder = new HammerMeshBuilder(FileLoader);
-                var meshShape = dag.Shape;
-                builder.AddRenderMesh(mesh, meshShape, offset);
+                var subMesh = dag.Shape;
+                builder.AddRenderMesh(mesh, subMesh, offset);
                 yield return builder.GenerateMesh();
             }
 

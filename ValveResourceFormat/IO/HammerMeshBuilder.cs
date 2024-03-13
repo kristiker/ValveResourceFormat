@@ -209,16 +209,12 @@ namespace ValveResourceFormat.IO
             var indexCount = CurrentFace.Indices.Count;
             Span<int> newIndices = indexCount < 32 ? stackalloc int[indexCount] : new int[indexCount];
 
-            foreach (var vertex in CurrentFace.Indices)
-            {
-                Builder.Vertices.Add(new Vertex(Builder.Vertices[vertex].Position)); // TODO: full copy
-            }
-
             for (var i = 0; i < newIndices.Length; i++)
             {
                 newIndices[i] = baseVertex + i;
             }
 
+            Builder.Vertices.AddRange(Enumerable.Repeat(new Vertex(), indexCount)); // TODO: full copy
             Builder.AddFace(newIndices, CurrentFace.MaterialName);
         }
     }
@@ -238,15 +234,6 @@ namespace ValveResourceFormat.IO
             public Vector3 Position;
             public int OutGoingHalfEdge = -1;
             public List<int> RelatedEdges = [];
-            public Vector2? UV;
-            public Vector4? VertexPaint;
-
-            public Vertex(Vector3 position, Vector2? uv = null, Vector4? vertexpaint = null)
-            {
-                Position = position;
-                UV = uv;
-                VertexPaint = vertexpaint;
-            }
         }
 
         public class HalfEdge
@@ -271,6 +258,8 @@ namespace ValveResourceFormat.IO
         public int FacesRemoved;
         public int OriginalFaceCount;
 
+        private CDmePolygonMesh Mesh;
+        public IList<Vector3> VertexPositions = [];
         public List<Vertex> Vertices = [];
         public List<HalfEdge> HalfEdges = [];
         public List<Face> Faces = [];
@@ -284,7 +273,13 @@ namespace ValveResourceFormat.IO
         public HammerMeshBuilder(IFileLoader fileLoader)
         {
             halfEdgeModifier = new HalfEdgeMeshModifier(this);
-            this.FileLoader = fileLoader;
+            FileLoader = fileLoader;
+
+            Mesh = [];
+
+            var vertexPositions = CreateStream<Datamodel.Vector3Array, Vector3>(3, "position:0");
+            Mesh.VertexData.Streams.Add(vertexPositions);
+            VertexPositions = vertexPositions.Data;
         }
 
 
@@ -301,16 +296,13 @@ namespace ValveResourceFormat.IO
             mesh.FaceData.Streams.Add(faceFlags);
 
             var texcoords = CreateStream<Datamodel.Vector2Array, Vector2>(1, "texcoord:0");
-            var vertexpaintblendparams = CreateStream<Datamodel.Vector4Array, Vector4>(1, "VertexPaintBlendParams:0");
+            //var vertexpaintblendparams = CreateStream<Datamodel.Vector4Array, Vector4>(1, "VertexPaintBlendParams:0");
             var normals = CreateStream<Datamodel.Vector3Array, Vector3>(1, "normal:0");
             var tangents = CreateStream<Datamodel.Vector4Array, Vector4>(1, "tangent:0");
             mesh.FaceVertexData.Streams.Add(texcoords);
-            mesh.FaceVertexData.Streams.Add(vertexpaintblendparams);
+            ///mesh.FaceVertexData.Streams.Add(vertexpaintblendparams);
             mesh.FaceVertexData.Streams.Add(normals);
             mesh.FaceVertexData.Streams.Add(tangents);
-
-            var vertexPositions = CreateStream<Datamodel.Vector3Array, Vector3>(3, "position:0");
-            mesh.VertexData.Streams.Add(vertexPositions);
 
             var edgeFlags = CreateStream<Datamodel.IntArray, int>(3, "flags:0");
             mesh.EdgeData.Streams.Add(edgeFlags);
@@ -323,8 +315,6 @@ namespace ValveResourceFormat.IO
 
                 mesh.VertexDataIndices.Add(vertexDataIndex);
                 mesh.VertexData.Size++;
-
-                vertexPositions.Data.Add(Vertex.Position);
             }
 
             for (var i = 0; i < HalfEdges.Count / 2; i++)
@@ -370,20 +360,13 @@ namespace ValveResourceFormat.IO
                 normals.Data.Add(normal);
                 tangents.Data.Add(tangent);
 
-                var startVertex = Vertices[halfEdge.destVert];
+                var startVertex = halfEdge.destVert; // orig?
 
-                var uv = startVertex.UV.HasValue switch
+                if (texcoords.Data.Count <= startVertex)
                 {
-                    true => startVertex.UV.Value,
-                    false => CalculateTriplanarUVs(startVertex.Position, normal),
-                };
-                texcoords.Data.Add(uv);
-
-                if (startVertex.VertexPaint.HasValue)
-                {
-                    vertexpaintblendparams.Data.Add(startVertex.VertexPaint.Value);
-                };
-
+                    var triplanarUv = CalculateTriplanarUVs(VertexPositions[startVertex], normal);
+                    texcoords.Data.Add(triplanarUv);
+                }
             }
 
             foreach (var face in Faces)
@@ -912,51 +895,16 @@ namespace ValveResourceFormat.IO
             }
         }
 
-        public void AddRenderMesh(DmeModel model, DmeMesh shape, Vector3 positionOffset = new Vector3())
+        public void AddRenderMesh(DmeModel model, DmeMesh subMesh, Vector3 positionOffset = new Vector3())
         {
-            var facesets = shape.FaceSets;
+            var facesets = subMesh.FaceSets; // facesets are chunks of faces that share a material, a 'draw call'
 
-            var vertexdata = (DmeVertexData)shape.BaseStates[0];
-
+            var vertexBuffer = (DmeVertexData)subMesh.BaseStates[0];
             var baseVertex = Vertices.Count;
 
-            Vector3[] position = [];
-            Vector2[] texcoord = [];
-            Vector3[] normals = [];
-            Vector4[] tangents = [];
-            Vector4[] VertexPaintBlendParams = [];
-
-            foreach (var stream in vertexdata)
-            {
-                if (stream.Key == "position$0")
-                {
-                    position = (Vector3[])stream.Value;
-                }
-
-                if (stream.Key == "texcoord$0")
-                {
-                    texcoord = (Vector2[])stream.Value;
-                }
-
-                if (stream.Key == "normal$0")
-                {
-                    normals = (Vector3[])stream.Value;
-                }
-
-                if (stream.Key == "tangent$0")
-                {
-                    tangents = (Vector4[])stream.Value;
-                }
-
-                if (stream.Key == "VertexPaintBlendParams$0")
-                {
-                    VertexPaintBlendParams = (Vector4[])stream.Value;
-                }
-            }
-
-            List<Tuple<List<int>, DmeFaceSet>> faceList = new();
-            Dictionary<Vector3, int> newVerticesDictionary = new();
-            List<Vector3> newVertices = new();
+            List<Tuple<List<int>, DmeFaceSet>> faceList = [];
+            Dictionary<Vector3, int> newVerticesDictionary = [];
+            List<Vector3> newVertices = [];
 
             foreach (var faceset in facesets.Cast<DmeFaceSet>())
             {
@@ -1012,16 +960,6 @@ namespace ValveResourceFormat.IO
             {
                 AddFace(CollectionsMarshal.AsSpan(face.Item1), face.Item2.Material.MaterialName);
             }
-
-            //for (var i = 0; i < position.Length; i++)
-            //{
-            //    Vertices[i].UV = texcoord[i];
-            //}
-            //
-            //for (var i = 0; i < VertexPaintBlendParams.Length; i++)
-            //{
-            //    Vertices[i].VertexPaint = VertexPaintBlendParams[i];
-            //}
         }
 
         private bool VerifyIndicesWithinBounds(Span<int> indices)
@@ -1039,10 +977,11 @@ namespace ValveResourceFormat.IO
 
         private Vector3 CalculateNormal(int i)
         {
-            var normalHalfEdges = new int[] { i, HalfEdges[i].Next, HalfEdges[i].Previous };
-            var v1 = Vertices[HalfEdges[normalHalfEdges[0]].origVert].Position;
-            var v2 = Vertices[HalfEdges[normalHalfEdges[1]].origVert].Position;
-            var v3 = Vertices[HalfEdges[normalHalfEdges[2]].origVert].Position;
+            Span<int> normalHalfEdges = [i, HalfEdges[i].Next, HalfEdges[i].Previous];
+
+            var v1 = VertexPositions[HalfEdges[normalHalfEdges[0]].origVert];
+            var v2 = VertexPositions[HalfEdges[normalHalfEdges[1]].origVert];
+            var v3 = VertexPositions[HalfEdges[normalHalfEdges[2]].origVert];
 
             var normal = Vector3.Normalize(Vector3.Cross(v2 - v1, v3 - v1));
 
