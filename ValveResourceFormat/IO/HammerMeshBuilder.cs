@@ -12,8 +12,8 @@ using System.Runtime.InteropServices;
 
 #nullable enable
 using HalfEdgeSlim = (int SrcVertexId, int DstVertexId);
-using static System.Formats.Asn1.AsnWriter;
 using System.Data;
+using System.Buffers;
 
 namespace ValveResourceFormat.IO
 {
@@ -206,16 +206,32 @@ namespace ValveResourceFormat.IO
             Console.WriteLine("HammerMeshBuilder error: " + error + " Extracting face...");
 
             var baseVertex = Builder.Vertices.Count;
-            var indexCount = CurrentFace.Indices.Count;
-            Span<int> newIndices = indexCount < 32 ? stackalloc int[indexCount] : new int[indexCount];
+            var vertexCount = CurrentFace.VertexCount;
 
-            for (var i = 0; i < newIndices.Length; i++)
+            Span<int> oldIndices = vertexCount < 16 ? stackalloc int[vertexCount] : new int[vertexCount];
+            Span<int> newIndices = vertexCount < 16 ? stackalloc int[vertexCount] : new int[vertexCount];
+
+            var positionsCopy = ArrayPool<Vector3>.Shared.Rent(vertexCount);
+
+            try
             {
-                newIndices[i] = baseVertex + i;
-            }
+                CurrentFace.GetIndices(oldIndices);
 
-            Builder.Vertices.AddRange(Enumerable.Repeat(new Vertex(), indexCount)); // TODO: full copy
-            Builder.AddFace(newIndices, CurrentFace.MaterialName);
+                for (var i = 0; i < newIndices.Length; i++)
+                {
+                    newIndices[i] = baseVertex + i;
+
+                    positionsCopy[i] = Builder.VertexPositions[oldIndices[i]];
+                    // TODO: copy more attributes from other streams.
+                }
+
+                Builder.DefinePointCloud(positionsCopy, Vector3.Zero);
+                Builder.AddFace(newIndices, CurrentFace.MaterialName);
+            }
+            finally
+            {
+                ArrayPool<Vector3>.Shared.Return(positionsCopy);
+            }
         }
     }
 
@@ -231,7 +247,6 @@ namespace ValveResourceFormat.IO
 
         public class Vertex
         {
-            public Vector3 Position;
             public int OutGoingHalfEdge = -1;
             public List<int> RelatedEdges = [];
         }
@@ -248,18 +263,61 @@ namespace ValveResourceFormat.IO
             public bool OverrideOuter;
         }
 
+        [System.Runtime.CompilerServices.InlineArray(length: 3)]
+        public struct TriangleIndices
+        {
+            public int Index;
+        }
+
         public class Face
         {
             public int HalfEdge = -1;
-            public List<int> Indices = [];
+
+            private TriangleIndices Indices;
+            private List<int>? NgonIndices;
+
+            public bool IsTriangle => NgonIndices == null;
+            public int VertexCount => IsTriangle ? 3 : NgonIndices!.Count;
+
             public string MaterialName = "unassigned";
+
+            public void SetIndices(ReadOnlySpan<int> indices)
+            {
+                ArgumentOutOfRangeException.ThrowIfLessThan(indices.Length, 3);
+
+                if (indices.Length == 3)
+                {
+                    indices.CopyTo(Indices);
+                    return;
+                }
+
+                NgonIndices = [.. indices];
+            }
+
+            public void GetIndices(Span<int> indices)
+            {
+                ArgumentOutOfRangeException.ThrowIfLessThan(indices.Length, VertexCount);
+
+                if (IsTriangle)
+                {
+                    ((Span<int>)Indices).CopyTo(indices);
+                    return;
+                }
+
+                CollectionsMarshal.AsSpan(NgonIndices).CopyTo(indices);
+            }
         }
 
         public int FacesRemoved;
         public int OriginalFaceCount;
 
-        private CDmePolygonMesh Mesh;
-        public IList<Vector3> VertexPositions = [];
+        private readonly CDmePolygonMesh Mesh;
+
+        public List<Vector3> VertexPositions = [];
+        public List<Vector3> FaceVertexNormals = [];
+        public List<Vector4> FaceVertexTangents = [];
+        public List<Vector2> FaceVertexUvSet1 = [];
+
         public List<Vertex> Vertices = [];
         public List<HalfEdge> HalfEdges = [];
         public List<Face> Faces = [];
@@ -277,50 +335,42 @@ namespace ValveResourceFormat.IO
 
             Mesh = [];
 
-            var vertexPositions = CreateStream<Datamodel.Vector3Array, Vector3>(3, "position:0");
-            Mesh.VertexData.Streams.Add(vertexPositions);
-            VertexPositions = vertexPositions.Data;
-        }
+            Mesh.VertexData.Streams.Add(CreateStream<Datamodel.Vector3Array, Vector3>(3, "position:0", VertexPositions));
 
+            Mesh.FaceVertexData.Streams.Add(CreateStream<Datamodel.Vector3Array, Vector3>(1, "normal:0", FaceVertexNormals));
+            Mesh.FaceVertexData.Streams.Add(CreateStream<Datamodel.Vector4Array, Vector4>(1, "tangent:0", FaceVertexTangents));
+            Mesh.FaceVertexData.Streams.Add(CreateStream<Datamodel.Vector2Array, Vector2>(1, "texcoord:0", FaceVertexUvSet1));
+        }
 
         public CDmePolygonMesh GenerateMesh()
         {
             if (FacesRemoved > 0)
                 Console.WriteLine($"HammerMeshBuilder: extracted '{FacesRemoved}' of '{OriginalFaceCount - FacesRemoved}' faces");
 
-            var mesh = new CDmePolygonMesh();
-
             var faceMaterialIndices = CreateStream<Datamodel.IntArray, int>(8, "materialindex:0");
             var faceFlags = CreateStream<Datamodel.IntArray, int>(3, "flags:0");
-            mesh.FaceData.Streams.Add(faceMaterialIndices);
-            mesh.FaceData.Streams.Add(faceFlags);
-
-            var texcoords = CreateStream<Datamodel.Vector2Array, Vector2>(1, "texcoord:0");
-            //var vertexpaintblendparams = CreateStream<Datamodel.Vector4Array, Vector4>(1, "VertexPaintBlendParams:0");
-            var normals = CreateStream<Datamodel.Vector3Array, Vector3>(1, "normal:0");
-            var tangents = CreateStream<Datamodel.Vector4Array, Vector4>(1, "tangent:0");
-            mesh.FaceVertexData.Streams.Add(texcoords);
-            ///mesh.FaceVertexData.Streams.Add(vertexpaintblendparams);
-            mesh.FaceVertexData.Streams.Add(normals);
-            mesh.FaceVertexData.Streams.Add(tangents);
+            Mesh.FaceData.Streams.Add(faceMaterialIndices.Stream);
+            Mesh.FaceData.Streams.Add(faceFlags.Stream);
 
             var edgeFlags = CreateStream<Datamodel.IntArray, int>(3, "flags:0");
-            mesh.EdgeData.Streams.Add(edgeFlags);
+            Mesh.EdgeData.Streams.Add(edgeFlags.Stream);
+
+            // TODO: EnsureCapacity on all the Add calls
 
             foreach (var Vertex in Vertices)
             {
-                var vertexDataIndex = mesh.VertexData.Size;
+                var vertexDataIndex = Mesh.VertexData.Size;
 
-                mesh.VertexEdgeIndices.Add(Vertex.OutGoingHalfEdge);
+                Mesh.VertexEdgeIndices.Add(Vertex.OutGoingHalfEdge);
 
-                mesh.VertexDataIndices.Add(vertexDataIndex);
-                mesh.VertexData.Size++;
+                Mesh.VertexDataIndices.Add(vertexDataIndex);
+                Mesh.VertexData.Size++;
             }
 
             for (var i = 0; i < HalfEdges.Count / 2; i++)
             {
-                mesh.EdgeData.Size++;
-                edgeFlags.Data.Add((int)EdgeFlag.None);
+                Mesh.EdgeData.Size++;
+                edgeFlags.Array.Add((int)EdgeFlag.None);
             }
 
             var prevHalfEdge = -1;
@@ -331,22 +381,22 @@ namespace ValveResourceFormat.IO
                 //of half edges and both halfs of the edge should have the same EdgeData Index
                 if (halfEdge.Twin == prevHalfEdge)
                 {
-                    mesh.EdgeDataIndices.Add(prevHalfEdge / 2);
+                    Mesh.EdgeDataIndices.Add(prevHalfEdge / 2);
                 }
                 else
                 {
-                    mesh.EdgeDataIndices.Add(i / 2);
+                    Mesh.EdgeDataIndices.Add(i / 2);
                 }
 
-                mesh.EdgeVertexIndices.Add(halfEdge.destVert);
-                mesh.EdgeOppositeIndices.Add(halfEdge.Twin);
-                mesh.EdgeNextIndices.Add(halfEdge.Next);
-                mesh.EdgeFaceIndices.Add(halfEdge.Face);
-                mesh.EdgeVertexDataIndices.Add(i);
+                Mesh.EdgeVertexIndices.Add(halfEdge.destVert);
+                Mesh.EdgeOppositeIndices.Add(halfEdge.Twin);
+                Mesh.EdgeNextIndices.Add(halfEdge.Next);
+                Mesh.EdgeFaceIndices.Add(halfEdge.Face);
+                Mesh.EdgeVertexDataIndices.Add(i);
 
                 prevHalfEdge = i;
 
-                mesh.FaceVertexData.Size += 1;
+                Mesh.FaceVertexData.Size += 1;
 
                 var normal = Vector3.UnitZ;
                 var tangent = Vector4.Zero;
@@ -357,51 +407,54 @@ namespace ValveResourceFormat.IO
                     tangent = CalculateTangentFromNormal(normal);
                 }
 
-                normals.Data.Add(normal);
-                tangents.Data.Add(tangent);
+                FaceVertexNormals.Add(normal);
+                FaceVertexTangents.Add(tangent);
 
                 var startVertex = halfEdge.destVert; // orig?
 
-                if (texcoords.Data.Count <= startVertex)
+                if (FaceVertexUvSet1.Count <= startVertex)
                 {
                     var triplanarUv = CalculateTriplanarUVs(VertexPositions[startVertex], normal);
-                    texcoords.Data.Add(triplanarUv);
+                    FaceVertexUvSet1.Add(triplanarUv);
                 }
             }
 
             foreach (var face in Faces)
             {
-                var faceDataIndex = mesh.FaceData.Size;
-                mesh.FaceDataIndices.Add(faceDataIndex);
-                mesh.FaceData.Size++;
+                var faceDataIndex = Mesh.FaceData.Size;
+                Mesh.FaceDataIndices.Add(faceDataIndex);
+                Mesh.FaceData.Size++;
 
                 var mat = face.MaterialName;
-                var materialIndex = mesh.Materials.IndexOf(mat);
+                var materialIndex = Mesh.Materials.IndexOf(mat);
                 if (materialIndex == -1 && mat != null)
                 {
-                    materialIndex = mesh.Materials.Count;
-                    faceMaterialIndices.Data.Add(materialIndex);
-                    mesh.Materials.Add(mat);
+                    materialIndex = Mesh.Materials.Count;
+                    faceMaterialIndices.Array.Add(materialIndex);
+                    Mesh.Materials.Add(mat);
                 }
 
-                faceFlags.Data.Add(0);
+                faceFlags.Array.Add(0);
 
-                mesh.FaceEdgeIndices.Add(face.HalfEdge);
+                Mesh.FaceEdgeIndices.Add(face.HalfEdge);
             }
 
-            mesh.SubdivisionData.SubdivisionLevels.AddRange(Enumerable.Repeat(0, 8));
+            Mesh.SubdivisionData.SubdivisionLevels.AddRange(Enumerable.Repeat(0, 8));
 
-            return mesh;
+            return Mesh;
         }
 
         public void DefinePointCloud(IList<Vector3> positions, Vector3 positionOffset)
         {
             Vertices.EnsureCapacity(positions.Count);
+            VertexPositions.EnsureCapacity(positions.Count);
 
-            foreach (var position in positions)
+            Vertices.AddRange(Enumerable.Repeat(new Vertex(), positions.Count));
+            VertexPositions.AddRange((positionOffset == Vector3.Zero) switch
             {
-                Vertices.Add(new(position + positionOffset));
-            }
+                true => positions,
+                false => positions.Select(p => p + positionOffset)
+            });
         }
 
         public IEnumerable<int> VertexCirculator(int heIdx, bool forward)
@@ -430,13 +483,10 @@ namespace ValveResourceFormat.IO
 
         public void AddFace(Span<int> indices, string material)
         {
-            var face = new Face();
-            face.Indices.AddRange(indices);
-            face.MaterialName = material;
-
-            halfEdgeModifier.SetNewFaceContext(face);
-
-            List<HalfEdge> newBoundaryHalfEdges = new(capacity: indices.Length);
+            if (indices.Length == 3 && indices[0] == indices[1] && indices[1] == indices[2])
+            {
+                return; // Ignore common case with meshlet triangles
+            }
 
             OriginalFaceCount++;
 
@@ -458,20 +508,24 @@ namespace ValveResourceFormat.IO
             // some map render meshes have faces with 0 area, check for that
             // only checking triangular faces because doing this for n-gons would be too expensive
             // and I doubt we'll ever get n-gons that are this fucked up
-            if (indices.Length == 3)
+            if (indices.Length == 3 && AreVerticesCollinear(indices))
             {
-                if (AreVerticesCollinear(Vertices[indices[0]].Position, Vertices[indices[1]].Position, Vertices[indices[2]].Position))
-                {
-                    Console.WriteLine($"HammerMeshBuilder error: failed to add face '{Faces.Count}', face had 0 area");
-                    FacesRemoved++;
-                    return;
-                }
+                Console.WriteLine($"HammerMeshBuilder error: failed to add face '{Faces.Count}', face had 0 area");
+                FacesRemoved++;
+                return;
             }
+
+            var face = new Face();
+            face.SetIndices(indices);
+            face.MaterialName = material;
+
+            halfEdgeModifier.SetNewFaceContext(face);
 
             var firstHalfEdgeId = -1;
             var previousHalfEdgeId = -1;
 
             Span<Vertex> v = new Vertex[2];
+            List<HalfEdge> newBoundaryHalfEdges = new(capacity: indices.Length);
 
             for (var i = 0; i < indices.Length; i++)
             {
@@ -902,7 +956,6 @@ namespace ValveResourceFormat.IO
             var vertexBuffer = (DmeVertexData)subMesh.BaseStates[0];
             var baseVertex = Vertices.Count;
 
-            List<Tuple<List<int>, DmeFaceSet>> faceList = [];
             Dictionary<Vector3, int> newVerticesDictionary = [];
             List<Vector3> newVertices = [];
 
@@ -922,29 +975,23 @@ namespace ValveResourceFormat.IO
                         continue;
                     }
 
-                    // if all the indices are the same abort
-                    if (inds[0] == inds[1] && inds[0] == inds[2])
-                    {
-                        inds.Clear();
-                        continue;
-                    }
-
-                    List<int> newFaceInds = new(capacity: 3);
+                    List<int> newIndices = new(capacity: 3);
 
                     foreach (var faceIndex in inds)
                     {
                         var vertex = position[faceIndex];
 
-                        int vertexInd;
+                        var vertexInd;
                         if (!newVerticesDictionary.TryGetValue(vertex, out vertexInd))
                         {
                             vertexInd = ++newIndexCounter;
                             newVerticesDictionary.Add(vertex, newIndexCounter);
                         }
 
-                        newFaceInds.Add(vertexInd);
+                        newIndices.Add(vertexInd);
                     }
-                    faceList.Add(new Tuple<List<int>, DmeFaceSet>(newFaceInds, faceset));
+
+                    AddFace(CollectionsMarshal.AsSpan(newIndices), faceset.Material.MaterialName);
                     inds.Clear();
                 }
             }
@@ -955,11 +1002,6 @@ namespace ValveResourceFormat.IO
             }
 
             DefinePointCloud(newVertices, positionOffset);
-
-            foreach (var face in faceList)
-            {
-                AddFace(CollectionsMarshal.AsSpan(face.Item1), face.Item2.Material.MaterialName);
-            }
         }
 
         private bool VerifyIndicesWithinBounds(Span<int> indices)
@@ -1007,20 +1049,24 @@ namespace ValveResourceFormat.IO
             return UV * textureScale;
         }
 
-        private static bool AreVerticesCollinear(Vector3 vertex1, Vector3 vertex2, Vector3 vertex3)
+        private bool AreVerticesCollinear(Span<int> vertexIndices)
         {
-            // Calculate the cross product of the vectors
-            Vector3 vector1 = vertex2 - vertex1;
-            Vector3 vector2 = vertex3 - vertex1;
+            var v1 = VertexPositions[vertexIndices[0]];
+            var v2 = VertexPositions[vertexIndices[1]];
+            var v3 = VertexPositions[vertexIndices[2]];
 
-            Vector3 crossProduct = Vector3.Cross(vector1, vector2);
+            // Calculate the cross product of the vectors
+            var vector1 = v2 - v1;
+            var vector2 = v3 - v1;
+
+            var crossProduct = Vector3.Cross(vector1, vector2);
 
             // Check if the magnitude of the cross product is close to zero
-            float epsilon = 1e-10f;
+            const float epsilon = 1e-10f;
             return crossProduct.Length() < epsilon;
         }
 
-        public static CDmePolygonMeshDataStream<T> CreateStream<TArray, T>(int dataStateFlags, string name, params T[] data)
+        public static (CDmePolygonMeshDataStream<T> Stream, TArray Array) CreateStream<TArray, T>(int dataStateFlags, string name, params T[] data)
             where TArray : Datamodel.Array<T>, new()
         {
 
@@ -1029,6 +1075,13 @@ namespace ValveResourceFormat.IO
             {
                 dmArray.Add(item);
             }
+
+            return (CreateStream<TArray, T>(dataStateFlags, name, dmArray), dmArray);
+        }
+
+        public static CDmePolygonMeshDataStream<T> CreateStream<TArray, T>(int dataStateFlags, string name, IList<T> data)
+            where TArray : Datamodel.Array<T>, new()
+        {
 
             var stream = new CDmePolygonMeshDataStream<T>
             {
@@ -1039,7 +1092,7 @@ namespace ValveResourceFormat.IO
                 VertexBufferLocation = 0,
                 DataStateFlags = dataStateFlags,
                 SubdivisionBinding = null,
-                Data = dmArray
+                Data = data
             };
 
             return stream;

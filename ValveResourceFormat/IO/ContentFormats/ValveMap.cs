@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections.Generic;
 using DMElement = Datamodel.Element;
 using Datamodel.Format;
 
@@ -343,8 +344,9 @@ internal class CDmePolygonMeshDataStream<T> : DMElement
     public int VertexBufferLocation { get; set; }
     public int DataStateFlags { get; set; }
     public DMElement SubdivisionBinding { get; set; }
+
     /// <summary>
     /// An int, vector2, vector3, or vector4 array.
     /// </summary>
-    public Datamodel.Array<T> Data { get; set; }
+    public IList<T> Data { get; set; }
 }
