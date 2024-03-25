@@ -30,7 +30,7 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
             /// <summary>
             /// The 2nd child offset.
             /// </summary>
-            public uint ChildOffset => PackedTypeChildOffset << 2 >> 2;
+            public uint ChildOffset => PackedTypeChildOffset & 0x3FFFFFFF;
 
             public readonly Vector3 Max;
 

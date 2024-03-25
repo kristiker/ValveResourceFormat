@@ -302,8 +302,13 @@ namespace ValveResourceFormat.IO
                 const float epsilon = 0.016f;
 
                 // Mirage: 22k faces with equality match, 5k with epsilon
-                var triangleOffset = (int)GetPhysicsMeshTriangleOffset(renderPosition);
-                var triangles = Triangles.AsSpan()[triangleOffset..(triangleOffset + 32)];
+                var triangleOffset = GetPhysicsMeshTriangleOffset(renderPosition);
+                if (triangleOffset == -1)
+                {
+                    continue;
+                }
+
+                var triangles = Triangles.AsSpan()[triangleOffset..Math.Min(triangleOffset + 8, Triangles.Length)];
 
                 for (var t = 0; t < triangles.Length; ++t)
                 {
@@ -315,36 +320,60 @@ namespace ValveResourceFormat.IO
                         var pos = vertexPositions[triangleIndices[i]];
                         if (Vector3.DistanceSquared(pos, renderPosition) < epsilon)
                         {
-                            localMatches.Add(triangle.X);
-                            return;
+                            localMatches.Add(triangleIndices[i]);
+                            goto next_renderposition;
                         }
                     }
                 }
+
+next_renderposition: continue;
             }
 
             DeletedVertexIndices.UnionWith(localMatches);
             Console.WriteLine($"{nameof(PhysicsVertexMatcher)}: Matched {(float)localMatches.Count / renderMeshPositions.Length * 100f}% of rendermesh to physics vertices!");
         }
 
-        public uint GetPhysicsMeshTriangleOffset(Vector3 ray, uint nodeIndex = 0)
+        public int GetPhysicsMeshTriangleOffset(Vector3 ray, uint nodeIndex = 0)
         {
             var node = PhysicsTree[nodeIndex];
 
+            var nodeContains =
+                ray.X >= node.Min.X && ray.X <= node.Max.X &&
+                ray.Y >= node.Min.Y && ray.Y <= node.Max.Y &&
+                ray.Z >= node.Min.Z && ray.Z <= node.Max.Z;
+
+            if (!nodeContains)
+            {
+                return -1;
+            }
+
             if (node.Type == RnMesh.NodeType.Leaf)
             {
-                return node.TriangleOffset;
+                return (int)node.TriangleOffset;
             }
+
+            var child1 = PhysicsTree[nodeIndex + 1];
+            var child1Contains = GetPhysicsMeshTriangleOffset(ray, nodeIndex + 1);
+
+            if (child1Contains == -1)
+            {
+                var child2 = PhysicsTree[nodeIndex + node.ChildOffset];
+                var child2Contains = GetPhysicsMeshTriangleOffset(ray, nodeIndex + node.ChildOffset);
+                return child2Contains;
+            }
+
+            return child1Contains;
 
             var center = (node.Min + node.Max) / 2;
             var compareVector = center - ray;
             var compareAxis = compareVector[(int)node.Type];
 
-            if (compareAxis < 0)
+            if (compareAxis > 0)
             {
                 return GetPhysicsMeshTriangleOffset(ray, nodeIndex + 1);
             }
 
-            return GetPhysicsMeshTriangleOffset(ray, node.ChildOffset);
+            return GetPhysicsMeshTriangleOffset(ray, nodeIndex + node.ChildOffset);
         }
     }
 
@@ -1096,6 +1125,7 @@ namespace ValveResourceFormat.IO
                  || deletedIndices.Contains(inds[1])
                  || deletedIndices.Contains(inds[2]))
                 {
+                    removed++;
                     continue;
                 }
 
@@ -1104,7 +1134,7 @@ namespace ValveResourceFormat.IO
 
             if (removed > 0)
             {
-                Console.WriteLine($"{nameof(HammerMeshBuilder)}: Total physics triangles removed: {removed}");
+                Console.WriteLine($"{nameof(HammerMeshBuilder)}: Total physics triangles removed: {removed}\n\n\n");
             }
         }
 
