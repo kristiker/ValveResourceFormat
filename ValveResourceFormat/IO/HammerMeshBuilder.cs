@@ -9,8 +9,10 @@ using ValveResourceFormat.Serialization;
 #nullable enable
 using HalfEdgeSlim = (int SrcVertexId, int DstVertexId);
 using static ValveResourceFormat.IO.HammerMeshBuilder;
+using RnMesh = ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Mesh;
 using ValveResourceFormat.Utils;
 using System.Globalization;
+using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 
 namespace ValveResourceFormat.IO
 {
@@ -246,6 +248,8 @@ namespace ValveResourceFormat.IO
     public class PhysicsVertexMatcher
     {
         private readonly Vector3[] vertexPositions;
+        private readonly RnMesh.Triangle[] Triangles;
+        private readonly RnMesh.Node[] PhysicsTree;
         public MeshDescriptor PhysicsMesh { get; }
         public Dictionary<int, int> RenderToPhys { get; } = [];
         public HashSet<int> DeletedVertexIndices { get; } = [];
@@ -255,6 +259,8 @@ namespace ValveResourceFormat.IO
         {
             PhysicsMesh = mesh;
             vertexPositions = mesh.Shape.GetVertices().ToArray();
+            Triangles = mesh.Shape.GetTriangles().ToArray();
+            PhysicsTree = mesh.Shape.ParseNodes().ToArray();
             DeletedVertexIndices.EnsureCapacity(vertexPositions.Length / 4);
         }
 
@@ -281,6 +287,8 @@ namespace ValveResourceFormat.IO
             var localMatches = new HashSet<int>(capacity: renderMeshPositions.Length);
             RenderToPhys.EnsureCapacity(renderMeshPositions.Length);
 
+            Span<int> triangleIndices = [0, 0, 0];
+
             for (var j = 0; j < renderMeshPositions.Length; ++j)
             {
                 if (j == 10 && localMatches.Count < 1
@@ -290,23 +298,53 @@ namespace ValveResourceFormat.IO
                     return;
                 }
 
-                var pos = renderMeshPositions[j];
+                var renderPosition = renderMeshPositions[j];
                 const float epsilon = 0.016f;
 
                 // Mirage: 22k faces with equality match, 5k with epsilon
-                var match = Array.FindIndex(vertexPositions, v => (v - pos).LengthSquared() < epsilon);
+                var triangleOffset = (int)GetPhysicsMeshTriangleOffset(renderPosition);
+                var triangles = Triangles.AsSpan()[triangleOffset..(triangleOffset + 32)];
 
-                if (match == -1)
+                for (var t = 0; t < triangles.Length; ++t)
                 {
-                    continue;
-                }
+                    var triangle = triangles[t];
+                    triangleIndices = [triangle.X, triangle.Y, triangle.Z];
 
-                localMatches.Add(match);
-                //RenderToPhys[j] = match;
+                    for (var i = 0; i < 3; i++)
+                    {
+                        var pos = vertexPositions[triangleIndices[i]];
+                        if (Vector3.DistanceSquared(pos, renderPosition) < epsilon)
+                        {
+                            localMatches.Add(triangle.X);
+                            return;
+                        }
+                    }
+                }
             }
 
             DeletedVertexIndices.UnionWith(localMatches);
             Console.WriteLine($"{nameof(PhysicsVertexMatcher)}: Matched {(float)localMatches.Count / renderMeshPositions.Length * 100f}% of rendermesh to physics vertices!");
+        }
+
+        public uint GetPhysicsMeshTriangleOffset(Vector3 ray, uint nodeIndex = 0)
+        {
+            var node = PhysicsTree[nodeIndex];
+
+            if (node.Type == RnMesh.NodeType.Leaf)
+            {
+                return node.TriangleOffset;
+            }
+
+            var center = (node.Min + node.Max) / 2;
+            var compareVector = center - ray;
+            var compareAxis = compareVector[(int)node.Type];
+
+            if (compareAxis < 0)
+            {
+                return GetPhysicsMeshTriangleOffset(ray, nodeIndex + 1);
+            }
+
+            return GetPhysicsMeshTriangleOffset(ray, node.ChildOffset);
         }
     }
 
