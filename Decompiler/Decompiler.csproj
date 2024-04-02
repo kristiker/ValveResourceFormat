@@ -8,6 +8,7 @@
     <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Draco_transcoder" Version="3.3.4" />
     <PackageReference Include="McMaster.Extensions.CommandLineUtils" Version="4.1.1" />
   </ItemGroup>
   <ItemGroup>

@@ -81,6 +81,9 @@ namespace Decompiler
         [Option("--gltf_export_format", "Exports meshes/models in given glTF format. Must be either 'gltf' (default) or 'glb'.", CommandOptionType.SingleValue)]
         public string GltfExportFormat { get; } = "gltf";
 
+        [Option("--decompile_weapons")]
+        public bool DecompileWeapons { get; }
+
         [Option("--gltf_export_materials", "Whether to export materials during glTF exports.", CommandOptionType.NoValue)]
         public bool GltfExportMaterials { get; }
 

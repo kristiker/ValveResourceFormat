@@ -232,7 +232,7 @@ namespace ValveResourceFormat.IO
                 var transform = EntityTransformHelper.CalculateTransformationMatrix(entity);
                 // Add meshes and their skeletons
                 LoadModel(exportedModel, scene, model, Path.GetFileNameWithoutExtension(modelName),
-                    transform, loadedMeshDictionary, skinName);
+                    transform, loadedMeshDictionary);
             }
 
             foreach (var childEntityName in entityLump.GetChildEntityNames())
@@ -337,15 +337,37 @@ namespace ValveResourceFormat.IO
         {
             var exportedModel = CreateModelRoot(resourceName, out var scene);
 
+            DstDir = "C:\\Users\\user\\Documents\\decompile2\\" + Path.GetFileName(DstDir);
+            Directory.CreateDirectory(DstDir);
+
             // Add meshes and their skeletons
             var loadedMeshDictionary = new Dictionary<string, Mesh>();
             LoadModel(exportedModel, scene, model, resourceName, Matrix4x4.Identity, loadedMeshDictionary);
 
+            fileName = Path.Combine(DstDir, "mesh" + Path.GetExtension(fileName));
             WriteModelFile(exportedModel, fileName);
+
+            MaterialGenerationTasks.Clear();
+            ExportedTextures.Clear();
+            TexturesExportedSoFar = 0;
+            IsExporting = false;
+
+            var exportedModelLegacy = CreateModelRoot(resourceName, out var sceneLegacy);
+            loadedMeshDictionary.Clear();
+            LoadModel(exportedModelLegacy, sceneLegacy, model, resourceName, Matrix4x4.Identity, loadedMeshDictionary, true);
+            if (loadedMeshDictionary.Count > 0)
+            {
+                DstDir += "_legacy";
+                Directory.CreateDirectory(DstDir);
+                fileName = Path.Combine(DstDir, "mesh" + Path.GetExtension(fileName));
+                //fileName = Path.Combine(DstDir, Path.GetFileNameWithoutExtension(fileName) + "_legacy" + Path.GetExtension(fileName));
+                WriteModelFile(exportedModelLegacy, fileName);
+            }
+
         }
 
         private void LoadModel(ModelRoot exportedModel, Scene scene, VModel model, string name,
-            Matrix4x4 transform, IDictionary<string, Mesh> loadedMeshDictionary, string skinName = null)
+            Matrix4x4 transform, IDictionary<string, Mesh> loadedMeshDictionary, bool legacy = false)
         {
 #if DEBUG
             ProgressReporter?.Report($"Loading model {name}");
@@ -503,18 +525,22 @@ namespace ValveResourceFormat.IO
             // Swap Rotate upright, scale inches to meters.
             transform *= TRANSFORMSOURCETOGLTF;
 
-            var skinMaterialPath = skinName != null ? GetSkinPathFromModel(model, skinName) : null;
-
             foreach (var m in LoadModelMeshes(model, name))
             {
                 var meshName = m.Name;
-                if (skinName != null)
+
+                if (legacy && !meshName.EndsWith("_legacy"))
                 {
-                    meshName = string.Concat(meshName, ".", skinName);
+                    continue;
+                }
+
+                if (!legacy && meshName.EndsWith("_legacy"))
+                {
+                    continue;
                 }
 
                 var node = AddMeshNode(exportedModel, scene, meshName,
-                    m.Mesh, joints, loadedMeshDictionary, skinMaterialPath,
+                    m.Mesh, joints, loadedMeshDictionary, null,
                     model, m.MeshIndex);
                 if (node != null)
                 {
