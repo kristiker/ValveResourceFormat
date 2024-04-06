@@ -376,7 +376,7 @@ namespace ValveResourceFormat.IO
             CancellationToken.ThrowIfCancellationRequested();
             var (skeletonNode, joints) = CreateGltfSkeleton(scene, model.Skeleton, name);
 
-            if (skeletonNode != null)
+            if (false && skeletonNode != null)
             {
                 var animations = model.GetAllAnimations(FileLoader);
                 // Add animations
