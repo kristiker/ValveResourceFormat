@@ -629,7 +629,7 @@ namespace ValveResourceFormat.IO
                 return newNode;
             }
 
-            var hasJoints = joints != null;
+            var hasJoints = false;
             var exportedMesh = CreateGltfMesh(name, mesh, exportedModel, hasJoints, skinMaterialPath, model, meshIndex);
             loadedMeshDictionary.Add(name, exportedMesh);
             var hasVertexJoints = exportedMesh.Primitives.All(primitive => primitive.GetVertexAccessor("JOINTS_0") != null);
