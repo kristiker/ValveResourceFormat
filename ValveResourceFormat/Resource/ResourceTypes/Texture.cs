@@ -390,7 +390,7 @@ namespace ValveResourceFormat.ResourceTypes
         /// <param name="face">The face to extract for cube textures.</param>
         /// <param name="mipLevel">The mip level to extract.</param>
         /// <returns>Skia bitmap.</returns>
-        public SKBitmap GenerateBitmap(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0)
+        public SKBitmap GenerateBitmap(uint depth = 0, CubemapFace face = 0, uint mipLevel = 0, bool ignoreDecodeFlags = false)
         {
             ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(depth, Depth, nameof(depth));
             ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(mipLevel, NumMipLevels, nameof(mipLevel));
@@ -425,6 +425,11 @@ namespace ValveResourceFormat.ResourceTypes
             }
 
             var decodeFlags = RetrieveCodecFromResourceEditInfo();
+
+            if (ignoreDecodeFlags)
+            {
+                decodeFlags = TextureCodec.None;
+            }
 
             if (HardwareAcceleratedTextureDecoder.Decoder != null)
             {
