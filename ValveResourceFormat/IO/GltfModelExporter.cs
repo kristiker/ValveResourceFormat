@@ -337,7 +337,7 @@ namespace ValveResourceFormat.IO
         {
             var exportedModel = CreateModelRoot(resourceName, out var scene);
 
-            DstDir = "C:\\Users\\user\\Documents\\decompile2\\" + Path.GetFileName(DstDir);
+            DstDir = "C:\\Users\\kristi\\Documents\\decompile2\\" + Path.GetFileName(DstDir);
             Directory.CreateDirectory(DstDir);
 
             // Add meshes and their skeletons
