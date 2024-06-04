@@ -979,9 +979,12 @@ namespace Decompiler
                     if (GltfModelExporter.CanExport(resource))
                     {
                         var outputExtension = GltfExportFormat;
-                        var outputFile = Path.Combine(OutputFile, Path.ChangeExtension(filePath, outputExtension));
+                        var outputFile = "";
 
-                        Directory.CreateDirectory(Path.GetDirectoryName(outputFile));
+                        if (filePath.Contains("shared\\shells"))
+                        {
+                            continue;
+                        }
 
                         gltfModelExporter.Export(resource, outputFile);
 
