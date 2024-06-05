@@ -340,9 +340,16 @@ namespace ValveResourceFormat.IO
             DstDir = "C:\\Users\\kristi\\Documents\\decompile2\\" + Path.GetFileName(DstDir);
             Directory.CreateDirectory(DstDir);
 
+            var knifeNoLegacy = false;
+
+            if (resourceName.Contains("knife_"))
+            {
+                knifeNoLegacy = true;
+            }
+
             // Add meshes and their skeletons
             var loadedMeshDictionary = new Dictionary<string, Mesh>();
-            LoadModel(exportedModel, scene, model, resourceName, Matrix4x4.Identity, loadedMeshDictionary);
+            LoadModel(exportedModel, scene, model, resourceName, Matrix4x4.Identity, loadedMeshDictionary, legacy: knifeNoLegacy);
 
             fileName = Path.Combine(DstDir, "mesh" + Path.GetExtension(fileName));
             WriteModelFile(exportedModel, fileName);
@@ -351,6 +358,11 @@ namespace ValveResourceFormat.IO
             ExportedTextures.Clear();
             TexturesExportedSoFar = 0;
             IsExporting = false;
+
+            if (knifeNoLegacy)
+            {
+                return;
+            }
 
             var exportedModelLegacy = CreateModelRoot(resourceName, out var sceneLegacy);
             loadedMeshDictionary.Clear();

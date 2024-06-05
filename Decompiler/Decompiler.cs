@@ -979,9 +979,9 @@ namespace Decompiler
                     if (GltfModelExporter.CanExport(resource))
                     {
                         var outputExtension = GltfExportFormat;
-                        var outputFile = "";
+                        var outputFile = Path.Combine(OutputFile, Path.ChangeExtension(filePath, outputExtension));
 
-                        if (filePath.Contains("shared\\shells"))
+                        if (filePath.Contains("shared\\shells") || filePath.EndsWith("mag.vmdl_c"))
                         {
                             continue;
                         }
