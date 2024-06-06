@@ -1222,7 +1222,7 @@ namespace ValveResourceFormat.IO
                 lock (textureResource)
                 {
                     var textureBlock = (ResourceTypes.Texture)textureResource.DataBlock;
-                    bitmap = textureBlock.GenerateBitmap();
+                    bitmap = textureBlock.GenerateBitmap(ignoreDecodeFlags: true);
                 }
 
                 bitmap.SetImmutable();
