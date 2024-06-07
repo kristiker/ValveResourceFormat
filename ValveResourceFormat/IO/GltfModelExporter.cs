@@ -337,7 +337,7 @@ namespace ValveResourceFormat.IO
         {
             var exportedModel = CreateModelRoot(resourceName, out var scene);
 
-            DstDir = "C:\\Users\\kristi\\Documents\\decompile2\\" + Path.GetFileName(DstDir);
+            DstDir = DstDir.Split("\\weapons\\").First() + '/' + Path.GetFileName(DstDir);
             Directory.CreateDirectory(DstDir);
 
             var knifeNoLegacy = false;
