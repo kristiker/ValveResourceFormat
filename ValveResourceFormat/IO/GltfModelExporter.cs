@@ -699,16 +699,6 @@ namespace ValveResourceFormat.IO
             }
 
             exportedModel.Save(filePath, settings);
-
-            // open path contents, replace _NORMAL with NORMAL
-            using var fileStream2 = File.Open(filePath, FileMode.Open, FileAccess.ReadWrite);
-            using var reader = new StreamReader(fileStream2);
-            var contents = reader.ReadToEnd();
-            contents = contents.Replace("_NORMAL", "NORMAL");
-            fileStream2.Position = 0;
-            fileStream2.SetLength(0);
-            using var writer = new StreamWriter(fileStream2);
-            writer.Write(contents);
         }
 
         private static Accessor CreateAccessor(ModelRoot exportedModel, Vector2[] vectors)
@@ -819,7 +809,7 @@ namespace ValveResourceFormat.IO
                         throw new NotImplementedException($"Got attribute \"{attribute.SemanticName}\" more than once, but that is not supported.");
                     }
 
-                    if (false && attribute.SemanticName == "NORMAL")
+                    if (attribute.SemanticName == "NORMAL")
                     {
                         var (normals, tangents) = VBIB.GetNormalTangentArray(vertexBuffer, attribute);
 
@@ -862,12 +852,9 @@ namespace ValveResourceFormat.IO
                                 {
                                     var buffer = GetScalarAttributeArray(vertexBuffer, attribute);
                                     var bufferView = exportedModel.CreateBufferView(4 * buffer.Length, 0, BufferMode.ARRAY_BUFFER);
-                                    buffer.CopyTo(MemoryMarshal.Cast<byte, float>(((Memory<byte>)bufferView.Content).Span));
+                                    new ScalarArray(bufferView.Content).Fill(buffer);
                                     var accessor = exportedModel.CreateAccessor();
-
-                                    var encoding = attribute.SemanticName == "NORMAL" ? EncodingType.UNSIGNED_INT : EncodingType.FLOAT;
-                                    //accessorName = attribute.SemanticName == "NORMAL" ? "NORMAL" : accessorName; doesnt work :ddd
-                                    accessor.SetVertexData(bufferView, 0, buffer.Length, DimensionType.SCALAR, encoding);
+                                    accessor.SetVertexData(bufferView, 0, buffer.Length, DimensionType.SCALAR);
                                     accessors[accessorName] = accessor;
                                     break;
                                 }

@@ -248,7 +248,7 @@ namespace ValveResourceFormat.Blocks
 
         public static float[] GetScalarAttributeArray(OnDiskBufferData vertexBuffer, RenderInputLayoutField attribute)
         {
-            if (attribute.Format != DXGI_FORMAT.R32_FLOAT && attribute.Format != DXGI_FORMAT.R32_UINT)
+            if (attribute.Format != DXGI_FORMAT.R32_FLOAT)
             {
                 throw new InvalidDataException($"Unexpected {attribute.SemanticName} attribute format {attribute.Format}");
             }
