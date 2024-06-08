@@ -644,8 +644,16 @@ namespace ValveResourceFormat.IO
             var hasJoints = joints != null;
             var exportedMesh = CreateGltfMesh(name, mesh, exportedModel, hasJoints, skinMaterialPath, model, meshIndex);
             loadedMeshDictionary.Add(name, exportedMesh);
+            var hasVertexJoints = exportedMesh.Primitives.All(primitive => primitive.GetVertexAccessor("JOINTS_0") != null);
 
-            return newNode.WithMesh(exportedMesh);
+            if (!hasJoints || !hasVertexJoints)
+            {
+                return newNode.WithMesh(exportedMesh);
+            }
+
+            newNode.WithSkinnedMesh(exportedMesh, Matrix4x4.Identity, joints);
+            // WorldMatrix is set only once on skeletonNode
+            return null;
         }
 
         private ModelRoot CreateModelRoot(string resourceName, out Scene scene)
@@ -767,7 +775,7 @@ namespace ValveResourceFormat.IO
                 var actualJointsCount = 0;
                 foreach (var attribute in vertexBuffer.InputLayoutFields.OrderBy(i => i.SemanticIndex).ThenBy(i => i.Offset))
                 {
-                    if (!includeJoints && attribute.SemanticName is "BLENDINDICES" or "BLENDWEIGHTS")
+                    if (!includeJoints && attribute.SemanticName == "BLENDINDICES")
                     {
                         continue;
                     }
@@ -1056,7 +1064,19 @@ namespace ValveResourceFormat.IO
 
         private static (Node skeletonNode, Node[] joints) CreateGltfSkeleton(Scene scene, Skeleton skeleton, string modelName)
         {
-            return (null, null);
+            if (skeleton.Bones.Length == 0)
+            {
+                return (null, null);
+            }
+
+            var skeletonNode = scene.CreateNode(modelName);
+            var boneNodes = new Dictionary<string, Node>();
+            var joints = new Node[skeleton.Bones.Length];
+            foreach (var root in skeleton.Roots)
+            {
+                CreateBonesRecursive(root, skeletonNode, ref joints);
+            }
+            return (skeletonNode, joints);
         }
 
         private static void CreateBonesRecursive(Bone bone, Node parent, ref Node[] joints)
