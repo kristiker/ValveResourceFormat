@@ -641,7 +641,7 @@ namespace ValveResourceFormat.IO
                 return newNode;
             }
 
-            var hasJoints = false;
+            var hasJoints = joints != null;
             var exportedMesh = CreateGltfMesh(name, mesh, exportedModel, hasJoints, skinMaterialPath, model, meshIndex);
             loadedMeshDictionary.Add(name, exportedMesh);
 
