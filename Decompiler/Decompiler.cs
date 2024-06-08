@@ -981,7 +981,24 @@ namespace Decompiler
                         var outputExtension = GltfExportFormat;
                         var outputFile = Path.Combine(OutputFile, Path.ChangeExtension(filePath, outputExtension));
 
-                        if (filePath.Contains("shared\\shells") || filePath.EndsWith("mag.vmdl_c"))
+                        string[] ignoreList = [
+                            "c4",
+                            "defuser",
+                            "decoy",
+                            "flashbang",
+                            "hegrenade",
+                            "incendiary",
+                            "molotov",
+                            "pin",
+                            "smokegrenade",
+                            "healthshot",
+                            "knife_default_ct",
+                            "knife_default_t",
+                            "test_shape",
+                        ];
+
+                        if (filePath.Contains("shared\\shells") || filePath.EndsWith("mag.vmdl_c")
+                        || ignoreList.Any(x => filePath.Contains($"\\{x}\\")))
                         {
                             continue;
                         }
