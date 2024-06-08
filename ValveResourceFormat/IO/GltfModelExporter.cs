@@ -412,6 +412,11 @@ namespace ValveResourceFormat.IO
 
                 foreach (var animation in animations)
                 {
+                    if (animation.Name != "inventory_inspect")
+                    {
+                        continue;
+                    }
+
                     // Cleanup state
                     frame.Clear(model.Skeleton);
                     for (var i = 0; i < boneCount; i++)
