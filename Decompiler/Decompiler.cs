@@ -991,6 +991,7 @@ namespace Decompiler
                             "molotov",
                             "pin",
                             "smokegrenade",
+                            "stattrak", // todo: split both types into separate folders
                             "healthshot",
                             "knife_default_ct",
                             "knife_default_t",

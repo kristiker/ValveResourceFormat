@@ -1237,9 +1237,9 @@ namespace ValveResourceFormat.IO
                 // Not being disposed because ORM may use same texture multiple times and there's issues with concurrency
                 var textureResource = FileLoader.LoadFileCompiled(texturePath);
 
-                if (textureResource == null)
+                if (true)
                 {
-                    bitmap = new SKBitmap(); // TODO: Test that this doesn't cause issues
+                    bitmap = new SKBitmap(1, 1); // TODO: Test that this doesn't cause issues
                     openBitmaps[texturePath] = bitmap;
                     return bitmap;
                 }
@@ -1323,13 +1323,25 @@ namespace ValveResourceFormat.IO
                 return;
             }
 
-            var fileName = Path.ChangeExtension(image.Name, "png");
+            var fileName = Path.GetFileNameWithoutExtension(image.Name);
+            fileName = fileName switch
+            {
+                _ when fileName.StartsWith("default_") => fileName + "_1.png",
+                _ when fileName.Contains("vmat_g_t") => fileName + "_1.png",
+                _ when fileName.Contains("_ao") => fileName + "_512.png",
+                _ when fileName.Contains("_color") => fileName + "_512.jpg",
+                _ when fileName.Contains("_rough") => fileName + "_512.png",
+                _ when fileName.Contains("_normal") => fileName + "_512.png",
+                _ when fileName.StartsWith("shared_scope_lens_mask_psd") => fileName + "_512.png",
+                _ => throw new InvalidOperationException("unhandled filename" + fileName),
+            };
+
             image.Content = new MemoryImage(dummyPng);
             image.AlternateWriteFileName = fileName;
 
-            var exportedTexturePath = Path.Join(DstDir, fileName);
-            using var fs = File.Open(exportedTexturePath, FileMode.Create);
-            await fs.WriteAsync(pngBytes, CancellationToken).ConfigureAwait(false);
+            //var exportedTexturePath = Path.Join(DstDir, fileName);
+            //using var fs = File.Open(exportedTexturePath, FileMode.Create);
+            //await fs.WriteAsync(pngBytes, CancellationToken).ConfigureAwait(false);
         }
 
         private static string ImageWriteCallback(WriteContext ctx, string uri, MemoryImage memoryImage)
