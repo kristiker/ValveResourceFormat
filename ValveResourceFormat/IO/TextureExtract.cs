@@ -127,7 +127,14 @@ public sealed class TextureExtract
             return contentFile;
         }
 
-        var bitmap = texture.GenerateBitmap();
+        var mipLevel = texture.Width switch
+        {
+            1024 => 2,
+            512 => 1,
+            _ => 0,
+        };
+
+        var bitmap = texture.GenerateBitmap(ignoreDecodeFlags: true, mipLevel: (uint)mipLevel);
 
         var vtex = new TextureContentFile()
         {
@@ -412,7 +419,7 @@ public sealed class TextureExtract
 
     private static byte[] EncodePng(SKPixmap pixels)
     {
-        var options = new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, zLibLevel: 4);
+        var options = new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, zLibLevel: 7);
 
         using var png = pixels.Encode(options);
         return png.ToArray();

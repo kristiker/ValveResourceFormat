@@ -84,6 +84,9 @@ namespace Decompiler
         [Option("--decompile_weapons")]
         public bool DecompileWeapons { get; }
 
+        [Option("--decompile_stickers")]
+        public bool DecompileStickers { get; }
+
         [Option("--gltf_export_materials", "Whether to export materials during glTF exports.", CommandOptionType.NoValue)]
         public bool GltfExportMaterials { get; }
 
@@ -941,6 +944,11 @@ namespace Decompiler
 
                 var totalLength = (int)file.TotalLength;
                 var rawFileData = ArrayPool<byte>.Shared.Rent(totalLength);
+
+                if (DecompileStickers)
+                {
+                    // todo: only textures referenced by vmat_c files (to avoid unused textures)
+                }
 
                 try
                 {
