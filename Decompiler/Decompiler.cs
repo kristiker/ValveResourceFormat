@@ -999,7 +999,7 @@ namespace Decompiler
                             "molotov",
                             "pin",
                             "smokegrenade",
-                            "stattrak", // todo: split both types into separate folders
+                            //"stattrak", // todo: split both types into separate folders
                             "healthshot",
                             "knife_default_ct",
                             "knife_default_t",
@@ -1014,6 +1014,12 @@ namespace Decompiler
 
                         gltfModelExporter.Export(resource, outputFile);
 
+                        continue;
+                    }
+
+                    // decompiling static weapon paint textures
+                    if (!filePath.Contains("_normal_") && !filePath.Contains("_ao_") && !filePath.Contains("_ambient_occlusion_"))
+                    {
                         continue;
                     }
 
@@ -1060,7 +1066,9 @@ namespace Decompiler
             {
                 foreach (var contentSubFile in contentFile.SubFiles)
                 {
-                    DumpFile(Path.Combine(Path.GetDirectoryName(path), contentSubFile.FileName), contentSubFile.Extract.Invoke());
+                    // add _512 to filename
+                    var subfilename = Path.GetFileNameWithoutExtension(contentSubFile.FileName) + "_512" + Path.GetExtension(contentSubFile.FileName);
+                    DumpFile(Path.Combine(Path.GetDirectoryName(path), subfilename), contentSubFile.Extract.Invoke());
                 }
             }
         }

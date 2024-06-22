@@ -129,10 +129,17 @@ public sealed class TextureExtract
 
         var mipLevel = texture.Width switch
         {
-            1024 => 2,
-            512 => 1,
+            4096 => 3,
+            2048 => 2,
+            1024 => 1,
+            512 => 0,
             _ => 0,
         };
+
+        if (texture.NumMipLevels == 1)
+        {
+            mipLevel = 0;
+        }
 
         var bitmap = texture.GenerateBitmap(ignoreDecodeFlags: true, mipLevel: (uint)mipLevel);
 
