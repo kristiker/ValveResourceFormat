@@ -417,6 +417,8 @@ namespace ValveResourceFormat.IO
                         continue;
                     }
 
+                    var frameCount = 1;
+
                     // Cleanup state
                     frame.Clear(model.Skeleton);
                     for (var i = 0; i < boneCount; i++)
@@ -444,7 +446,7 @@ namespace ValveResourceFormat.IO
                         fps = 1f;
                     }
 
-                    for (var frameIndex = 0; frameIndex < animation.FrameCount; frameIndex++)
+                    for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
                     {
                         frame.FrameIndex = frameIndex;
                         animation.DecodeFrame(frame);
@@ -524,7 +526,7 @@ namespace ValveResourceFormat.IO
 
                     for (var boneID = 0; boneID < boneCount; boneID++)
                     {
-                        if (animation.FrameCount == 0)
+                        if (frameCount == 0)
                         {
                             rotationDicts[boneID].Add(0f, model.Skeleton.Bones[boneID].Angle);
                             translationDicts[boneID].Add(0f, model.Skeleton.Bones[boneID].Position);
