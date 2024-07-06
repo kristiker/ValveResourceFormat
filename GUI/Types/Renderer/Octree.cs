@@ -26,7 +26,8 @@ namespace GUI.Types.Renderer
 
             public bool FrustumCulled { get; set; }
             public int OcclusionQueryHandle { get; set; } = -1;
-            public bool OcculsionQuerySubmitted { get; set; }
+            public int OcculsionQueryAwaitedFrames { get; set; }
+            public bool OcculsionQuerySubmitted => OcculsionQueryAwaitedFrames > 0;
             public bool OcclusionCulled { get; set; }
 
             public void Subdivide()
@@ -176,7 +177,7 @@ namespace GUI.Types.Renderer
                 }
 
                 FrustumCulled = false;
-                OcculsionQuerySubmitted = false;
+                OcculsionQueryAwaitedFrames = 0;
                 OcclusionCulled = false;
             }
 

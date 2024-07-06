@@ -322,6 +322,9 @@ namespace GUI.Types.Renderer
                 selectedNodeRenderer.Update(new Scene.UpdateContext(e.FrameTime));
 
                 Scene.SetupSceneShadows(Camera);
+
+                Scene.ProcessStaticOctreeOcclusionResults(Camera, EnableOcclusionCulling);
+
                 Scene.CollectSceneDrawCalls(Camera, lockedCullFrustum);
                 SkyboxScene?.CollectSceneDrawCalls(Camera, lockedCullFrustum);
             }
@@ -425,7 +428,7 @@ namespace GUI.Types.Renderer
                 Scene.RenderOpaqueLayer(renderContext);
             }
 
-            using (new GLDebugGroup("Occlusion Tests"))
+            if (EnableOcclusionCulling)
             {
                 Scene.RenderOcclusionProxies(renderContext, depthOnlyShaders[(int)DepthOnlyProgram.OcclusionQueryAABBProxy]);
             }
