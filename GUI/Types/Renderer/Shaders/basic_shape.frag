@@ -14,6 +14,17 @@ in vec3 vtxNormal;
 in vec3 vtxPos;
 in vec3 camPos;
 
+#define vTangentOut vec3(0.0, 0.0, 0.0) // Not used in this shader
+#define vBitangentOut vec3(0.0, 0.0, 0.0) // Not used in this shader
+#define vFragPosition vtxPos
+
+#include "common/features.glsl"
+#include "common/LightingConstants.glsl"
+#include "common/lighting_common.glsl"
+#include "common/texturing.glsl"
+#include "common/pbr.glsl"
+#include "common/lighting.glsl"
+
 out vec4 outputColor;
 
 const float shadingStrength = 0.8;
@@ -56,7 +67,15 @@ void main(void)
         }
 
         vec3 shading = CalculateFullbrightLighting(vec3(2.0), vtxNormal, viewDir);
-        outputColor = vec4(mix(outputColor.rgb, outputColor.rgb * shading, shadingStrength), vtxColor.a);
+        //outputColor = vec4(mix(outputColor.rgb, outputColor.rgb * shading, shadingStrength), vtxColor.a);
+
+        MaterialProperties_t mat;
+        InitProperties(mat, vtxNormal);
+
+        mat.Albedo = outputColor.rgb;
+        mat.Roughness = vec2(0.8);
+
+        outputColor.rgb = GetCombinedLighting(mat);
     }
 
     if (!gl_FrontFacing) {

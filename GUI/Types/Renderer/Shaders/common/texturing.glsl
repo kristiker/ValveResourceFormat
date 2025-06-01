@@ -76,6 +76,7 @@ struct MaterialProperties_t
     //int NumDynamicLights;
 };
 
+
 void InitProperties(out MaterialProperties_t mat, vec3 GeometricNormal)
 {
     mat.PositionWS = vFragPosition;

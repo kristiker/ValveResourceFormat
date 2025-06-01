@@ -429,3 +429,14 @@ LightingTerms_t CalculateLighting(inout MaterialProperties_t mat)
 
     return lighting;
 }
+
+vec3 GetCombinedLighting(inout MaterialProperties_t mat)
+{
+    LightingTerms_t lighting = CalculateLighting(mat);
+    ApplyAmbientOcclusion(lighting, mat);
+
+    vec3 diffuseLighting = lighting.DiffuseDirect + lighting.DiffuseIndirect;
+    vec3 specularLighting = lighting.SpecularDirect + lighting.SpecularIndirect;
+
+    return mat.DiffuseColor * diffuseLighting + specularLighting + mat.IllumColor;
+}
