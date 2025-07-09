@@ -515,6 +515,33 @@ namespace GUI.Types.Renderer
                 RenderTranslucentLayer(Scene, renderContext);
             }
 
+            using (new GLDebugGroup("Shader Usage Stats"))
+            {
+                var allShaders = GuiContext.ShaderLoader.CachedShaders.Values
+                    .Where(s => s.IsLoaded && s.IsValid && s.ObjectsDrawnLastFrame > 0)
+                    .OrderBy(s => s.Name.StartsWith("vrf."))
+                    .ThenByDescending(s => s.ObjectsDrawnLastFrame)
+                    .ToList();
+
+                var i = 0;
+                foreach (var shader in allShaders.Take(25))
+                {
+                    TextRenderer.AddText(new TextRenderer.TextRenderRequest
+                    {
+                        X = 20,
+                        Y = 20 + i++ * 16,
+                        Scale = 12,
+                        Color = Color32.Yellow,
+                        Text = $"({shader.ObjectsDrawnLastFrame}) {shader.FullIdentifier}",
+                        Center = false,
+                        WriteDepth = false,
+                    });
+                }
+
+                // reset
+                allShaders.ForEach(s => s.ObjectsDrawnLastFrame = 0);
+            }
+
             if (IsWireframe)
             {
                 GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);

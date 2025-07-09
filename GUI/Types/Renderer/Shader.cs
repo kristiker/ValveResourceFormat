@@ -11,6 +11,7 @@ namespace GUI.Types.Renderer
 
         public bool IsLoaded { get; private set; }
         public bool IsValid { get; private set; }
+        public int ObjectsDrawnLastFrame { get; set; }
 
         public required int[] ShaderObjects { get; init; }
         public required IReadOnlyDictionary<string, byte> Parameters { get; init; }
@@ -24,9 +25,8 @@ namespace GUI.Types.Renderer
 
         public readonly Dictionary<string, int> Attributes = [];
 
-#if DEBUG
         public required string FileName { get; init; }
-#endif
+        public string ArgumentDescription { get; set; } = string.Empty;
 
         public Shader(VrfGuiContext guiContext)
         {
@@ -36,6 +36,8 @@ namespace GUI.Types.Renderer
         }
 
         public int NameHash => Name.GetHashCode(StringComparison.OrdinalIgnoreCase);
+
+        public string FullIdentifier => $"'{Name}' as '{FileName}'{ArgumentDescription}";
 
         public bool EnsureLoaded()
         {

@@ -23,7 +23,7 @@ namespace GUI.Types.Renderer
         [GeneratedRegex(@"^(?<SourceFile>[0-9]+):(?<Line>[0-9]+)\((?<Column>[0-9]+)\):")]
         private static partial Regex Mesa3dGlslError();
 
-        private readonly Dictionary<ulong, Shader> CachedShaders = [];
+        public readonly Dictionary<ulong, Shader> CachedShaders = [];
         public int ShaderCount => CachedShaders.Count;
         private readonly Dictionary<string, HashSet<string>> ShaderDefines = [];
 
@@ -115,10 +115,7 @@ namespace GUI.Types.Renderer
 
                 var shader = new Shader(VrfGuiContext)
                 {
-#if DEBUG
                     FileName = shaderFileName,
-#endif
-
                     Name = shaderName,
                     Parameters = arguments,
                     Program = shaderProgram,
@@ -150,8 +147,8 @@ namespace GUI.Types.Renderer
                 LastShaderSourceLines = [.. Parser.SourceFileLines];
 #endif
 
-                var argsDescription = GetArgumentDescription(SortAndFilterArguments(shaderName, arguments));
-                Log.Info(nameof(ShaderLoader), $"Shader '{shaderName}' as '{shaderFileName}'{argsDescription} compiled and linked succesfully");
+                shader.ArgumentDescription = GetArgumentDescription(SortAndFilterArguments(shaderName, arguments));
+                Log.Info(nameof(ShaderLoader), $"Shader {shader.FullIdentifier} compiled and linked succesfully");
 
                 return shader;
             }
