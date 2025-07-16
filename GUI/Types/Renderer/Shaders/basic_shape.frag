@@ -39,6 +39,26 @@ vec4 boxmap( in sampler2D s, in vec3 p, in vec3 n, in float k )
     return (x*w.x + y*w.y + z*w.z) / (w.x + w.y + w.z);
 }
 
+#extension GL_EXT_fragment_shader_barycentric  : require
+
+float WireFrame(in float Thickness, in float Falloff)
+{
+	const vec3 BaryCoord = gl_BaryCoordEXT;
+
+	const vec3 dBaryCoordX = dFdxFine(BaryCoord);
+	const vec3 dBaryCoordY = dFdyFine(BaryCoord);
+	const vec3 dBaryCoord  = sqrt(dBaryCoordX*dBaryCoordX + dBaryCoordY*dBaryCoordY);
+
+	const vec3 dFalloff   = dBaryCoord * Falloff;
+	const vec3 dThickness = dBaryCoord * Thickness;
+
+	const vec3 Remap = smoothstep(dThickness, dThickness + dFalloff, BaryCoord);
+	const float ClosestEdge = min(min(Remap.x, Remap.y), Remap.z);
+
+	return 1.0 - ClosestEdge;
+}
+
+
 void main(void)
 {
     outputColor = vtxColor;
@@ -57,6 +77,12 @@ void main(void)
 
         vec3 lighting = CalculateFullbrightLighting(outputColor.rgb, vtxNormal, viewDir);
         outputColor = vec4(lighting, vtxColor.a);
+    }
+
+    float wireframe = WireFrame(2, 1);
+    if (wireframe > 0.0)
+    {
+        outputColor = vec4(vec3(1.0), wireframe);
     }
 
     if (!gl_FrontFacing) {
