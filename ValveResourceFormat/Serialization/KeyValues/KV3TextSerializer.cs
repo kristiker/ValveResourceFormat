@@ -32,6 +32,12 @@ internal static class KV3TextSerializer
                 case KVFlag.SubClass:
                     writer.Write("subclass:");
                     break;
+                case KVFlag.EntityName:
+                    writer.Write("entity_name:");
+                    break;
+                case KVFlag.Localize:
+                    writer.Write("localize:");
+                    break;
                 default:
                     throw new InvalidOperationException($"Trying to print unknown keyvalues flag ({Flag})");
             }

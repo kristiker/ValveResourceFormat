@@ -11,6 +11,9 @@ namespace ValveResourceFormat.Serialization.KeyValues
         SoundEvent = 4,
         SubClass = 5,
         // March 2023: There are more types available in the S2 binaries, but they should not be persisted.
+        EntityName = 6,
+        Localize = 7,
+        Unspecified = 8,
     }
 
     /// <summary>
