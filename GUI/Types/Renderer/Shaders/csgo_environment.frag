@@ -204,6 +204,238 @@ uniform float g_flModelTintAmount = 1.0;
 
 #include "common/fog.glsl"
 
+// scene constants
+uniform sampler2D g_tWetnessWaves;
+float g_flEnvRainStrength = 0.0;
+float g_flEnvPuddleRippleStrength = sin(g_flTime);
+float g_flEnvPuddleRippleDirection = 0.5;
+float g_flEnvWetnessCoverage = 0.5;
+float g_flEnvWetnessDryingAmount = 0;
+
+// material constants
+uniform int F_WETNESS;
+uniform bool g_bPuddlesOnVerticalSurfaces = false;
+uniform float g_fPuddleStrength = 1.0;
+uniform vec3 g_vPuddleSedimentColor = vec3(0.62, 0.56, 0.5); // Expression(SrgbGammaToLinear(this));
+uniform float g_fPuddleSedimentHeight = 0.9; // Expression((this*2)-1);
+uniform float g_fPuddleSedimentOpacity = 0.25;
+uniform float g_fPuddleRoughness = 0.02;
+uniform float g_fPuddleBlendSoftness = 0.08;
+uniform float g_fWetEdgeStrength = 0.5;
+uniform float g_fWetEdgeSpread = 0.2;
+uniform float g_fWetnessStrength = 1.0;
+uniform float g_fRainStrength = 1.0;
+uniform float g_fRippleStrength = 1.0;
+
+vec2 CalculateRippleEffect(vec3 position, vec3 normal, float wetness, float specularPower)
+{
+    // Calculate ripple direction based on surface normal
+    vec3 rippleDir = normalize(vec3(-1.0, 0.2, 0.0));
+    float angle = g_flEnvPuddleRippleDirection * TAU;
+
+    // Rotate ripple direction
+    mat2 rotation = mat2(
+        cos(angle), -sin(angle),
+        sin(angle), cos(angle)
+    );
+    rippleDir.xy = rotation * rippleDir.xy;
+
+    // Calculate tangent space for ripple movement
+    vec3 tangent = -cross(rippleDir, normal);
+
+    // Position-based calculations
+    float surfaceAngle = 1.0 - normal.z;
+    vec2 rippleCoord = vec2(
+        dot(position, rippleDir),
+        dot(position, tangent)
+    );
+
+    // Add offset for varied ripple pattern
+    rippleCoord += vec2(0.1, -0.1) * dot(position, tangent);
+    rippleCoord += vec2(8.0, 5.0) * position.z;
+    rippleCoord += vec2(surfaceAngle * surfaceAngle * -80.0);
+
+    // Sample ripple texture at different scales
+    vec2 rippleUV1 = rippleCoord * vec2(0.02, 0.011);
+    vec2 rippleUV2 = rippleCoord * vec2(0.036, 0.0162) + vec2(0.05);
+
+    // Animate ripples
+    vec2 timeOffset1 = vec2(0.2, 0.0) * g_flTime;
+    vec2 timeOffset2 = vec2(0.15, 0.0) * g_flTime;
+
+    vec4 ripple1 = texture(g_tWetnessWaves, rippleUV1 + timeOffset1);
+    vec4 ripple2 = texture(g_tWetnessWaves, rippleUV2 + timeOffset2);
+
+    // Calculate edge fading based on surface properties
+    float fadeEdge1 = clamp(length(fwidth(rippleUV1)) * 10.0, 0.0, 1.0);
+    float fadeEdge2 = clamp(length(fwidth(rippleUV2)) * 10.0, 0.0, 1.0);
+
+    // Convert ripple samples to normal offsets
+    vec2 normalOffset1 = ((ripple1.xy * 2.0 - 1.0) * vec2(0.1, 0.05)) * normal.z;
+    vec2 normalOffset2 = ((ripple2.xy * 2.0 - 1.0) * 0.052) * normal.z;
+    normalOffset2.y *= 0.5;
+
+    // Blend ripple layers with fade factors
+    normalOffset1 *= mix(1.0, 0.3, fadeEdge1);
+    normalOffset2 *= mix(1.0, 0.3, fadeEdge2);
+
+    // Combine ripple layers
+    vec2 finalOffset = normalOffset1 + normalOffset2;
+
+    // Apply ripple strength and wetness factors
+    float rippleStrength = 0.04 * (fadeEdge1 + fadeEdge2);
+
+    return finalOffset * (specularPower * rippleStrength);
+}
+
+vec2 CalculateRainEffect(vec3 position, float wetness, float height)
+{
+    // Create a time-varying offset for dynamic rain ripples
+    float timeScale = g_flTime * 6.5;
+    vec3 timeOffset = vec3(timeScale) + vec3(0.0, 0.3167, 0.6334);
+
+    vec2 rippleDistortion = vec2(0.0);
+    float scale = 0.12; // Base scale for rain ripples
+
+    // Accumulated ripple effect from 3 overlapping patterns
+    for(int i = 0; i < 3; i++) {
+        // Create rotation matrices for varied ripple directions
+        vec3 angles = vec3(0.9713, 0.7518, 0.3624);
+        vec3 cosAngles = vec3(0.2377, 0.6594, 0.932);
+        mat2 rotMat = mat2(
+            vec2(angles[i], -cosAngles[i]),
+            vec2(cosAngles[i], angles[i])
+        );
+
+        // Scale variation per layer
+        vec3 scales = vec3(0.6, 0.6661, 0.7322);
+        vec2 scaledPos = (rotMat * position.xy) * scales[i] * scale;
+
+        // Create ripple pattern
+        vec2 rippleUV = scaledPos + vec2(timeOffset[i] * 0.02);
+        vec2 ripplePattern = fract(rippleUV) * 2.0 - 1.0;
+
+        float rippleLen = length(ripplePattern);
+        float fadeEdge = clamp(1.0 - rippleLen * mix(3.0, 1.0, wetness), 0.0, 1.0);
+        float fadePattern = clamp(1.0 - rippleLen * 6.0, 0.0, 1.0);
+
+        // Time-varying intensity
+        float t = timeScale + (floor(fract(rippleUV.x * 0.1) * 10.0) +
+                             (floor(fract(rippleUV.y * 0.1) * 10.0) *
+                             (0.2 + floor(fract(rippleUV.x * 0.1) * 10.0)))) * 8.0;
+
+        float intensity = fadeEdge * fadeEdge;
+        float rippleStrength = clamp(sin((fadeEdge * mix(1.0, 4.0, wetness) + t) * wetness) -
+                                   0.8 * mix(0.25, 1.0, wetness), 0.0, 1.0);
+
+        vec2 rippleDir = normalize(ripplePattern);
+        rippleDistortion += rippleDir * rippleStrength * intensity * mix(16.0, 2.0, wetness);
+    }
+
+    return rippleDistortion * height;
+}
+
+void ApplyWetEffects(
+    inout MaterialProperties_t mat,
+    float flVertexPaintedWetness,
+    float flWetnessDarkeningStrength)
+{
+    bool bIsWet = g_fPuddleStrength > 0.0 || g_fWetnessStrength > 0.0;
+    if (F_WETNESS == 0 || bIsWet == false)
+    {
+        return;
+    }
+
+    vec4 wetnessWaves = texture(g_tWetnessWaves, (vFragPosition.xy * 0.006).xy);
+    float specularPower = pow(max(0.0, mat.Roughness.x), 32.0);
+
+    mat.Albedo = wetnessWaves.www;
+    return;
+
+    float wetness = min(min(flVertexPaintedWetness, saturate(g_flEnvWetnessCoverage)),
+                    1.0 - (saturate(g_flEnvWetnessDryingAmount - 0.5) * 2.0));
+    float wetness2 = saturate(wetness - 0.75) * 2.0;
+    float totalWetness = wetness + (wetness2 * wetness2);
+    float edgeStart = totalWetness - g_fWetEdgeSpread;
+    float wetStrength = saturate(totalWetness * 20.0);
+
+    vec4 waterNormal = vec4(0.0, 0.0, 1.0, 0.0);
+    float edgeMask;
+    if (g_bPuddlesOnVerticalSurfaces)
+    {
+        waterNormal.xyz = mat.NormalMap;
+        edgeMask = max(0.0, edgeStart);
+    }
+    else
+    {
+        edgeMask = max(0.0, (totalWetness * specularPower) - g_fWetEdgeSpread);
+    }
+
+    float puddleFactor = smoothstep(edgeMask + (g_fPuddleBlendSoftness * 0.3),
+                                    edgeMask - (0.6 * min(1.0, mat.Height + g_fPuddleBlendSoftness)),
+                                    mat.Height) * wetStrength;
+
+    float wetEdge = smoothstep(wetness, edgeStart - (0.2 * totalWetness), mat.Height);
+    wetEdge = max((wetEdge * g_fWetEdgeStrength) * wetStrength, puddleFactor) * g_fPuddleStrength;
+
+    // Sediment calculation
+    float heightOffset = (wetness - 1.0) - mat.Height;
+    float sediment = (saturate(heightOffset + g_fPuddleSedimentHeight) * g_fPuddleSedimentOpacity) * puddleFactor;
+
+    // Calculate final wetness including waves and drying
+    float dryingWetness = 1.0 - saturate(g_flEnvWetnessDryingAmount * 2.0);
+    float finalWetness = max(saturate(((saturate(((totalWetness * 2.0) -
+                                (mix(0.5, wetnessWaves.w, saturate(specularPower * 20.0)) * 0.5)) -
+                                (mat.Height * 0.5)) + 0.25) * g_fWetnessStrength) * wetStrength + puddleFactor) * dryingWetness, wetEdge);
+
+    vec4 rippleWaterNormal = waterNormal;
+    float rainIntensity = 0.0;
+    float rippleIntensity = 0.0;
+
+    // Apply puddle effect to color and normal
+    if (finalWetness > 0.5)
+    {
+        // Apply ripples if enabled
+        if (g_fRippleStrength * g_flEnvPuddleRippleStrength > 0.0) {
+            // Add ripple distortion to normal
+            rippleWaterNormal.xy += CalculateRippleEffect(vFragPosition, mat.NormalMap, finalWetness, specularPower);
+            rippleIntensity = specularPower * 0.04 * g_fRippleStrength * g_flEnvPuddleRippleStrength;
+        }
+
+        // Add rain effect if enabled
+        if (g_fRainStrength * g_flEnvRainStrength > 0.0) {
+            rippleWaterNormal.xy += CalculateRainEffect(vFragPosition, finalWetness, mat.Height);
+            rainIntensity = g_fRainStrength * g_flEnvRainStrength;
+        }
+
+        rippleWaterNormal.xyz = normalize(rippleWaterNormal.xyz);
+        rippleWaterNormal.w = length(rippleWaterNormal.xyz);
+    }
+
+    float effectStrength = puddleFactor * g_fPuddleStrength;
+    float rippleBlend = effectStrength * (0.2 + (0.15 * rippleWaterNormal.w * rippleWaterNormal.w * rippleWaterNormal.w));
+
+    // Calculate reflectance adjustment
+    mat.Reflectance = mix(mat.Reflectance, 0.035, finalWetness);
+
+    // Apply wetness effects to color with darkening
+    vec3 darkenedColor = mix(mat.Albedo, pow(mat.Albedo, vec3(1.3)) * 0.8, saturate((pow(mat.Albedo, vec3(0.25)) * (finalWetness * mat.Height)) * 8.0) * flWetnessDarkeningStrength);
+
+    // Apply puddle coloring and sediment
+    vec3 puddleColor = mix(darkenedColor, darkenedColor * 0.5, vec3(puddleFactor)) * mix(1.0, mat.AmbientOcclusion, wetEdge);
+    vec3 wetColor = mix((puddleColor * mix(1.0, mat.Height, sediment)) * mix(1.0, 1.0 - heightOffset, sediment),
+                    g_vPuddleSedimentColor, vec3(sediment * effectStrength));
+
+    // Apply final rain ripple effects
+    wetColor = wetColor * (1.0 + rainIntensity) + vec3(rainIntensity * 0.1);
+
+    mat.Albedo = wetColor;
+    mat.Roughness = saturate(mix(mat.Roughness, vec2(g_fPuddleRoughness), vec2(finalWetness)) +
+                        vec2(rippleIntensity + (length(fwidth(rippleWaterNormal.xyz)) * 0.5)));
+    mat.NormalMap = normalize(mix(mat.NormalMap, rippleWaterNormal.xyz, vec3(effectStrength)));
+    mat.AmbientOcclusion = mix(mat.AmbientOcclusion, max(0.0, mat.AmbientOcclusion * 0.7), finalWetness) * mix(1.0, mat.AmbientOcclusion, sediment * effectStrength);
+}
+
 // Must be last
 #include "common/lighting.glsl"
 
@@ -411,6 +643,15 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
 
     mat.Height = height.r;
     mat.Metalness = height.a;
+    mat.Reflectance = 0.04;
+
+#if defined(csgo_environment_blend_vfx)
+    ApplyWetEffects(
+        mat,
+        vColorBlendValues.z,
+        1.0 /* mix(g_flWetnessDarkeningStrength1, g_flWetnessDarkeningStrength2, g_flColorReplace2) */
+    );
+#endif
 
     AdjustRoughnessByGeometricNormal(mat);
 
@@ -419,8 +660,7 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
 
     mat.DiffuseColor = mat.Albedo - mat.Albedo * mat.Metalness;
 
-    const vec3 F0 = vec3(0.04);
-	mat.SpecularColor = mix(F0, mat.Albedo, mat.Metalness);
+	mat.SpecularColor = mix(vec3(mat.Reflectance), mat.Albedo, mat.Metalness);
 
     mat.DiffuseAO = vec3(mat.AmbientOcclusion);
     mat.SpecularAO = mat.AmbientOcclusion;

@@ -26,6 +26,7 @@ namespace GUI.Types.Renderer
         SceneColor,
         SceneDepth,
         SceneStencil,
+        WetnessWaves,
         MorphCompositeTexture,
         Last = MorphCompositeTexture,
     }

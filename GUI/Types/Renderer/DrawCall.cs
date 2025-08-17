@@ -57,6 +57,7 @@ namespace GUI.Types.Renderer
 
 #if DEBUG
             var vaoName = $"{MeshName}+{Material.Material.Name}";
+            vaoName = vaoName.Length > byte.MaxValue ? vaoName[..byte.MaxValue] : vaoName;
             GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, VertexArrayObject, vaoName.Length, vaoName);
 #endif
         }

@@ -56,6 +56,7 @@ struct MaterialProperties_t
     float ClothMask;
     float SSSMask;
 
+    float Reflectance;
     vec3 DiffuseColor;
     vec3 SpecularColor;
     vec3 TransmissiveColor;
@@ -102,6 +103,7 @@ void InitProperties(out MaterialProperties_t mat, vec3 GeometricNormal)
     mat.ClothMask = 0.0;
     mat.SSSMask = 0.0;
 
+    mat.Reflectance = 0.04;
     mat.DiffuseColor = vec3(0.0);
     mat.SpecularColor = vec3(0.04);
     mat.TransmissiveColor = vec3(0.0);
