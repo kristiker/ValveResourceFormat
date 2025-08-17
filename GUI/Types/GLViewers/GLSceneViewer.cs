@@ -187,6 +187,11 @@ namespace GUI.Types.GLViewers
                 blueNoiseResource?.Dispose();
             }
 
+            var waterDropletsResource = GuiContext.LoadFileCompiled("materials/dev/water_droplets.vtex");
+            if (waterDropletsResource is not null)
+            {
+                Textures.Add(new(ReservedTextureSlots.WetnessWaves, "g_tWetnessWaves", GuiContext.MaterialLoader.LoadTexture(waterDropletsResource)));
+            }
         }
 
         public virtual void PostSceneLoad()
