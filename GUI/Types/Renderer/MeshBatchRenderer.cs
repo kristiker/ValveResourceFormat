@@ -48,19 +48,23 @@ namespace GUI.Types.Renderer
 
         public static void Render(List<Request> requests, Scene.RenderContext context)
         {
-            if (context.RenderPass == RenderPass.Opaque)
+            using (Profiler.Profiler.BeginZone(zoneName: "sorting draws", color: Color32.Yellow.PackedValue))
             {
-                requests.Sort(CompareCustomPipeline);
-            }
-            else if (context.RenderPass == RenderPass.StaticOverlay)
-            {
-                requests.Sort(CompareRenderOrderThenPipeline);
-            }
-            else if (context.RenderPass == RenderPass.Translucent)
-            {
-                requests.Sort(CompareCameraDistance);
+                if (context.RenderPass == RenderPass.Opaque)
+                {
+                    requests.Sort(CompareCustomPipeline);
+                }
+                else if (context.RenderPass == RenderPass.StaticOverlay)
+                {
+                    requests.Sort(CompareRenderOrderThenPipeline);
+                }
+                else if (context.RenderPass == RenderPass.Translucent)
+                {
+                    requests.Sort(CompareCameraDistance);
+                }
             }
 
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "drawing batch", text: $"draws: {requests.Count}", color: Color32.Yellow.PackedValue);
             DrawBatch(requests, context);
         }
 
@@ -132,6 +136,7 @@ namespace GUI.Types.Renderer
                 {
                     if (context.RenderPass is RenderPass.Opaque or RenderPass.Translucent or RenderPass.Outline)
                     {
+                        using var _1 = Profiler.Profiler.BeginZone(zoneName: $"{request.Node.DebugName} Node Render", color: Color32.White.PackedValue);
                         request.Node.Render(context);
                         shader = null;
                         material = null;
@@ -218,6 +223,7 @@ namespace GUI.Types.Renderer
                     GL.BindVertexArray(vao);
                 }
 
+                using var _ = Profiler.Profiler.BeginZone(zoneName: $"{shader!.Name}, {System.IO.Path.GetFileName(request.Call.MeshName)}", text: request.Call.VertexCount.ToString(), color: Color32.White.PackedValue);
                 Draw(shader!, ref uniforms, ref config, new(request.Mesh, request.Call, request.Node));
             }
 

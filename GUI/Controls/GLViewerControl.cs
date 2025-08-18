@@ -599,6 +599,7 @@ namespace GUI.Controls
             TextRenderer.Render();
 
             GLControl.SwapBuffers();
+            Tracy.PInvoke.TracyEmitFrameMark(null);
             Picker?.TriggerEventIfAny();
 
             if (isActiveForm)

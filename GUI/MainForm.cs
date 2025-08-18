@@ -130,6 +130,9 @@ namespace GUI
             }
 #endif
 
+
+            Profiler.Profiler.AppInfo("Source 2 Viewer");
+
             if (Settings.IsFirstStartup)
             {
                 OpenWelcome();
