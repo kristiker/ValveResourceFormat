@@ -759,6 +759,7 @@ namespace GUI.Types.GLViewers
             TextRenderer.Render();
 
             GLNativeWindow.Context.SwapBuffers();
+            Tracy.PInvoke.TracyEmitFrameMark(null);
             Picker?.TriggerEventIfAny();
 
             GLNativeWindow.Context.MakeNoneCurrent();

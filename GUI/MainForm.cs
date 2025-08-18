@@ -119,6 +119,8 @@ namespace GUI
 
             CheckForUpdatesIfNecessary();
 
+            Profiler.Profiler.AppInfo("Source 2 Viewer");
+
             HardwareAcceleratedTextureDecoder.Decoder = new GLTextureDecoder();
             RenderLoopThread.Initialize(this);
 
