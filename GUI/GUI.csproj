@@ -18,6 +18,8 @@
     <NoWarn>NU1901;NU1902;NU1903</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="DemoFile" Version="0.33.1" />
+    <PackageReference Include="DemoFile.Game.cs" Version="0.33.1" />
     <PackageReference Include="FCTB" Version="2.16.24">
         <NoWarn>NU1701</NoWarn>
     </PackageReference>
