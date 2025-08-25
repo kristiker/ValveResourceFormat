@@ -793,6 +793,10 @@ namespace GUI
             {
                 return new Types.Viewers.BinaryKeyValues1().Create(vrfGuiContext, stream);
             }
+            else if (Types.Viewers.Demo.IsAccepted(magic))
+            {
+                return new Types.Viewers.Demo().Create(vrfGuiContext, stream);
+            }
             else if (Types.Viewers.Resource.IsAccepted(magicResourceVersion))
             {
                 return new Types.Viewers.Resource().Create(vrfGuiContext, stream, viewMode, verifyFileSize: entry == null || entry.CRC32 > 0);

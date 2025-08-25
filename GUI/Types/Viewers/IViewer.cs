@@ -10,6 +10,8 @@ namespace GUI.Types.Viewers
     {
         public TabPage Create(VrfGuiContext vrfGuiContext, Stream stream);
 
+        public static uint FourCC(char a, char b, char c, char d) => (uint)((a << 0) | (b << 8) | (c << 16) | (d << 24));
+
         public static TabPage AddContentTab<T>(TabControl resTabs, string name, T content, bool preSelect = false, HighlightLanguage highlightSyntax = HighlightLanguage.Default)
         {
             var extract = string.Empty;
