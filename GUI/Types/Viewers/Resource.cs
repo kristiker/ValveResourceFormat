@@ -509,6 +509,14 @@ namespace GUI.Types.Viewers
                         return true;
                     }
 
+                case ResourceType.PulseGraphDef:
+                    {
+                        var specialTabPage = new ThemedTabPage("PULSE GRAPH");
+                        specialTabPage.Controls.Add(new PulseGraphViewer(vrfGuiContext, ((BinaryKV3)resource.DataBlock!).Data));
+                        resTabs.TabPages.Add(specialTabPage);
+                        return true;
+                    }
+
                 case ResourceType.ChoreoSceneFileData:
                     {
                         var specialTabPage = new ThemedTabPage("VCDLIST");
