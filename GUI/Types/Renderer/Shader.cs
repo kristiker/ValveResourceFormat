@@ -40,6 +40,7 @@ namespace GUI.Types.Renderer
 
         public bool EnsureLoaded()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: nameof(Shader.EnsureLoaded));
             if (!IsLoaded)
             {
                 IsLoaded = true;

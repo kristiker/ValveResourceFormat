@@ -90,6 +90,7 @@ namespace GUI.Types.Renderer
 
         public Shader LoadShader(string shaderName, IReadOnlyDictionary<string, byte>? arguments = null, bool blocking = true)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Shader {shaderName}, blocking: {blocking}");
             arguments ??= EmptyArgs;
 
             if (ShaderDefines.ContainsKey(shaderName))
@@ -101,8 +102,6 @@ namespace GUI.Types.Renderer
                     return cachedShader;
                 }
             }
-
-            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Shader {shaderName}, blocking: {blocking}");
 
             var shader = CompileAndLinkShader(shaderName, arguments, blocking: blocking);
             var newShaderCacheHash = CalculateShaderCacheHash(shaderName, arguments);
@@ -137,6 +136,7 @@ namespace GUI.Types.Renderer
         private Shader CompileAndLinkShader(string shaderName, IReadOnlyDictionary<string, byte> arguments, bool blocking = true)
         {
             var shaderProgram = -1;
+            using var _ = Profiler.Profiler.BeginZone(zoneName: nameof(CompileAndLinkShader));
 
             try
             {

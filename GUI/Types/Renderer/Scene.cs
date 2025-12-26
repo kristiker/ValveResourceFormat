@@ -76,6 +76,7 @@ namespace GUI.Types.Renderer
 
         public void Add(SceneNode node, bool dynamic)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Add Node To Scene/Octree {node.DebugName}");
             var (nodeList, octree, indexOffset) = dynamic
                 ? (dynamicNodes, DynamicOctree, 1u)
                 : (staticNodes, StaticOctree, 0u);
