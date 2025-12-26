@@ -100,6 +100,8 @@ class Framebuffer
 
     public FramebufferErrorCode Initialize()
     {
+        using var _ = Profiler.Profiler.BeginZone(zoneName: "Initialize Framebuffer");
+
         if (Target == 0)
         {
             throw new InvalidOperationException("Framebuffer target is not set");

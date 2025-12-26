@@ -283,6 +283,8 @@ namespace GUI.Types.GLViewers
             Textures.Add(new(ReservedTextureSlots.SceneDepth, "g_tSceneDepth", FramebufferCopy.Depth));
             Textures.Add(new(ReservedTextureSlots.SceneStencil, "g_tSceneStencil", FramebufferCopy.Stencil));
 
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "Load Scene View");
+
             MainFramebuffer.Bind(FramebufferTarget.Framebuffer);
             CreateBuffers();
 

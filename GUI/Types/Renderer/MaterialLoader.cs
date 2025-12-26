@@ -172,6 +172,7 @@ namespace GUI.Types.Renderer
         public RenderTexture LoadTexture(Resource textureResource, bool srgbRead = false, bool isViewerRequest = false)
 #pragma warning restore CA1822 // Mark members as static
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Texture: {textureResource.FileName} srgb: {srgbRead}");
             var data = (Texture?)textureResource.DataBlock;
             Debug.Assert(data != null);
 

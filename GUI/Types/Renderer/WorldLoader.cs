@@ -108,6 +108,7 @@ namespace GUI.Types.Renderer
 
         private void Load()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load World {World.Resource!.FileName}");
             LoadWorldLightingInfo();
             LoadEntities();
             LoadWorldNodes();
@@ -117,6 +118,7 @@ namespace GUI.Types.Renderer
 
         private void LoadEntities()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "Load Entities");
             foreach (var lumpName in World.GetEntityLumpNames())
             {
                 if (lumpName == null)
@@ -154,6 +156,7 @@ namespace GUI.Types.Renderer
 
         private void LoadWorldNodes()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "Load World Nodes");
             // Output is World_t we need to iterate m_worldNodes inside it.
             var worldNodes = World.GetWorldNodeNames();
             foreach (var worldNode in worldNodes)
@@ -187,6 +190,7 @@ namespace GUI.Types.Renderer
 
         public void LoadWorldPhysics()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "Load World Physics");
             // TODO: Ideally we would use the vrman files to find relevant files.
             PhysAggregateData? phys = null;
             var physResource = guiContext.LoadFile($"{MapName}/world_physics.vmdl_c");
@@ -1116,6 +1120,7 @@ namespace GUI.Types.Renderer
 
         public void LoadNavigationMesh()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "Load Navigation Mesh");
             var navFilePath = Path.ChangeExtension(MapName, ".nav");
             try
             {

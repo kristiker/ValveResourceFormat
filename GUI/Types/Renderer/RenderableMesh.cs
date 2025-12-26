@@ -36,8 +36,8 @@ namespace GUI.Types.Renderer
         public RenderableMesh(Mesh mesh, int meshIndex, Scene scene, Model? model = null,
             Dictionary<string, string>? initialMaterialTable = null, Morph? morph = null, bool isAggregate = false)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Create Mesh {mesh.Name}");
             guiContext = scene.GuiContext;
-
             Name = mesh.Name;
 
             var vbib = mesh.VBIB;

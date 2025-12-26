@@ -102,6 +102,8 @@ namespace GUI.Types.Renderer
                 }
             }
 
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Shader {shaderName}, blocking: {blocking}");
+
             var shader = CompileAndLinkShader(shaderName, arguments, blocking: blocking);
             var newShaderCacheHash = CalculateShaderCacheHash(shaderName, arguments);
             CachedShaders[newShaderCacheHash] = shader;

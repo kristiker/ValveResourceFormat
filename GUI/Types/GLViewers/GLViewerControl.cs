@@ -477,8 +477,11 @@ namespace GUI.Types.GLViewers
             // but context operations can happen on any thread as long as the context is only current on one
             // thread at a time. Resources created in a context are available regardless of which thread
             // makes the context current.
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "InitializeLoad");
+
             Program.MainForm.Invoke(() =>
             {
+                using var _ = Profiler.Profiler.BeginZone(zoneName: "CreateNativeWindow");
                 Debug.Assert(GLNativeWindow is null);
 
                 var settings = new NativeWindowSettings()
@@ -507,6 +510,7 @@ namespace GUI.Types.GLViewers
 
             Debug.Assert(GLNativeWindow is not null);
 
+            using var _2 = Profiler.Profiler.BeginZone(zoneName: "Initialize GL");
             using var lockedGl = MakeCurrent();
 
             GLNativeWindow.Context.SwapInterval = Settings.Config.Vsync;
@@ -591,7 +595,10 @@ namespace GUI.Types.GLViewers
 
             MainFramebuffer.ClearMask |= ClearBufferMask.StencilBufferBit;
 
-            OnGLLoad();
+            using (Profiler.Profiler.BeginZone(zoneName: "Special Viewer Load"))
+            {
+                OnGLLoad();
+            }
         }
 
         static bool loadedBindings;

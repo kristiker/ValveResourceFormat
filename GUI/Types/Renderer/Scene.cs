@@ -597,6 +597,8 @@ namespace GUI.Types.Renderer
 
         private static int SubmitOctreeNodeQuery(int maxTests, int maxDepth, Octree.Node octreeNode)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "octree node query", text: $"elems: {octreeNode.Elements?.Count}, size: {octreeNode.Region.Size}, prev cull: {octreeNode.OcclusionCulled}", color: Color32.Yellow.PackedValue);
+
             if (octreeNode.OcclusionQueryHandle == -1)
             {
                 octreeNode.OcclusionQueryHandle = GL.GenQuery();

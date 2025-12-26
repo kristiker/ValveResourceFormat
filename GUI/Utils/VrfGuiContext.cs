@@ -252,6 +252,7 @@ namespace GUI.Utils
                 return resource;
             }
 
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Resource {file}");
             resource = base.LoadFile(file);
 
             if (resource != null)

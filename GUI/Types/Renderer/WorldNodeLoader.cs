@@ -35,11 +35,14 @@ namespace GUI.Types.Renderer
         {
             if (externalReferences is not null)
             {
+                using var _ = Profiler.Profiler.BeginZone(zoneName: $"Paralell Decompress World Node VBIBs");
+
                 Parallel.ForEach(externalReferences.ResourceRefInfoList, resourceReference =>
                 {
                     var resource = guiContext.LoadFileCompiled(resourceReference.Name);
                     if (resource is { DataBlock: Model model })
                     {
+                        using var _2 = Profiler.Profiler.BeginZone(zoneName: $"Decompress VBIBs {model.Name}");
                         foreach (var mesh in model.GetEmbeddedMeshes())
                         {
                             var _ = mesh.Mesh.VBIB;
