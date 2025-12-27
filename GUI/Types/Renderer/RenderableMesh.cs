@@ -415,6 +415,7 @@ namespace GUI.Types.Renderer
         /// <summary>
         public static RenderableMesh CreateMesh(string name, RenderMaterial material, VBIB vertexIndexBuffers, AABB bounds, VrfGuiContext guiContext)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: "Create Dynamic Mesh");
             var mesh = new RenderableMesh(name, bounds, guiContext);
             var gpuVbib = guiContext.MeshBufferCache.CreateVertexIndexBuffers(name, vertexIndexBuffers);
 

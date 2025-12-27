@@ -38,6 +38,7 @@ namespace GUI.Types.Viewers
 
         public async Task LoadAsync(Stream stream)
         {
+            using var _ = Profiler.Profiler.BeginZone();
             var resourceTemp = new ValveResourceFormat.Resource
             {
                 FileName = vrfGuiContext.FileName,
@@ -216,6 +217,7 @@ namespace GUI.Types.Viewers
 
         public void Create(TabPage containerTabPage)
         {
+            using var _ = Profiler.Profiler.BeginZone();
             Debug.Assert(resource is not null);
 
             var isPreview = viewMode == ResourceViewMode.ViewerOnly;
@@ -634,6 +636,8 @@ namespace GUI.Types.Viewers
 
         private static void AddTextViewControl(ResourceType resourceType, Block block, TabPage blockTab)
         {
+            using var _ = Profiler.Profiler.BeginZone();
+
             var text = block.ToString();
             var language = CodeTextBox.HighlightLanguage.KeyValues;
 

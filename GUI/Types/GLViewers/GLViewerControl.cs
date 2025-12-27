@@ -81,6 +81,7 @@ namespace GUI.Types.GLViewers
 
         public Control InitializeUiControls(bool isPreview = false)
         {
+            using var _ = Profiler.Profiler.BeginZone();
             GLControl = new GLControl(glLock)
             {
                 Dock = DockStyle.Fill
@@ -136,6 +137,7 @@ namespace GUI.Types.GLViewers
 
         public void InitializeRenderLoop(bool renderImmediately = false)
         {
+            using var _ = Profiler.Profiler.BeginZone();
             RenderLoopThread.RegisterInstance();
 
             if (renderImmediately)

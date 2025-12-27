@@ -122,6 +122,7 @@ namespace GUI.Utils
         /// <summary>Recursively apply the Colors from 'ThemeColors' to the Control and all its childs.</summary>
         public static void ThemeControl(Control control)
         {
+            using var _ = Profiler.Profiler.BeginZone(control.Name);
             control.SuspendLayout();
 
             ThemeControlInternal(control);

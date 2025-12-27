@@ -80,6 +80,8 @@ namespace GUI.Types.GLViewers
         {
             base.LoadScene();
 
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Material Specific Scene Nodes");
+
             Scene.ShowToolsMaterials = true;
             renderMat = GuiContext.MaterialLoader.LoadMaterial(Resource, Scene.RenderAttributes);
             renderMat.Shader.EnsureLoaded();
@@ -128,7 +130,10 @@ namespace GUI.Types.GLViewers
                 }
             }
 
-            vcsShader = GuiContext.LoadShader(renderMat.Material.ShaderName);
+            using (Profiler.Profiler.BeginZone(zoneName: $"Load Valve VFX Shader"))
+            {
+                vcsShader = GuiContext.LoadShader(renderMat.Material.ShaderName);
+            }
         }
 
         private void CreateMaterialEditControls()
