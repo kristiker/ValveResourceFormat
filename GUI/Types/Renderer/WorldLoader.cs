@@ -49,6 +49,7 @@ namespace GUI.Types.Renderer
 
             if (mapResourceReferences != null)
             {
+                using var _ = Profiler.Profiler.BeginZone(zoneName: $"Preload Map Resources");
                 Resource? PreloadResource(string resourceName)
                 {
                     var resource = guiContext.LoadFileCompiled(resourceName);
@@ -191,6 +192,7 @@ namespace GUI.Types.Renderer
         public void LoadWorldPhysics()
         {
             using var _ = Profiler.Profiler.BeginZone(zoneName: "Load World Physics");
+
             // TODO: Ideally we would use the vrman files to find relevant files.
             PhysAggregateData? phys = null;
             var physResource = guiContext.LoadFile($"{MapName}/world_physics.vmdl_c");
@@ -213,13 +215,19 @@ namespace GUI.Types.Renderer
             {
                 Debug.Assert(physResource?.FileName != null);
 
-                foreach (var physSceneNode in PhysSceneNode.CreatePhysSceneNodes(scene, phys, physResource.FileName[..^2]))
+                using (Profiler.Profiler.BeginZone("Load Physics Debug Visualization"))
                 {
-                    physSceneNode.LayerName = "world_layer_base";
-                    scene.Add(physSceneNode, true);
+                    foreach (var physSceneNode in PhysSceneNode.CreatePhysSceneNodes(scene, phys, physResource.FileName[..^2]))
+                    {
+                        physSceneNode.LayerName = "world_layer_base";
+                        scene.Add(physSceneNode, true);
+                    }
                 }
 
-                scene.PhysicsWorld = new Rubikon(phys);
+                using (Profiler.Profiler.BeginZone("Load Physics RayTracing World"))
+                {
+                    scene.PhysicsWorld = new Rubikon(phys);
+                }
             }
         }
 
