@@ -261,6 +261,7 @@ namespace ValveResourceFormat
 
                 if (block.Type is BlockType.RED2 or BlockType.REDI)
                 {
+                    using var _ = Profiler.Profiler.BeginZone(zoneName: $"Read Block {block.Type}");
                     block.Read(Reader);
                     EditInfo = (ResourceEditInfo)block;
 
@@ -294,6 +295,7 @@ namespace ValveResourceFormat
             {
                 if (block.Type is not BlockType.REDI and not BlockType.RED2 and not BlockType.NTRO)
                 {
+                    using var _ = Profiler.Profiler.BeginZone(zoneName: $"Read Block {block.Type}");
                     block.Read(Reader);
                 }
             }

@@ -18,6 +18,7 @@ namespace GUI.Types.Renderer
         {
             if (!gpuBuffers.TryGetValue(meshName, out var gpuVbib))
             {
+                using var _ = Profiler.Profiler.BeginZone(zoneName: $"Create GPU VBIB {meshName}");
                 gpuVbib = new GPUMeshBuffers(vbib);
                 gpuBuffers.Add(meshName, gpuVbib);
             }
