@@ -82,6 +82,7 @@ namespace ValveResourceFormat.Compression
         /// </summary>
         public static byte[] DecodeIndexBuffer(int indexCount, int indexSize, ReadOnlySpan<byte> buffer)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"DecodeIndexBuffer {indexCount}");
             if (indexCount % 3 != 0)
             {
                 throw new ArgumentException("Expected indexCount to be a multiple of 3.");

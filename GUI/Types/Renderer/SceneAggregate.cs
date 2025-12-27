@@ -37,6 +37,7 @@ namespace GUI.Types.Renderer
         public SceneAggregate(Scene scene, Model model)
             : base(scene)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Scene Aggregate Init {DebugName}");
             var embeddedMeshes = model.GetEmbeddedMeshesAndLoD().ToList();
 
             /// TODO: Perhaps use <see cref="ModelSceneNode.LoadMeshes">
@@ -79,6 +80,7 @@ namespace GUI.Types.Renderer
 
         public IEnumerable<Fragment> CreateFragments(KVObject aggregateSceneObject)
         {
+            using var _ = Profiler.Profiler.BeginZone("Create Aggregate Fragments");
             var aggregateMeshes = aggregateSceneObject.GetArray("m_aggregateMeshes");
 
             // Aperture Desk Job goes from draw call -> aggregate mesh

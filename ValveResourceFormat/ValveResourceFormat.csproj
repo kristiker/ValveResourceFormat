@@ -36,6 +36,10 @@
     <None Include="..\Misc\Icons\source2viewer_dark.png" Pack="true" PackagePath="\" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Profiler\Profiler.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="ValveResourceFormat.Utils" />
+    <Using Include="VRF.Profiler" Alias="Profiler" />
   </ItemGroup>
 </Project>

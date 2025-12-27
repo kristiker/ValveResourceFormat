@@ -1,11 +1,10 @@
-
 using static Tracy.PInvoke;
 
-namespace GUI.Profiler;
+namespace VRF.Profiler;
 
 public readonly struct ProfilerZone : IDisposable
 {
-    public readonly TracyCZoneCtx Context;
+    private readonly TracyCZoneCtx Context;
 
     public uint Id => Context.Data.Id;
 

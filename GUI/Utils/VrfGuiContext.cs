@@ -243,16 +243,18 @@ namespace GUI.Utils
         // Override to add support for caching resources
         public override Resource? LoadFile(string file)
         {
+            using var prof = Profiler.Profiler.BeginZone(zoneName: $"Load Resource {file}");
+
             // Some files come with backward slashes which ruin our cache
             file = file.Replace('\\', '/');
 
             // TODO: Might conflict where same file name is available in different paths
             if (CachedResources.TryGetValue(file, out var resource) && resource.Reader != null)
             {
+                prof.EmitText("Cache hit");
                 return resource;
             }
 
-            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Resource {file}");
             resource = base.LoadFile(file);
 
             if (resource != null)

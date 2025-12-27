@@ -209,7 +209,9 @@ namespace GUI.Types.Viewers
                     break;
             }
 
+            //Profiler.Profiler.EmitFrameMarkBegin("Load");
             GLViewer?.InitializeLoad();
+            //Profiler.Profiler.EmitFrameMarkEnd("Load");
         }
 
         public void Create(TabPage containerTabPage)

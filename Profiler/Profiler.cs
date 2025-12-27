@@ -1,9 +1,8 @@
-
 using System.Runtime.CompilerServices;
 using bottlenoselabs.C2CS.Runtime;
 using static Tracy.PInvoke;
 
-namespace GUI.Profiler;
+namespace VRF.Profiler;
 
 public static class Profiler
 {
@@ -35,13 +34,13 @@ public static class Profiler
     /// </param>
     /// <returns></returns>
     public static ProfilerZone BeginZone(
-        string zoneName = null,
+        string? zoneName = null,
         bool active = true,
         uint color = 0,
-        string text = null,
+        string? text = null,
         [CallerLineNumber] uint lineNumber = 0,
-        [CallerFilePath] string filePath = null,
-        [CallerMemberName] string memberName = null)
+        [CallerFilePath] string? filePath = null,
+        [CallerMemberName] string? memberName = null)
     {
         using var filestr = GetCString(filePath, out var fileln);
         using var memberstr = GetCString(memberName, out var memberln);
@@ -141,6 +140,18 @@ public static class Profiler
     public static void EmitFrameMark()
     {
         TracyEmitFrameMark(null);
+    }
+
+    public static void EmitFrameMarkBegin(string? name = null)
+    {
+        using var infostr = GetCString(name, out var infoln);
+        TracyEmitFrameMarkStart(infostr);
+    }
+
+    public static void EmitFrameMarkEnd(string? name = null)
+    {
+        using var infostr = GetCString(name, out var infoln);
+        TracyEmitFrameMarkEnd(infostr);
     }
 
     /// <summary>

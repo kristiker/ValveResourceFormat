@@ -206,6 +206,7 @@ namespace ValveResourceFormat.ResourceTypes
                 return cachedEmbeddedMeshes;
             }
 
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Get Embedded Meshes");
             var ctrl = Resource.GetBlockByType(BlockType.CTRL) as BinaryKV3;
             var embeddedMeshes = ctrl?.Data.GetArray("embedded_meshes");
 

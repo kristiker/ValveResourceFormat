@@ -30,7 +30,6 @@
     <PackageReference Include="NLayer.NAudioSupport" Version="1.4.0" />
     <PackageReference Include="OpenTK" Version="4.9.4" />
     <PackageReference Include="Svg.Skia" Version="3.2.1" />
-    <PackageReference Include="Tracy-CSharp" Version="0.11.1-hotfix" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Icons\**" />
@@ -44,6 +43,7 @@
     <EmbeddedResource Include="Utils\jetbrains_mono_msdf.png" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Profiler\Profiler.csproj" />
     <ProjectReference Include="..\ValveResourceFormat\ValveResourceFormat.csproj">
       <Project>{E685E563-5F49-4D8D-8342-A7354229E54F}</Project>
       <Name>ValveResourceFormat</Name>
@@ -51,5 +51,6 @@
   </ItemGroup>
   <ItemGroup>
     <Using Include="ValveResourceFormat.Utils" />
+    <Using Include="VRF.Profiler" Alias="Profiler" />
   </ItemGroup>
 </Project>

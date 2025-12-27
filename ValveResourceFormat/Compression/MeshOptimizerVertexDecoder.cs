@@ -344,6 +344,7 @@ namespace ValveResourceFormat.Compression
         /// </summary>
         public static byte[] DecodeVertexBuffer(int vertexCount, int vertexSize, ReadOnlySpan<byte> buffer, bool useSimd = true)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"DecodeVertexBuffer {vertexSize}x{vertexCount}");
             if (vertexSize <= 0 || vertexSize > 256)
             {
                 throw new ArgumentException("Vertex size is expected to be between 1 and 256");

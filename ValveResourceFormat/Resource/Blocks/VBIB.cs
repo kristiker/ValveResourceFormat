@@ -118,6 +118,7 @@ namespace ValveResourceFormat.Blocks
         /// </summary>
         public VBIB(Resource resource, KVObject data) : this()
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"VBIB");
             Resource = resource;
 
             var vertexBuffers = data.GetArray("m_vertexBuffers");
