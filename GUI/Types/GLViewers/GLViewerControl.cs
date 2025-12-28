@@ -615,6 +615,7 @@ namespace GUI.Types.GLViewers
 
         private void OnPaint(object sender, EventArgs e)
         {
+            using var _ = Profiler.Profiler.BeginZone("Signal Paint");
             RenderLoopThread.SetCurrentGLControl(this);
         }
 
@@ -640,6 +641,7 @@ namespace GUI.Types.GLViewers
 
         public void Draw(long currentTime, bool isPaused)
         {
+            using var _ = Profiler.Profiler.BeginZone();
             using var lockedGl = glLock.EnterScope();
 
             if (!GLNativeWindow.Exists)
@@ -767,7 +769,11 @@ namespace GUI.Types.GLViewers
 
             TextRenderer.Render();
 
-            GLNativeWindow.Context.SwapBuffers();
+            using (Profiler.Profiler.BeginZone("Swap Buffers"))
+            {
+                GLNativeWindow.Context.SwapBuffers();
+            }
+
             Tracy.PInvoke.TracyEmitFrameMark(null);
             Picker?.TriggerEventIfAny();
 
