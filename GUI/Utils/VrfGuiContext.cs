@@ -122,6 +122,11 @@ namespace GUI.Utils
         {
             foreach (var resource in CachedResources.Values)
             {
+                if (resource is { ResourceType: ResourceType.Texture })
+                {
+                    continue;
+                }
+
                 resource.Dispose();
             }
 

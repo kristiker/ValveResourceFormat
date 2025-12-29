@@ -331,6 +331,7 @@ namespace GUI.Types.GLViewers
 
                 Scene.SetupSceneShadows(Camera, ShadowDepthBuffer.Width);
                 Scene.GetOcclusionTestResults();
+                Scene.GuiContext.MaterialLoader.UploadPendingTextures();
 
                 Scene.CollectSceneDrawCalls(Camera, lockedCullFrustum);
                 SkyboxScene?.CollectSceneDrawCalls(Camera, lockedCullFrustum);

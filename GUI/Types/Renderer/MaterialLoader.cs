@@ -1,8 +1,10 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO.Hashing;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 using SkiaSharp;
@@ -12,6 +14,81 @@ using VrfMaterial = ValveResourceFormat.ResourceTypes.Material;
 
 namespace GUI.Types.Renderer
 {
+    record struct MipUploadData(
+        int TextureHandle,
+        int Level,
+        int Width,
+        int Height,
+        int Depth,
+        int BufferSize,
+        byte[] Buffer,
+        bool Is3D,
+        bool IsCompressed,
+        PixelFormat PixelFormat,
+        PixelType PixelType,
+        SizedInternalFormat SizedInternalFormat
+    )
+    {
+        public static MipUploadData Create(
+            (uint Level, int Width, int Height, int Depth, int BufferSize) mipData,
+            int textureHandle,
+            int minMipLevelAllowed,
+            byte[] buffer,
+            bool is3D,
+            TextureFormatMapping format,
+            SizedInternalFormat sizedInternalFormat)
+        {
+            var realLevel = (int)mipData.Level - minMipLevelAllowed;
+
+            return new MipUploadData(
+                TextureHandle: textureHandle,
+                Level: realLevel,
+                Width: mipData.Width,
+                Height: mipData.Height,
+                Depth: mipData.Depth,
+                BufferSize: mipData.BufferSize,
+                Buffer: buffer,
+                Is3D: is3D,
+                IsCompressed: format.PixelType is null,
+                PixelFormat: format.PixelFormat ?? default,
+                PixelType: format.PixelType ?? default,
+                SizedInternalFormat: sizedInternalFormat
+            );
+        }
+
+        public readonly void Upload()
+        {
+            Log.Debug(nameof(MaterialLoader), $"Uploading {Width}x{Height} texture {TextureHandle}  mip:{Level}");
+
+            if (IsCompressed)
+            {
+                if (Is3D)
+                {
+                    GL.CompressedTextureSubImage3D(TextureHandle, Level, 0, 0, 0, Width, Height, Depth, (PixelFormat)SizedInternalFormat, BufferSize, Buffer);
+                }
+                else
+                {
+                    GL.CompressedTextureSubImage2D(TextureHandle, Level, 0, 0, Width, Height, (PixelFormat)SizedInternalFormat, BufferSize, Buffer);
+                }
+            }
+            else
+            {
+                if (Is3D)
+                {
+                    GL.TextureSubImage3D(TextureHandle, Level, 0, 0, 0, Width, Height, Depth, PixelFormat, PixelType, Buffer);
+                }
+                else
+                {
+                    GL.TextureSubImage2D(TextureHandle, Level, 0, 0, Width, Height, PixelFormat, PixelType, Buffer);
+                }
+            }
+
+            //GL.TextureParameter(TextureHandle, TextureParameterName.TextureMaxLevel, Level);
+        }
+    };
+
+    record struct TextureFormatMapping(SizedInternalFormat InternalFormat, PixelFormat? PixelFormat = null, PixelType? PixelType = null, SizedInternalFormat? InternalSrgbFormat = null);
+
     class MaterialLoader
     {
         private readonly Dictionary<ulong, RenderMaterial> Materials = [];
@@ -23,6 +100,9 @@ namespace GUI.Types.Renderer
         private RenderTexture? DefaultMask;
         public static float MaxTextureMaxAnisotropy { get; set; }
         public int MaterialCount => Materials.Count;
+
+        private readonly Dictionary<int, ConcurrentQueue<Task>> PendingMipReadsByPriority = [];
+        private readonly ConcurrentQueue<MipUploadData> PendingMipUploads = new();
 
         private readonly Dictionary<string, string[]> TextureAliases = new()
         {
@@ -145,7 +225,7 @@ namespace GUI.Types.Renderer
                 return tex;
             }
 
-            tex = LoadTexture(name, srgbRead);
+            tex = LoadTexture(name, srgbRead, async: true);
             cache.Add(name, tex);
 
             if (anisotropicFiltering && MaxTextureMaxAnisotropy >= 4)
@@ -156,7 +236,7 @@ namespace GUI.Types.Renderer
             return tex;
         }
 
-        private RenderTexture LoadTexture(string name, bool srgbRead = false)
+        private RenderTexture LoadTexture(string name, bool srgbRead = false, bool async = false)
         {
             var textureResource = VrfGuiContext.LoadFileCompiled(name);
 
@@ -165,14 +245,55 @@ namespace GUI.Types.Renderer
                 return GetErrorTexture();
             }
 
-            return LoadTexture(textureResource, srgbRead);
+            return LoadTexture(textureResource, srgbRead, isViewerRequest: false, async);
+        }
+
+        public void UploadPendingTextures()
+        {
+            // Only queue tasks from the first non empty queue
+            foreach (var (level, queue) in PendingMipReadsByPriority)
+            {
+                if (queue.IsEmpty)
+                {
+                    continue;
+                }
+
+                using var __ = Profiler.Profiler.BeginZone(zoneName: $"Upload Pending Textures - Level {level}");
+                while (queue.TryDequeue(out var task))
+                {
+                    if (task.Status <= TaskStatus.WaitingForActivation)
+                    {
+                        task.Start();
+                    }
+                }
+
+                break;
+            }
+
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Pending Textures");
+
+            var i = 0;
+            var time = Stopwatch.StartNew();
+            while (PendingMipUploads.TryDequeue(out var upload))
+            {
+                upload.Upload();
+                //ArrayPool<byte>.Shared.Return(upload.Buffer);
+                i++;
+
+                if (time.ElapsedMilliseconds > 10)
+                {
+                    break;
+                }
+            }
+
+            _.EmitText($"Uploaded {i} textures!");
         }
 
 #pragma warning disable CA1822 // Mark members as static
-        public RenderTexture LoadTexture(Resource textureResource, bool srgbRead = false, bool isViewerRequest = false)
+        public RenderTexture LoadTexture(Resource textureResource, bool srgbRead = false, bool isViewerRequest = false, bool async = false)
 #pragma warning restore CA1822 // Mark members as static
         {
-            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Texture: {textureResource.FileName} srgb: {srgbRead}");
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Load Texture: {textureResource.FileName} srgb: {srgbRead} async: {async}");
             var data = (Texture?)textureResource.DataBlock;
             Debug.Assert(data != null);
 
@@ -239,6 +360,9 @@ namespace GUI.Types.Renderer
                 }
             }
 
+            tex.SetFiltering(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear);
+            tex.SetWrapMode(TextureWrapMode.Repeat);
+
             if (is3d && target != TextureTarget.TextureCubeMap)
             {
                 GL.TextureStorage3D(tex.Handle, data.NumMipLevels - minMipLevelAllowed, sizedInternalFormat, texWidth, texHeight, texDepth);
@@ -248,38 +372,96 @@ namespace GUI.Types.Renderer
                 GL.TextureStorage2D(tex.Handle, data.NumMipLevels - minMipLevelAllowed, sizedInternalFormat, texWidth, texHeight);
             }
 
+            if (async)
+            {
+                var i = 0;
+                foreach (var mipData in data.GetEveryMipLevelMetrics())
+                {
+                    if (mipData.Level < minMipLevelAllowed)
+                    {
+                        continue;
+                    }
+
+                    var capturedMipData = mipData;
+                    var task = new Task(() =>
+                    {
+                        using var __ = Profiler.Profiler.BeginZone(zoneName: $"Read {capturedMipData.Width}x{capturedMipData.Height} {capturedMipData.Level}");
+
+                        var mipBuffer = new byte[capturedMipData.BufferSize]; // ArrayPool<byte>.Shared.Rent(capturedMipData.BufferSize);
+
+                        try
+                        {
+                            data.ReadTextureMipLevel(mipBuffer.AsSpan(0, capturedMipData.BufferSize), capturedMipData.Level);
+
+                            // Queue for upload on render thread
+                            var uploadData = MipUploadData.Create(
+                                capturedMipData,
+                                tex.Handle,
+                                minMipLevelAllowed,
+                                mipBuffer,
+                                is3d,
+                                format,
+                                sizedInternalFormat
+                            );
+
+                            PendingMipUploads.Enqueue(uploadData);
+                        }
+                        catch (Exception e)
+                        {
+                            Log.Error(nameof(MaterialLoader), $"Error reading mip level {capturedMipData.Level} for texture {tex.Handle}: {e}");
+                            ArrayPool<byte>.Shared.Return(mipBuffer);
+                            throw;
+                        }
+                    });
+
+                    // Start the smallest mip immediately, schedule others for later
+                    /*
+                    if (isFirstMip)
+                    {
+                        task.RunSynchronously(TaskScheduler.Default);
+                        isFirstMip = false;
+                    }
+                    else
+                    {
+                        task.Start(TaskScheduler.Default);
+                    }
+                    */
+
+                    if (!PendingMipReadsByPriority.TryGetValue(i, out var queue))
+                    {
+                        PendingMipReadsByPriority[i] = new ConcurrentQueue<Task>();
+                    }
+
+                    PendingMipReadsByPriority[i].Enqueue(task);
+
+                    if (i == 0)
+                    {
+                        task.Start();
+                    }
+
+                    i++;
+                }
+
+                return tex;
+            }
+
             var buffer = ArrayPool<byte>.Shared.Rent(data.GetBiggestBufferSize());
 
             try
             {
                 foreach (var (level, width, height, depth, bufferSize) in data.GetEveryMipLevelTexture(buffer, minMipLevelAllowed))
                 {
-                    var realLevel = (int)level - minMipLevelAllowed;
+                    var upload = MipUploadData.Create(
+                        mipData: (level, width, height, depth, bufferSize),
+                        textureHandle: tex.Handle,
+                        minMipLevelAllowed: minMipLevelAllowed,
+                        buffer: buffer,
+                        is3D: is3d,
+                        format: format,
+                        sizedInternalFormat: sizedInternalFormat
+                    );
 
-                    if (format.PixelType is not null)
-                    {
-                        Debug.Assert(format.PixelFormat is not null);
-
-                        if (is3d)
-                        {
-                            GL.TextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, format.PixelFormat.Value, format.PixelType.Value, buffer);
-                        }
-                        else
-                        {
-                            GL.TextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, format.PixelFormat.Value, format.PixelType.Value, buffer);
-                        }
-                    }
-                    else
-                    {
-                        if (is3d)
-                        {
-                            GL.CompressedTextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, (PixelFormat)sizedInternalFormat, bufferSize, buffer);
-                        }
-                        else
-                        {
-                            GL.CompressedTextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, (PixelFormat)sizedInternalFormat, bufferSize, buffer);
-                        }
-                    }
+                    upload.Upload();
                 }
             }
             finally
@@ -287,29 +469,8 @@ namespace GUI.Types.Renderer
                 ArrayPool<byte>.Shared.Return(buffer);
             }
 
-            if (!isViewerRequest)
-            {
-                // Dispose texture otherwise we run out of memory
-                // TODO: This might conflict when opening multiple files due to shit caching
-                textureResource.Dispose();
-            }
-
-            tex.SetFiltering(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear);
-
-            GL.TextureParameter(tex.Handle, TextureParameterName.TextureWrapS, (int)clampModeS);
-            GL.TextureParameter(tex.Handle, TextureParameterName.TextureWrapT, (int)clampModeT);
-            GL.TextureParameter(tex.Handle, TextureParameterName.TextureWrapR, (int)clampModeU);
-
             return tex;
         }
-
-        /// <param name="InternalFormat">Specifies the sized internal format to be used to store texture image data.</param>
-        /// <param name="InternalSrgbFormat">Same as <see cref="InternalFormat"/>, but for sRGB textures. Null if no sRGB format.</param>
-        /// <param name="PixelFormat">Specifies the format of the pixel data. Must be null if the format is compressed.</param>
-        /// <param name="PixelType">Specifies the data type of the pixel data. Must be null if the format is compressed.</param>
-        /// <see href="https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexStorage2D.xhtml"/>
-        /// <see href="https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexSubImage2D.xhtml"/>
-        record struct TextureFormatMapping(SizedInternalFormat InternalFormat, PixelFormat? PixelFormat = null, PixelType? PixelType = null, SizedInternalFormat? InternalSrgbFormat = null);
 
         private static TextureFormatMapping GetTextureFormat(VTexFormat vformat) => vformat switch
         {
