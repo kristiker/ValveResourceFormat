@@ -5,6 +5,7 @@ using System.IO.Hashing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using ExCSS;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 using SkiaSharp;
@@ -106,6 +107,7 @@ namespace GUI.Types.Renderer
         public int MaterialCount => Materials.Count;
 
         private readonly Dictionary<int, ConcurrentQueue<Task>> PendingMipReadsByPriority = [];
+        private readonly ConcurrentQueue<MipUploadData> PendingMip0Uploads = new();
         private readonly ConcurrentQueue<MipUploadData> PendingMipUploads = new();
 
         private readonly Dictionary<string, string[]> TextureAliases = new()
@@ -252,6 +254,20 @@ namespace GUI.Types.Renderer
             return LoadTexture(textureResource, srgbRead, isViewerRequest: false, async);
         }
 
+        public void UploadMip0Textures()
+        {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Base Mip Levels");
+
+            var i = 0;
+            while (PendingMip0Uploads.TryDequeue(out var upload))
+            {
+                upload.Upload();
+                i++;
+            }
+
+            _.EmitText($"Uploaded {i} textures!");
+        }
+
         public void UploadPendingTextures(int maxWait = 10)
         {
             // Only queue tasks from the first non empty queue
@@ -387,9 +403,10 @@ namespace GUI.Types.Renderer
                     }
 
                     var capturedMipData = mipData;
+                    var capturedPriority = i;
                     var task = new Task(() =>
                     {
-                        using var __ = Profiler.Profiler.BeginZone(zoneName: $"Read {capturedMipData.Width}x{capturedMipData.Height} {capturedMipData.Level}");
+                        using var __ = Profiler.Profiler.BeginZone(zoneName: $"Read {capturedMipData.Width}x{capturedMipData.Height} {capturedMipData.Level} for {tex.Handle}");
 
                         var mipBuffer = new byte[capturedMipData.BufferSize]; // ArrayPool<byte>.Shared.Rent(capturedMipData.BufferSize);
 
@@ -409,7 +426,27 @@ namespace GUI.Types.Renderer
                                 data.NumMipLevels - minMipLevelAllowed
                             );
 
-                            PendingMipUploads.Enqueue(uploadData);
+                            var collection = capturedPriority == 0
+                                ? PendingMip0Uploads
+                                : PendingMipUploads;
+
+                            collection.Enqueue(uploadData);
+
+                            var nextPriority = PendingMipReadsByPriority[capturedPriority].IsEmpty
+                                ? capturedPriority + 1
+                                : capturedPriority;
+
+                            if (PendingMipReadsByPriority.TryGetValue(nextPriority, out var nextQueue))
+                            {
+                                if (nextQueue.TryDequeue(out var nextTask))
+                                {
+                                    if (nextTask.Status == TaskStatus.Created)
+                                    {
+                                        nextTask.Start();
+                                        return;
+                                    }
+                                }
+                            }
                         }
                         catch (Exception e)
                         {
@@ -424,12 +461,15 @@ namespace GUI.Types.Renderer
                         PendingMipReadsByPriority[i] = new ConcurrentQueue<Task>();
                     }
 
-                    PendingMipReadsByPriority[i].Enqueue(task);
 
                     if (i == 0)
                     {
-                        //task.RunSynchronously(TaskScheduler.Default);
+                        // Start the first (highest priority) task immediately
                         task.Start();
+                    }
+                    else
+                    {
+                        PendingMipReadsByPriority[i].Enqueue(task);
                     }
 
                     i++;
