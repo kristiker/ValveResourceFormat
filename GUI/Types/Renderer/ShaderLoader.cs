@@ -78,6 +78,14 @@ namespace GUI.Types.Renderer
         public ShaderLoader(VrfGuiContext guiContext)
         {
             VrfGuiContext = guiContext;
+
+            Task.Run(() =>
+            {
+                foreach (var shader in ShaderParser.GetAvailableShaderNames())
+                {
+                    GetOrParseShader(shader);
+                }
+            });
         }
 
 #if DEBUG
@@ -111,6 +119,7 @@ namespace GUI.Types.Renderer
 
         private static ParsedShaderData GetOrParseShader(string shaderFileName)
         {
+            using var __ = Profiler.Profiler.BeginZone(zoneName: nameof(GetOrParseShader));
             using var _ = ParserLock.EnterScope();
             if (ParsedCache.TryGetValue(shaderFileName, out var cached))
             {

@@ -58,6 +58,7 @@ namespace GUI.Types.Renderer
 
         public string PreprocessShader(string shaderFile, ParsedShaderData parsedData)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: nameof(PreprocessShader));
             var resolvedIncludes = new HashSet<string>(4);
 
             void AppendLineNumber(int a, int b)
