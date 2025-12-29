@@ -26,7 +26,8 @@ namespace GUI.Types.Renderer
         bool IsCompressed,
         PixelFormat PixelFormat,
         PixelType PixelType,
-        SizedInternalFormat SizedInternalFormat
+        SizedInternalFormat SizedInternalFormat,
+        int TotalMipLevels
     )
     {
         public static MipUploadData Create(
@@ -36,7 +37,8 @@ namespace GUI.Types.Renderer
             byte[] buffer,
             bool is3D,
             TextureFormatMapping format,
-            SizedInternalFormat sizedInternalFormat)
+            SizedInternalFormat sizedInternalFormat,
+            int totalMipLevels)
         {
             var realLevel = (int)mipData.Level - minMipLevelAllowed;
 
@@ -52,7 +54,8 @@ namespace GUI.Types.Renderer
                 IsCompressed: format.PixelType is null,
                 PixelFormat: format.PixelFormat ?? default,
                 PixelType: format.PixelType ?? default,
-                SizedInternalFormat: sizedInternalFormat
+                SizedInternalFormat: sizedInternalFormat,
+                TotalMipLevels: totalMipLevels
             );
         }
 
@@ -83,6 +86,7 @@ namespace GUI.Types.Renderer
                 }
             }
 
+            GL.TextureParameter(TextureHandle, TextureParameterName.TextureBaseLevel, Level);
             //GL.TextureParameter(TextureHandle, TextureParameterName.TextureMaxLevel, Level);
         }
     };
@@ -248,7 +252,7 @@ namespace GUI.Types.Renderer
             return LoadTexture(textureResource, srgbRead, isViewerRequest: false, async);
         }
 
-        public void UploadPendingTextures()
+        public void UploadPendingTextures(int maxWait = 10)
         {
             // Only queue tasks from the first non empty queue
             foreach (var (level, queue) in PendingMipReadsByPriority)
@@ -258,7 +262,7 @@ namespace GUI.Types.Renderer
                     continue;
                 }
 
-                using var __ = Profiler.Profiler.BeginZone(zoneName: $"Upload Pending Textures - Level {level}");
+                using var __ = Profiler.Profiler.BeginZone(zoneName: $"Signal Pending Texture Tasks - Level {level}");
                 while (queue.TryDequeue(out var task))
                 {
                     if (task.Status <= TaskStatus.WaitingForActivation)
@@ -270,7 +274,7 @@ namespace GUI.Types.Renderer
                 break;
             }
 
-            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Pending Textures");
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Pending Mip Levels");
 
             var i = 0;
             var time = Stopwatch.StartNew();
@@ -280,7 +284,7 @@ namespace GUI.Types.Renderer
                 //ArrayPool<byte>.Shared.Return(upload.Buffer);
                 i++;
 
-                if (time.ElapsedMilliseconds > 10)
+                if (maxWait > 0 && time.ElapsedMilliseconds > maxWait)
                 {
                     break;
                 }
@@ -401,7 +405,8 @@ namespace GUI.Types.Renderer
                                 mipBuffer,
                                 is3d,
                                 format,
-                                sizedInternalFormat
+                                sizedInternalFormat,
+                                data.NumMipLevels - minMipLevelAllowed
                             );
 
                             PendingMipUploads.Enqueue(uploadData);
@@ -414,19 +419,6 @@ namespace GUI.Types.Renderer
                         }
                     });
 
-                    // Start the smallest mip immediately, schedule others for later
-                    /*
-                    if (isFirstMip)
-                    {
-                        task.RunSynchronously(TaskScheduler.Default);
-                        isFirstMip = false;
-                    }
-                    else
-                    {
-                        task.Start(TaskScheduler.Default);
-                    }
-                    */
-
                     if (!PendingMipReadsByPriority.TryGetValue(i, out var queue))
                     {
                         PendingMipReadsByPriority[i] = new ConcurrentQueue<Task>();
@@ -436,6 +428,7 @@ namespace GUI.Types.Renderer
 
                     if (i == 0)
                     {
+                        //task.RunSynchronously(TaskScheduler.Default);
                         task.Start();
                     }
 
@@ -458,7 +451,8 @@ namespace GUI.Types.Renderer
                         buffer: buffer,
                         is3D: is3d,
                         format: format,
-                        sizedInternalFormat: sizedInternalFormat
+                        sizedInternalFormat: sizedInternalFormat,
+                        totalMipLevels: data.NumMipLevels - minMipLevelAllowed
                     );
 
                     upload.Upload();

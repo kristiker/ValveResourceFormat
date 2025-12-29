@@ -237,6 +237,8 @@ namespace GUI.Types.GLViewers
 
             staticOctreeRenderer = new OctreeDebugRenderer(Scene.StaticOctree, Scene.GuiContext, false);
             dynamicOctreeRenderer = new OctreeDebugRenderer(Scene.DynamicOctree, Scene.GuiContext, true);
+
+            Scene.GuiContext.MaterialLoader.UploadPendingTextures(-1);
         }
 
         protected abstract void LoadScene();
