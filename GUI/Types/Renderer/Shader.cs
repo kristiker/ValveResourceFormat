@@ -207,6 +207,7 @@ namespace GUI.Types.Renderer
                 return locationType.Location;
             }
 
+            using var _ = Profiler.Profiler.BeginZone(nameof(GetUniformLocation));
             var location = GL.GetUniformLocation(Program, name);
 
             Uniforms[name] = (0, location, SrgbUniforms.Contains(name));

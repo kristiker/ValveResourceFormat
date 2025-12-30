@@ -464,8 +464,14 @@ namespace GUI.Types.Renderer
 
                     if (i == 0)
                     {
-                        // Start the first (highest priority) task immediately
-                        task.Start();
+                        if (mipData.Width <= 16 && mipData.Height <= 16)
+                        {
+                            task.RunSynchronously();
+                        }
+                        else
+                        {
+                            task.Start();
+                        }
                     }
                     else
                     {

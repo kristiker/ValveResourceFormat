@@ -81,6 +81,7 @@ namespace GUI.Types.Renderer
 
             Task.Run(() =>
             {
+                using var _ = Profiler.Profiler.BeginZone("Preload Shaders");
                 foreach (var shader in ShaderParser.GetAvailableShaderNames())
                 {
                     GetOrParseShader(shader);
@@ -156,6 +157,8 @@ namespace GUI.Types.Renderer
                 var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
                 CompileShaderObjects(vertexShader, fragmentShader, shaderFileName, shaderName, arguments, parsedData);
 
+                using var __ = Profiler.Profiler.BeginZone("Create Program");
+
                 shaderProgram = GL.CreateProgram();
 
 #if DEBUG
@@ -180,6 +183,8 @@ namespace GUI.Types.Renderer
 
                 GL.AttachShader(shader.Program, vertexShader);
                 GL.AttachShader(shader.Program, fragmentShader);
+
+                using var __2 = Profiler.Profiler.BeginZone("Link Program");
 
                 GL.LinkProgram(shader.Program);
 
@@ -251,6 +256,7 @@ namespace GUI.Types.Renderer
 
         private static void CompileShaderObject(int shader, string shaderFile, ReadOnlySpan<char> originalShaderName, IReadOnlyDictionary<string, byte> arguments, string headerText, string shaderText)
         {
+            using var _ = Profiler.Profiler.BeginZone(zoneName: nameof(CompileShaderObject));
             string[] sources = [headerText, shaderText];
             int[] lengths = [sources[0].Length, sources[1].Length];
 
