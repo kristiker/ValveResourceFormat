@@ -864,6 +864,7 @@ namespace ValveResourceFormat.ResourceTypes
 
         private void ReadTexture(uint mipLevel, Span<byte> output)
         {
+            using var _3 = Profiler.Profiler.BeginZone(nameof(ReadTexture));
             if (!IsActuallyCompressedMips)
             {
                 Reader.Read(output);

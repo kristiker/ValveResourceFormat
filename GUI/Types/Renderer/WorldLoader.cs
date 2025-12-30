@@ -52,6 +52,7 @@ namespace GUI.Types.Renderer
                 using var _ = Profiler.Profiler.BeginZone(zoneName: $"Preload Map Resources");
                 Resource? PreloadResource(string resourceName)
                 {
+                    using var _ = Profiler.Profiler.BeginZone(nameof(PreloadResource));
                     var resource = guiContext.LoadFileCompiled(resourceName);
                     if (resource is { DataBlock: Model model })
                     {
@@ -61,6 +62,16 @@ namespace GUI.Types.Renderer
                             {
                                 var __ = mesh.Mesh.VBIB;
                             }
+                        }
+
+                        model.GetEmbeddedPhys();
+                    }
+
+                    if (resource is { ExternalReferences.ResourceRefInfoList: var refs })
+                    {
+                        foreach (var externalRef in refs)
+                        {
+                            PreloadResource(externalRef.Name);
                         }
                     }
 

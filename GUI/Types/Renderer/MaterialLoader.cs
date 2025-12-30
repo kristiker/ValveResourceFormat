@@ -311,6 +311,7 @@ namespace GUI.Types.Renderer
 
             if (data.IsRawAnyImage)
             {
+                using var _2 = Profiler.Profiler.BeginZone("LoadBitmapTexture");
                 using var bitmap = data.GenerateBitmap();
                 return LoadBitmapTexture(bitmap);
             }
@@ -463,15 +464,18 @@ namespace GUI.Types.Renderer
                     {
                         if (mipData.Width <= 16 && mipData.Height <= 16)
                         {
+                            using var _3 = Profiler.Profiler.BeginZone("RunSynchronously");
                             task.RunSynchronously();
                         }
                         else
                         {
+                            using var _3 = Profiler.Profiler.BeginZone("Start");
                             task.Start();
                         }
                     }
                     else
                     {
+                        using var _3 = Profiler.Profiler.BeginZone("Enqueue");
                         PendingMipReadsByPriority[i].Enqueue(task);
                     }
 
