@@ -883,7 +883,7 @@ namespace ValveResourceFormat.ResourceTypes
             try
             {
                 var span = buf.AsSpan(0, compressedSize);
-                Reader.Read(span);
+                Reader.ReadExactly(span);
                 var written = LZ4Codec.Decode(span, output);
 
                 if (written != output.Length)

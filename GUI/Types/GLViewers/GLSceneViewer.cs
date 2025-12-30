@@ -238,7 +238,7 @@ namespace GUI.Types.GLViewers
             staticOctreeRenderer = new OctreeDebugRenderer(Scene.StaticOctree, Scene.GuiContext, false);
             dynamicOctreeRenderer = new OctreeDebugRenderer(Scene.DynamicOctree, Scene.GuiContext, true);
 
-            Scene.GuiContext.MaterialLoader.UploadMip0Textures();
+            Scene.GuiContext.MaterialLoader.UploadPendingMipLevelTextures(level: 0);
         }
 
         protected abstract void LoadScene();

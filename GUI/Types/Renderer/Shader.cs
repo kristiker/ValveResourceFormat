@@ -64,6 +64,14 @@ namespace GUI.Types.Renderer
             return IsValid;
         }
 
+        public void InitializeUniformsFromParser()
+        {
+            foreach (var uniformName in UniformNames)
+            {
+                Uniforms[uniformName] = (ActiveUniformType.FloatVec4, -1, false);
+            }
+        }
+
         private void StoreUniformLocations()
         {
             var vec4Val = new float[4];

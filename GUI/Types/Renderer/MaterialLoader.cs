@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO.Hashing;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using ExCSS;
 using GUI.Utils;
@@ -62,8 +63,6 @@ namespace GUI.Types.Renderer
 
         public readonly void Upload()
         {
-            Log.Debug(nameof(MaterialLoader), $"Uploading {Width}x{Height} texture {TextureHandle}  mip:{Level}");
-
             if (IsCompressed)
             {
                 if (Is3D)
@@ -107,8 +106,7 @@ namespace GUI.Types.Renderer
         public int MaterialCount => Materials.Count;
 
         private readonly Dictionary<int, ConcurrentQueue<Task>> PendingMipReadsByPriority = [];
-        private readonly ConcurrentQueue<MipUploadData> PendingMip0Uploads = new();
-        private readonly ConcurrentQueue<MipUploadData> PendingMipUploads = new();
+        private readonly Dictionary<int, ConcurrentQueue<MipUploadData>> PendingMipUploads = [];
 
         private readonly Dictionary<string, string[]> TextureAliases = new()
         {
@@ -254,15 +252,20 @@ namespace GUI.Types.Renderer
             return LoadTexture(textureResource, srgbRead, isViewerRequest: false, async);
         }
 
-        public void UploadMip0Textures()
+        public void UploadPendingMipLevelTextures(int level = 0, CancellationToken cancellationToken = default)
         {
-            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Base Mip Levels");
+            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Mip{level} Textures");
 
             var i = 0;
-            while (PendingMip0Uploads.TryDequeue(out var upload))
+            while (PendingMipUploads[level].TryDequeue(out var upload))
             {
                 upload.Upload();
                 i++;
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
 
             _.EmitText($"Uploaded {i} textures!");
@@ -290,23 +293,12 @@ namespace GUI.Types.Renderer
                 break;
             }
 
-            using var _ = Profiler.Profiler.BeginZone(zoneName: $"Upload Pending Mip Levels");
+            using var cts = new CancellationTokenSource(maxWait);
 
-            var i = 0;
-            var time = Stopwatch.StartNew();
-            while (PendingMipUploads.TryDequeue(out var upload))
+            foreach (var (level, _) in PendingMipUploads)
             {
-                upload.Upload();
-                //ArrayPool<byte>.Shared.Return(upload.Buffer);
-                i++;
-
-                if (maxWait > 0 && time.ElapsedMilliseconds > maxWait)
-                {
-                    break;
-                }
+                UploadPendingMipLevelTextures(level, cts.Token);
             }
-
-            _.EmitText($"Uploaded {i} textures!");
         }
 
 #pragma warning disable CA1822 // Mark members as static
@@ -412,7 +404,10 @@ namespace GUI.Types.Renderer
 
                         try
                         {
-                            data.ReadTextureMipLevel(mipBuffer.AsSpan(0, capturedMipData.BufferSize), capturedMipData.Level);
+                            lock (data)
+                            {
+                                data.ReadTextureMipLevel(mipBuffer.AsSpan(0, capturedMipData.BufferSize), capturedMipData.Level);
+                            }
 
                             // Queue for upload on render thread
                             var uploadData = MipUploadData.Create(
@@ -426,9 +421,11 @@ namespace GUI.Types.Renderer
                                 data.NumMipLevels - minMipLevelAllowed
                             );
 
-                            var collection = capturedPriority == 0
-                                ? PendingMip0Uploads
-                                : PendingMipUploads;
+                            if (!PendingMipUploads.TryGetValue(capturedPriority, out var collection))
+                            {
+                                collection = new ConcurrentQueue<MipUploadData>();
+                                PendingMipUploads[capturedPriority] = collection;
+                            }
 
                             collection.Enqueue(uploadData);
 

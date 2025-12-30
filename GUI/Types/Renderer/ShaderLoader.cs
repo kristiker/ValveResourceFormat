@@ -181,6 +181,8 @@ namespace GUI.Types.Renderer
                     SrgbUniforms = parsedData.SrgbUniforms
                 };
 
+                shader.InitializeUniformsFromParser();
+
                 GL.AttachShader(shader.Program, vertexShader);
                 GL.AttachShader(shader.Program, fragmentShader);
 
