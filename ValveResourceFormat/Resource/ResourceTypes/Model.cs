@@ -331,6 +331,7 @@ namespace ValveResourceFormat.ResourceTypes
         /// <returns>Enumerable of animations.</returns>
         public IEnumerable<Animation> GetReferencedAnimations(IFileLoader fileLoader)
         {
+            using var _ = Profiler.Profiler.BeginZone(nameof(GetReferencedAnimations));
             var refAnimModels = Data.GetArray<string>("m_refAnimIncludeModels");
             if (refAnimModels == null || refAnimModels.Length == 0)
             {

@@ -281,6 +281,7 @@ namespace GUI.Types.Renderer
 
         private void LoadAnimations(Model model, bool embededAnimationsOnly)
         {
+            using var _ = Profiler.Profiler.BeginZone(nameof(LoadAnimations));
             animations.AddRange(embededAnimationsOnly
                 ? model.GetEmbeddedAnimations()
                 : model.GetAllAnimations(Scene.GuiContext)
