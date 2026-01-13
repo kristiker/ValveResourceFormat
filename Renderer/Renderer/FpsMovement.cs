@@ -41,7 +41,7 @@ public class FpsMovement
     private const float StopSpeedValue = 80f;             // sv_stopspeed
     private const float AccelerateValue = 5.5f;           // sv_accelerate
     private const float AirAccelerateValue = 12f;         // sv_airaccelerate
-    private const float MaxSpeedValue = 320f;             // sv_maxspeed
+    private const float MaxSpeedValue = 250f;             // sv_maxspeed
     private const float JumpImpulseValue = 301.993377f;   // sv_jump_impulse = sqrt(2*800*57)
     private const float MaxVelocityValue = 3500f;         // sv_maxvelocity
 
@@ -67,6 +67,9 @@ public class FpsMovement
     private bool WasDuckingLastFrame;
     private Rubikon? Physics;
     private bool IsInitialized;
+
+    // Horizontal speed in units/second (for HUD display)
+    public float HorizontalSpeed => new Vector3(Velocity.X, Velocity.Y, 0).Length();
 
     // Surface properties (simplified - always 1.0 for now)
     private const float SurfaceFriction = 1.0f;
@@ -417,14 +420,56 @@ public class FpsMovement
             {
                 result.Distance = Math.Max(result.Distance + SurfaceEpsilon / Vector3.Dot(Vector3.Normalize(RollingDelta), result.HitNormal), 0.0f);
 
-
                 float Fraction = result.Distance / RollingDistance;
                 RollingPosition += RollingDelta * Fraction;
                 RemainingFraction -= Fraction * RemainingFraction;
 
-                RollingDelta -= result.HitNormal * Vector3.Dot(result.HitNormal, RollingDelta);
-                //RollingDelta *= RemainingFraction;
-                Velocity -= result.HitNormal * Vector3.Dot(result.HitNormal, Velocity);
+                // Clip velocity to surface normal
+                // Special handling for ramps: maintain horizontal speed
+                if (OnGround && result.HitNormal.Z > 0.7f)
+                {
+                    // This is a walkable ramp/slope
+                    // Instead of just removing the normal component, redirect velocity along the ramp
+                    // while preserving horizontal speed to prevent speed loss going up and speed gain going down
+                    var horizontalVel = new Vector3(Velocity.X, Velocity.Y, 0);
+                    var horizontalSpeed = horizontalVel.Length();
+                    
+                    if (horizontalSpeed > 0.001f)
+                    {
+                        // Project the horizontal velocity direction onto the ramp surface
+                        var horizontalDir = horizontalVel / horizontalSpeed;
+                        var projectedDir = horizontalDir - result.HitNormal * Vector3.Dot(horizontalDir, result.HitNormal);
+                        
+                        if (projectedDir.LengthSquared() > 0.001f)
+                        {
+                            projectedDir = Vector3.Normalize(projectedDir);
+                            // Set velocity along the ramp with the same horizontal speed
+                            Velocity = projectedDir * horizontalSpeed;
+                        }
+                    }
+                    
+                    // Do the same for remaining delta
+                    var horizontalDelta = new Vector3(RollingDelta.X, RollingDelta.Y, 0);
+                    var horizontalDeltaLen = horizontalDelta.Length();
+                    
+                    if (horizontalDeltaLen > 0.001f)
+                    {
+                        var horizontalDeltaDir = horizontalDelta / horizontalDeltaLen;
+                        var projectedDeltaDir = horizontalDeltaDir - result.HitNormal * Vector3.Dot(horizontalDeltaDir, result.HitNormal);
+                        
+                        if (projectedDeltaDir.LengthSquared() > 0.001f)
+                        {
+                            projectedDeltaDir = Vector3.Normalize(projectedDeltaDir);
+                            RollingDelta = projectedDeltaDir * horizontalDeltaLen;
+                        }
+                    }
+                }
+                else
+                {
+                    // Normal clipping for walls and ceilings
+                    RollingDelta -= result.HitNormal * Vector3.Dot(result.HitNormal, RollingDelta);
+                    Velocity -= result.HitNormal * Vector3.Dot(result.HitNormal, Velocity);
+                }
 
                 RollingDistance = RollingDelta.Length();
             }
