@@ -787,7 +787,6 @@ public class Rubikon
         return w0 >= -EPSILON && w1 >= -EPSILON && w2 >= -EPSILON;
     }
 
-    
     private TraceResult AABBTraceMesh1(AABBTraceContext trace, PhysicsMeshData mesh)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];

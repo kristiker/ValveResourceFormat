@@ -58,6 +58,7 @@ public class FpsMovement
 
     // Collision constants
     private const float SurfaceEpsilon = 0.03125f;        // Minimum distance from surfaces (1/32 unit) to prevent getting stuck
+    private const float StepSize = 18f;                   // Maximum height of steps/obstacles player can climb
 
     // Movement state
     public Vector3 Velocity { get; private set; }
@@ -220,9 +221,9 @@ public class FpsMovement
 
         // Check velocity for NaN/bounds
         CheckVelocity(ref position);
-        Vector3 prevPosition = position;
-        // Update position based on velocity (in Source this happens inside TryPlayerMove)
-        position = TryPlayerMove2(position, Velocity * deltaTime, isDucking);
+
+        // Update position based on velocity
+        position = TryPlayerMove(position, Velocity * deltaTime, isDucking);
 
         // Recategorize position after movement (now that position is updated)
         CategorizePosition(ref position, isDucking);
@@ -297,190 +298,164 @@ public class FpsMovement
     }
 
     /// <summary>
-    /// Perform swept AABB collision detection for player movement
-    /// Returns the final position after collision resolution
+    /// Perform swept AABB collision detection for player movement with multi-bounce sliding
     /// </summary>
     private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, bool isDucking)
     {
         if (Physics == null || delta.LengthSquared() < 1e-6f)
         {
-            // No physics or no movement - fallback to simple movement
-            var newPos = start + delta;
-            if (newPos.Z < 0)
-            {
-                newPos = new Vector3(newPos.X, newPos.Y, 0);
-            }
-            return newPos;
+            return start + delta;
         }
 
-        // Get player AABB based on ducking state
         var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
+        const int MaxBumps = 6;
 
-        var end = start + delta;
-        var result = Physics.TraceAABB(start, end, aabb);
+        // Try step climbing immediately if on ground and moving horizontally
 
-        if (!result.Hit)
+        var position = start;
+        var remainingDelta = delta;
+        var remainingDistance = delta.Length();
+        var remainingFraction = 1.0f;
+
+        for (var bump = 0; bump < MaxBumps && remainingFraction > 0; bump++)
         {
-            // No collision - move freely
-            return end;
-        }
+            var result = Physics.TraceAABB(position, position + remainingDelta, aabb);
 
-        // Collision detected - move to hit position but maintain epsilon distance from surface
-        var position = result.HitPosition + result.HitNormal * SurfaceEpsilon;
-
-        // Calculate remaining movement after initial collision
-        var remainingTime = 1.0f - result.Distance;
-        if (remainingTime > 0)
-        {
-            // Project remaining velocity onto the collision plane (slide)
-            var normal = result.HitNormal;
-            var remainingDelta = delta * remainingTime;
-
-            // Remove component of velocity along normal (don't move into surface)
-            var projection = Vector3.Dot(remainingDelta, normal);
-            if (projection < 0)
+            if (!result.Hit)
             {
-                remainingDelta -= normal * projection;
-
-                // Try to slide with remaining velocity
-                if (remainingDelta.LengthSquared() > 1e-6f)
+                return position + remainingDelta;
+            }
+            else if (OnGround && remainingFraction > 0.5f)
+            {
+                var obstacle = result.Distance < remainingDistance;
+                if (obstacle)
                 {
-                    var slideResult = Physics.TraceAABB(position, position + remainingDelta, aabb);
-                    if (!slideResult.Hit)
+                    var (newPos, stepped) = TryStepMove(position, delta, aabb);
+                    if (stepped && (newPos - position).Length() > remainingDistance)
                     {
-                        position += remainingDelta;
-                    }
-                    else
-                    {
-                        position = slideResult.HitPosition + slideResult.HitNormal * SurfaceEpsilon;
-
-                        // Update velocity - remove component along hit normal
-                        var velProjection = Vector3.Dot(Velocity, slideResult.HitNormal);
-                        if (velProjection < 0)
-                        {
-                            Velocity -= slideResult.HitNormal * velProjection;
-                        }
+                        return newPos;
                     }
                 }
             }
 
-            // Update velocity based on initial collision normal
-            var velProj = Vector3.Dot(Velocity, normal);
-            if (velProj < 0)
-            {
-                Velocity -= normal * velProj;
-            }
+            // Move to hit point with surface epsilon
+            var adjustedDistance = Math.Max(result.Distance + SurfaceEpsilon / Vector3.Dot(Vector3.Normalize(remainingDelta), result.HitNormal), 0.0f);
+            var fraction = adjustedDistance / remainingDistance;
+
+            position += remainingDelta * fraction;
+            remainingFraction -= fraction * remainingFraction;
+
+            // Clip velocity based on surface type
+            var vel = Velocity;
+            ClipVelocity(ref remainingDelta, ref vel, result.HitNormal, OnGround);
+            Velocity = vel;
+
+            remainingDistance = remainingDelta.Length();
         }
 
         return position;
     }
 
-    private Vector3 TryPlayerMove2(Vector3 start, Vector3 delta, bool isDucking)
+    /// <summary>
+    /// Attempt to step up and over an obstacle (even tiny ones)
+    /// </summary>
+    private (Vector3 StepPos, bool Stepped) TryStepMove(Vector3 start, Vector3 delta, AABB aabb)
     {
-        //H7per: should this be LengthSquared <= 1e-6f to the second power?
-        if (Physics == null)
+        // Step 1: Move up by step height
+        var stepUpEnd = start + new Vector3(0, 0, StepSize);
+        var upTrace = Physics!.TraceAABB(start, stepUpEnd, aabb);
+
+        // Use whatever height we can achieve (even if blocked)
+        var steppedUpPosition = upTrace.Hit
+            ? upTrace.HitPosition + upTrace.HitNormal * SurfaceEpsilon
+            : stepUpEnd;
+
+        // Step 2: Move forward from the stepped-up position
+        var forwardTrace = Physics.TraceAABB(steppedUpPosition, steppedUpPosition + delta, aabb);
+        var forwardPosition = forwardTrace.Hit 
+            ? forwardTrace.HitPosition + forwardTrace.HitNormal * SurfaceEpsilon 
+            : steppedUpPosition + delta;
+
+        // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
+        var downEnd = forwardPosition + new Vector3(0, 0, -(StepSize + 2.0f));
+        var downTrace = Physics.TraceAABB(forwardPosition, downEnd, aabb);
+
+        if (!downTrace.Hit)
         {
-            // No physics or no movement - fallback to simple movement
-            var newPos = start + delta;
-            if (newPos.Z < 0)
-            {
-                newPos = new Vector3(newPos.X, newPos.Y, 0);
-            }
-            return newPos;
+            return (start, false);
         }
 
-        if (delta.LengthSquared() < 1e-6f)
+        var finalPosition = downTrace.HitPosition + downTrace.HitNormal * SurfaceEpsilon;
+
+        // Validate the step
+        var stepHeight = finalPosition.Z - start.Z;
+
+        // Accept steps that are reasonable (not too high, not falling off edge)
+        if (stepHeight < -2.0f || stepHeight > StepSize)
         {
-            return start;
+            return (start, false);
         }
 
-        // Get player AABB based on ducking state
-        var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
+        // Clamp the stepped position to not exceed the intended delta distance
+        var steppedDelta = finalPosition - start;
+        var steppedDistance = steppedDelta.Length();
+        var intendedDistance = delta.Length();
 
-        int numbumps = 4;
-        int bumpcount = 0;
-
-        //this is a bit scuffed, RollingDistance should not be needed but eh
-        Vector3 RollingPosition = start;
-        Vector3 RollingDelta = delta;
-        float RollingDistance = delta.Length();
-
-        float RemainingFraction = 1.0f;
-
-        for (bumpcount = 0; bumpcount < numbumps; bumpcount++)
+        if (steppedDistance > intendedDistance)
         {
-            var result = Physics.TraceAABB(RollingPosition, RollingPosition + RollingDelta, aabb);
+            // Scale down the stepped delta to match intended distance
+            //finalPosition = start + steppedDelta * (intendedDistance / steppedDistance);
+        }
 
-            if (!result.Hit)
+        return (finalPosition, true);
+    }
+
+    /// <summary>
+    /// Clips velocity against a surface normal. Special handling for walkable slopes.
+    /// </summary>
+    private static void ClipVelocity(ref Vector3 delta, ref Vector3 velocity, Vector3 normal, bool onGround)
+    {
+        const float WalkableSlope = 0.7f; // ~45 degrees
+
+        // Special handling for walkable slopes when on ground - maintain horizontal speed
+        if (onGround && normal.Z > WalkableSlope)
+        {
+            var horizontalVel = new Vector3(velocity.X, velocity.Y, 0);
+            var horizontalSpeed = horizontalVel.Length();
+
+            if (horizontalSpeed > 0.001f)
             {
-                RollingPosition += RollingDelta;
-                return RollingPosition;
-            }
-            else
-            {
-                result.Distance = Math.Max(result.Distance + SurfaceEpsilon / Vector3.Dot(Vector3.Normalize(RollingDelta), result.HitNormal), 0.0f);
+                // Project horizontal direction onto slope while maintaining speed
+                var horizontalDir = horizontalVel / horizontalSpeed;
+                var projectedDir = horizontalDir - normal * Vector3.Dot(horizontalDir, normal);
 
-                float Fraction = result.Distance / RollingDistance;
-                RollingPosition += RollingDelta * Fraction;
-                RemainingFraction -= Fraction * RemainingFraction;
-
-                // Clip velocity to surface normal
-                // Special handling for ramps: maintain horizontal speed
-                if (OnGround && result.HitNormal.Z > 0.7f)
+                if (projectedDir.LengthSquared() > 0.001f)
                 {
-                    // This is a walkable ramp/slope
-                    // Instead of just removing the normal component, redirect velocity along the ramp
-                    // while preserving horizontal speed to prevent speed loss going up and speed gain going down
-                    var horizontalVel = new Vector3(Velocity.X, Velocity.Y, 0);
-                    var horizontalSpeed = horizontalVel.Length();
-                    
-                    if (horizontalSpeed > 0.001f)
-                    {
-                        // Project the horizontal velocity direction onto the ramp surface
-                        var horizontalDir = horizontalVel / horizontalSpeed;
-                        var projectedDir = horizontalDir - result.HitNormal * Vector3.Dot(horizontalDir, result.HitNormal);
-                        
-                        if (projectedDir.LengthSquared() > 0.001f)
-                        {
-                            projectedDir = Vector3.Normalize(projectedDir);
-                            // Set velocity along the ramp with the same horizontal speed
-                            Velocity = projectedDir * horizontalSpeed;
-                        }
-                    }
-                    
-                    // Do the same for remaining delta
-                    var horizontalDelta = new Vector3(RollingDelta.X, RollingDelta.Y, 0);
-                    var horizontalDeltaLen = horizontalDelta.Length();
-                    
-                    if (horizontalDeltaLen > 0.001f)
-                    {
-                        var horizontalDeltaDir = horizontalDelta / horizontalDeltaLen;
-                        var projectedDeltaDir = horizontalDeltaDir - result.HitNormal * Vector3.Dot(horizontalDeltaDir, result.HitNormal);
-                        
-                        if (projectedDeltaDir.LengthSquared() > 0.001f)
-                        {
-                            projectedDeltaDir = Vector3.Normalize(projectedDeltaDir);
-                            RollingDelta = projectedDeltaDir * horizontalDeltaLen;
-                        }
-                    }
+                    velocity = Vector3.Normalize(projectedDir) * horizontalSpeed;
                 }
-                else
-                {
-                    // Normal clipping for walls and ceilings
-                    RollingDelta -= result.HitNormal * Vector3.Dot(result.HitNormal, RollingDelta);
-                    Velocity -= result.HitNormal * Vector3.Dot(result.HitNormal, Velocity);
-                }
-
-                RollingDistance = RollingDelta.Length();
             }
-            if (RemainingFraction <= 0)
+
+            // Same for delta
+            var horizontalDelta = new Vector3(delta.X, delta.Y, 0);
+            var deltaLength = horizontalDelta.Length();
+
+            if (deltaLength > 0.001f)
             {
-                return RollingPosition;
+                var deltaDir = horizontalDelta / deltaLength;
+                var projectedDeltaDir = deltaDir - normal * Vector3.Dot(deltaDir, normal);
+
+                if (projectedDeltaDir.LengthSquared() > 0.001f)
+                {
+                    delta = Vector3.Normalize(projectedDeltaDir) * deltaLength;
+                }
             }
         }
-
-        return RollingPosition;
-
+        else
+        {
+            // Standard clipping for walls and ceilings
+            delta -= normal * Vector3.Dot(delta, normal);
+            velocity -= normal * Vector3.Dot(velocity, normal);
+        }
     }
 
     /// <summary>
@@ -585,210 +560,112 @@ public class FpsMovement
 
     /// <summary>
     /// Apply ground friction to slow down the player
-    /// Ported from gamemovement.cpp Friction()
     /// </summary>
     private void Friction(float deltaTime)
     {
-        // Calculate speed
         var speed = Velocity.Length();
+        if (speed < 0.1f) return;
 
-        // If too slow, return
-        if (speed < 0.1f)
+        var control = speed < StopSpeedValue ? StopSpeedValue : speed;
+        var drop = control * FrictionValue * SurfaceFriction * deltaTime;
+        var newSpeed = Math.Max(0, speed - drop);
+
+        if (newSpeed != speed)
         {
-            return;
-        }
-
-        var drop = 0f;
-
-        // Apply ground friction (only when on ground, but this is only called when on ground)
-        var friction = FrictionValue * SurfaceFriction;
-
-        // Bleed off some speed, but if we have less than the bleed
-        // threshold, bleed the threshold amount.
-        var control = (speed < StopSpeedValue) ? StopSpeedValue : speed;
-
-        // Add the amount to the drop amount.
-        drop += control * friction * deltaTime;
-
-        // scale the velocity
-        var newspeed = speed - drop;
-        if (newspeed < 0)
-        {
-            newspeed = 0;
-        }
-
-        if (newspeed != speed)
-        {
-            // Determine proportion of old speed we are using.
-            newspeed /= speed;
-            // Adjust velocity according to proportion.
-            Velocity *= newspeed;
+            Velocity *= newSpeed / speed;
         }
     }
 
     /// <summary>
     /// Accelerate in desired direction using CS:GO acceleration
-    /// Ported from cs_gamemovement.cpp Accelerate()
-    ///
-    /// SKIPPED (not relevant without weapons):
-    /// - Exponential acceleration curves (never executes since flZeroToMaxSpeedTime = 0)
-    /// - Trailing velocity tracking
     /// </summary>
     private void Accelerate(Vector3 wishdir, float wishspeed, float accel, float deltaTime, bool isDucking, bool isWalking)
     {
-        // See if we are changing direction a bit
         var currentspeed = Vector3.Dot(Velocity, wishdir);
-
-        // Reduce wishspeed by the amount of veer.
         var addspeed = wishspeed - currentspeed;
 
-        // If not going to add any speed, done.
-        if (addspeed <= 0)
-        {
-            return;
-        }
+        if (addspeed <= 0) return;
 
-        if (currentspeed < 0)
-        {
-            currentspeed = 0;
-        }
+        currentspeed = Math.Max(0, currentspeed);
 
         // CS:GO acceleration scaling
-        var flMaxSpeed = 250.0f;
-        var fAccelerationScale = MathF.Max(flMaxSpeed, wishspeed);
-        var flGoalSpeed = fAccelerationScale;
+        var accelerationScale = MathF.Max(250.0f, wishspeed);
+        var goalSpeed = accelerationScale;
 
-        // Apply duck/walk modifiers to acceleration scale and goal speed
+        // Apply duck/walk modifiers
         if (isDucking)
         {
-            fAccelerationScale *= DuckSpeedModifier;
-            flGoalSpeed *= DuckSpeedModifier;
+            accelerationScale *= DuckSpeedModifier;
+            goalSpeed *= DuckSpeedModifier;
         }
-
         if (isWalking)
         {
-            fAccelerationScale *= WalkSpeedModifier;
-            flGoalSpeed *= WalkSpeedModifier;
+            accelerationScale *= WalkSpeedModifier;
+            goalSpeed *= WalkSpeedModifier;
         }
 
-        // Walk speed gradient clamping
-        // When walking and near goal speed, gradually reduce acceleration to prevent overshooting
-        // Formula: clamp(1.0 - ((currentspeed - (goalspeed-5)) / 5.0), 0.0, 1.0)
-        // Note: Denominator simplifies to 5.0 since (goalspeed - (goalspeed - 5)) = 5
-        var flStoredAccel = accel;
-        if (isWalking && currentspeed > flGoalSpeed - 5)
+        // Walk speed gradient clamping - gradually reduce acceleration near goal speed
+        var finalAccel = accel;
+        if (isWalking && currentspeed > goalSpeed - 5)
         {
-            var numerator = MathF.Max(0.0f, currentspeed - (flGoalSpeed - 5));
-            var ratio = numerator / 5.0f;  // Simplified from flGoalSpeed - (flGoalSpeed - 5)
-            flStoredAccel *= Math.Clamp(1.0f - ratio, 0.0f, 1.0f);
+            var ratio = Math.Max(0.0f, currentspeed - (goalSpeed - 5)) / 5.0f;
+            finalAccel *= Math.Clamp(1.0f - ratio, 0.0f, 1.0f);
         }
 
-        // Simple linear acceleration
-        var accelspeed = flStoredAccel * deltaTime * fAccelerationScale * SurfaceFriction;
-
-        // Cap at addspeed
-        if (accelspeed > addspeed)
-        {
-            accelspeed = addspeed;
-        }
-
-        // Adjust velocity
+        var accelspeed = Math.Min(finalAccel * deltaTime * accelerationScale * SurfaceFriction, addspeed);
         Velocity += accelspeed * wishdir;
     }
 
     /// <summary>
     /// Ground movement with friction and acceleration
-    /// Ported from gamemovement.cpp WalkMove()
-    /// Simplified - no traces, assumes flat ground
     /// </summary>
     private void WalkMove(Vector3 wishdir, float wishspeed, float deltaTime, bool isDucking, bool isWalking)
     {
-        // Set pmove velocity (zero out Z component)
         Velocity = new Vector3(Velocity.X, Velocity.Y, 0);
-
-        // Accelerate
         Accelerate(wishdir, wishspeed, AccelerateValue, deltaTime, isDucking, isWalking);
-
         Velocity = new Vector3(Velocity.X, Velocity.Y, 0);
 
-        // Clamp to max speed to prevent going faster while turning
-        // Important: Clamp to the duck/walk-modified max speed, not base max speed
+        // Clamp to effective max speed
         var effectiveMaxSpeed = MaxSpeedValue;
-        if (isDucking)
-        {
-            effectiveMaxSpeed *= DuckSpeedModifier;
-        }
-        else if (isWalking)
-        {
-            effectiveMaxSpeed *= WalkSpeedModifier;
-        }
+        if (isDucking) effectiveMaxSpeed *= DuckSpeedModifier;
+        else if (isWalking) effectiveMaxSpeed *= WalkSpeedModifier;
 
-        // Use LengthSquared for performance (avoids sqrt)
         if (Velocity.LengthSquared() > effectiveMaxSpeed * effectiveMaxSpeed)
         {
-            var speed = Velocity.Length();
-            Velocity *= effectiveMaxSpeed / speed;
+            Velocity *= effectiveMaxSpeed / Velocity.Length();
         }
     }
 
     /// <summary>
     /// Air movement with reduced acceleration
-    /// Ported from gamemovement.cpp AirMove()
     /// </summary>
     private void AirMove(Vector3 wishdir, float wishspeed, float deltaTime)
     {
-        // Air accelerate uses different function!
         AirAccelerate(wishdir, wishspeed, AirAccelerateValue, deltaTime);
     }
 
     /// <summary>
     /// Air acceleration - different from ground acceleration
-    /// Ported from gamemovement.cpp AirAccelerate()
-    /// Note: CS:GO doesn't apply duck/walk modifiers in air (only ground acceleration)
     /// </summary>
     private void AirAccelerate(Vector3 wishdir, float wishspeed, float accel, float deltaTime)
     {
-        var wishspd = wishspeed;
-
-        // Cap speed at 30 for air control
-        if (wishspd > 30)
-        {
-            wishspd = 30;
-        }
-
-        // Determine veer amount
+        var wishspd = Math.Min(wishspeed, 30); // Cap at 30 for air control
         var currentspeed = Vector3.Dot(Velocity, wishdir);
-
-        // See how much to add
         var addspeed = wishspd - currentspeed;
 
-        // If not adding any, done.
-        if (addspeed <= 0)
-        {
-            return;
-        }
+        if (addspeed <= 0) return;
 
-        // Determine acceleration speed after acceleration
         // Note: uses original wishspeed, NOT the capped wishspd
-        var accelspeed = accel * wishspeed * deltaTime * SurfaceFriction;
-
-        // Cap it
-        if (accelspeed > addspeed)
-        {
-            accelspeed = addspeed;
-        }
-
-        // Adjust velocity
+        var accelspeed = Math.Min(accel * wishspeed * deltaTime * SurfaceFriction, addspeed);
         Velocity += accelspeed * wishdir;
     }
 
     /// <summary>
     /// Check and clamp velocity - prevents NaN and enforces max velocity
-    /// Ported from gamemovement.cpp CheckVelocity()
     /// </summary>
     private void CheckVelocity(ref Vector3 position)
     {
-        // Check for NaN and fix
+        // Fix NaN values
         if (float.IsNaN(Velocity.X) || float.IsNaN(Velocity.Y) || float.IsNaN(Velocity.Z))
         {
             Velocity = new Vector3(
@@ -798,7 +675,6 @@ public class FpsMovement
             );
         }
 
-        // Check for NaN in position and fix
         if (float.IsNaN(position.X) || float.IsNaN(position.Y) || float.IsNaN(position.Z))
         {
             position = new Vector3(
@@ -808,7 +684,7 @@ public class FpsMovement
             );
         }
 
-        // Clamp each component to max velocity
+        // Clamp to max velocity
         Velocity = new Vector3(
             Math.Clamp(Velocity.X, -MaxVelocityValue, MaxVelocityValue),
             Math.Clamp(Velocity.Y, -MaxVelocityValue, MaxVelocityValue),
