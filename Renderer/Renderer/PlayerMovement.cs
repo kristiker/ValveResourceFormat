@@ -1,34 +1,9 @@
 
 namespace ValveResourceFormat.Renderer;
 
-/// <summary>
-/// FPS-style movement physics ported from CS:GO source (cs_gamemovement.cpp + gamemovement.cpp)
-/// Implements MOVETYPE_WALK behavior with CS:GO-accurate movement mechanics
-///
-/// IMPLEMENTED FROM CS:GO:
-/// - Split gravity (StartGravity/FinishGravity) for proper integration
-/// - Ground friction and acceleration with CS:GO scaling (MAX(250, wishspeed))
-/// - Air acceleration with 30 unit/sec cap for air control
-/// - Bunnyhopping prevention (1.1x max speed cap before jumping)
-/// - Jumping with proper impulse (sqrt(2*gravity*jumpheight))
-/// - Walk speed modifier with CS:GO conditional application (only when near walk speed)
-/// - Duck/crouch speed modifier (34% speed, CS:GO)
-/// - Velocity checking (NaN protection) and clamping
-/// - WalkMove speed clamping to prevent turning acceleration
-/// - Swept AABB collision detection using Rubikon physics
-/// - StayOnGround() to keep player stuck to slopes/stairs during downward movement
-///
-/// NOT IMPLEMENTED (intentionally simplified):
-/// - Water movement/swimming
-/// - Weapon speed modifiers (AWP scoped speed, etc.)
-/// - Stamina system (jump height/speed penalties when tired)
-/// - Duck spam penalties and duck speed tracking
-/// - Full duck mechanics (view height changes, collision hull shrinking)
-/// - Trailing velocity tracking for accuracy fishtailing
-/// </summary>
-public class FpsMovement
+public class PlayerMovement
 {
-    // Player collision hull (adjusted from CS:GO values for better scale)
+    // Player collision hull
     // Standing hull: 32x32x64 (16 units radius, 64 units tall - about 5'4" at 1 unit = 1 inch)
     // Ducked hull: 32x32x48 (16 units radius, 48 units tall - 4 feet crouched)
     // Note: Hull is centered horizontally but extends from feet (Z=0) upward
@@ -41,11 +16,10 @@ public class FpsMovement
     private const float StopSpeedValue = 80f;             // sv_stopspeed
     private const float AccelerateValue = 5.5f;           // sv_accelerate
     private const float AirAccelerateValue = 12f;         // sv_airaccelerate
-    private const float MaxSpeedValue = 250f;             // sv_maxspeed
+    private const float MaxSpeedValue = 320f;             // sv_maxspeed
     private const float JumpImpulseValue = 301.993377f;   // sv_jump_impulse = sqrt(2*800*57)
     private const float MaxVelocityValue = 3500f;         // sv_maxvelocity
 
-    // Speed modifiers from CS:GO (cs_shareddefs.cpp)
     private const float WalkSpeedModifier = 0.52f;        // CS_PLAYER_SPEED_WALK_MODIFIER
     private const float DuckSpeedModifier = 0.34f;        // CS_PLAYER_SPEED_DUCK_MODIFIER
 
@@ -69,41 +43,41 @@ public class FpsMovement
     private bool OnGround;
     private bool WasOnGroundLastFrame;
     private bool WasDuckingLastFrame;
-    private Rubikon? Physics;
-    private bool IsInitialized;
-    private float CrouchBlend;                       // 0 = standing, 1 = fully ducked
 
-    // Horizontal speed in units/second (for HUD display)
-    public float HorizontalSpeed => new Vector3(Velocity.X, Velocity.Y, 0).Length();
+    private bool HoldingCtrl => Input.Holding(TrackedKeys.Control);
+    private bool HoldingShift => Input.Holding(TrackedKeys.Shift);
+
+    private UserInput Input { get; }
+    private Rubikon? Physics => Input.PhysicsWorld;
+
+    private float CrouchBlend;                       // 0 = standing, 1 = fully ducked
+    private AABB Hull => HoldingCtrl ? PlayerHullDucked : PlayerHullStanding;
 
     // Surface properties (simplified - always 1.0 for now)
     private const float SurfaceFriction = 1.0f;
 
-    // Auto bunny hop setting
+    // options
+    public bool Initialize { get; set; }
     public bool AutoBunnyHop { get; set; } = true;
+    public float RunSpeed { get; set; } = 250f;
 
-    public FpsMovement()
+    public PlayerMovement(UserInput input)
     {
+        Input = input;
         Velocity = Vector3.Zero;
         OnGround = false;
-        IsInitialized = false;
-    }
-
-    public void SetPhysics(Rubikon physics)
-    {
-        Physics = physics;
+        Initialize = false;
     }
 
     /// <summary>
     /// Reinitialize the character position from the current camera location.
     /// Call this when switching from noclip to FPS movement mode.
     /// </summary>
-    public void ResetPosition(Camera camera, bool isDucking)
+    public void ResetPosition(Camera camera)
     {
-        var hull = isDucking ? PlayerHullDucked : PlayerHullStanding;
+        var hull = HoldingCtrl ? PlayerHullDucked : PlayerHullStanding;
         AABBCenteredPosition = camera.Location - new Vector3(0, 0, hull.Size.Z / 2);
         Velocity = Vector3.Zero;
-        IsInitialized = true;
     }
 
     /// <summary>
@@ -113,12 +87,11 @@ public class FpsMovement
     {
         // Initialize character position from camera on first tick
         // We need to convert from eye height to feet position
-        if (!IsInitialized)
+        if (Initialize)
         {
-            var isDuckingInit = input.Holding(TrackedKeys.Control);
-            ResetPosition(camera, isDuckingInit);
-            var initHull = isDuckingInit ? PlayerHullDucked : PlayerHullStanding;
-            TryUnstuck(ref AABBCenteredPosition, initHull);
+            ResetPosition(camera);
+            TryUnstuck(ref AABBCenteredPosition, Hull);
+            Initialize = false;
         }
 
         var position = AABBCenteredPosition; // Use character's feet position for physics
@@ -126,10 +99,10 @@ public class FpsMovement
         var yaw = camera.Yaw;
 
         // Track input state for acceleration modifiers and collision hull
-        var isDucking = input.Holding(TrackedKeys.Control);
-        var isWalking = !isDucking && input.Holding(TrackedKeys.Shift);
+        var isDucking = HoldingCtrl;
+        var isWalking = !HoldingCtrl && HoldingShift;
 
-        if (isDucking)
+        if (HoldingCtrl)
         {
             CrouchBlend += 1f / CrouchBlendTime * deltaTime;
             CrouchBlend = MathUtils.Saturate(CrouchBlend);
@@ -161,7 +134,7 @@ public class FpsMovement
             // Use the ducked hull's horizontal dimensions but check vertical clearance
             var checkHull = new AABB(duckedHull.Min, duckedHull.Max);
 
-            bool canUncrouch = true;
+            var canUncrouch = true;
             if (Physics != null)
             {
                 var trace = Physics.TraceAABB(traceStart, traceEnd, checkHull);
@@ -192,7 +165,7 @@ public class FpsMovement
         CategorizePosition(ref position, lerpedHull);
 
         // Check if we just landed this frame
-        bool justLanded = !WasOnGroundLastFrame && OnGround;
+        var justLanded = !WasOnGroundLastFrame && OnGround;
 
         // StartGravity - add gravity at start of frame (like Source does)
         if (!OnGround)
@@ -202,7 +175,7 @@ public class FpsMovement
         }
 
         // Check for jump (auto bunny hop if enabled and holding jump)
-        bool wantsToJump = AutoBunnyHop ? input.Holding(TrackedKeys.Jump) : input.Pressed(TrackedKeys.Jump);
+        var wantsToJump = AutoBunnyHop ? input.Holding(TrackedKeys.Jump) : input.Pressed(TrackedKeys.Jump);
 
         // For auto bhop, also jump immediately when landing while holding jump
         if (wantsToJump && (OnGround || (AutoBunnyHop && justLanded)))
@@ -617,7 +590,7 @@ public class FpsMovement
     /// <summary>
     /// Calculate desired movement direction and speed from input
     /// </summary>
-    private static (Vector3 wishdir, float wishspeed) CalculateWishVelocity(UserInput input, float pitch, float yaw)
+    private (Vector3 wishdir, float wishspeed) CalculateWishVelocity(UserInput input, float pitch, float yaw)
     {
         // Calculate forward and right vectors from yaw (ignore pitch for horizontal movement)
         var forward = new Vector3(MathF.Cos(yaw), MathF.Sin(yaw), 0);
@@ -661,7 +634,7 @@ public class FpsMovement
         }
 
         // Apply duck/crouch speed modifier (from CS:GO cs_gamemovement.cpp)
-        if (input.Holding(TrackedKeys.Control)) // Duck/crouch
+        if (HoldingCtrl) // Duck/crouch
         {
             wishspeed *= DuckSpeedModifier;
         }
@@ -737,7 +710,7 @@ public class FpsMovement
         Velocity = new Vector3(Velocity.X, Velocity.Y, 0);
 
         // Clamp to effective max speed
-        var effectiveMaxSpeed = MaxSpeedValue;
+        var effectiveMaxSpeed = RunSpeed;
         if (isDucking) effectiveMaxSpeed *= DuckSpeedModifier;
         else if (isWalking) effectiveMaxSpeed *= WalkSpeedModifier;
 

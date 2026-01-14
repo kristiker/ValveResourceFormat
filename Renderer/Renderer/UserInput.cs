@@ -48,7 +48,7 @@ public class UserInput
     private const float MaxOrbitDistance = 10000f;
     private const float OrbitZoomSpeed = 0.1f;
 
-    public readonly FpsMovement FpsMovement = new();
+    private readonly PlayerMovement PlayerMovement;
     public bool NoclipEnabled { get; private set; } = true;
 
     private TrackedKeys Keys;
@@ -67,6 +67,7 @@ public class UserInput
     {
         Renderer = renderer;
         Camera = new Camera(renderer.RendererContext);
+        PlayerMovement = new PlayerMovement(this);
     }
 
     /// <summary>
@@ -126,18 +127,12 @@ public class UserInput
         if (Pressed(TrackedKeys.ToggleNoclip))
         {
             NoclipEnabled = !NoclipEnabled;
-
-            // When disabling noclip (switching to FPS movement), reset character position to current camera location
-            if (!NoclipEnabled)
-            {
-                var isDucking = Holding(TrackedKeys.Control);
-                FpsMovement.ResetPosition(Camera, isDucking);
-            }
+            PlayerMovement.Initialize = !NoclipEnabled;
         }
 
         if (!NoclipEnabled)
         {
-            FpsMovement.ProcessMovement(this, Camera, deltaTime);
+            PlayerMovement.ProcessMovement(this, Camera, deltaTime);
             Camera.Pitch -= MouseDeltaPitchYaw.X;
             Camera.Yaw -= MouseDeltaPitchYaw.Y;
             Camera.ClampRotation();

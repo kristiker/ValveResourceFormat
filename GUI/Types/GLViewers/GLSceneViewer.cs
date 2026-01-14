@@ -128,7 +128,6 @@ namespace GUI.Types.GLViewers
             if (Scene.PhysicsWorld != null)
             {
                 Input.PhysicsWorld = Scene.PhysicsWorld;
-                Input.FpsMovement.SetPhysics(Input.PhysicsWorld);
                 Scene.PhysicsWorld.SelectedNodeRenderer = SelectedNodeRenderer;
                 Scene.PhysicsWorld.DebugTriangleIndices = [391177/*, 391174*/];
             }
