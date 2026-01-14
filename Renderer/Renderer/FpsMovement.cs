@@ -32,7 +32,7 @@ public class FpsMovement
     // Standing hull: 32x32x64 (16 units radius, 64 units tall - about 5'4" at 1 unit = 1 inch)
     // Ducked hull: 32x32x48 (16 units radius, 48 units tall - 4 feet crouched)
     // Note: Hull is centered horizontally but extends from feet (Z=0) upward
-    private static readonly AABB PlayerHullStanding = new(new Vector3(-8, -8, 0), new Vector3(16, 16, 72));
+    private static readonly AABB PlayerHullStanding = new(new Vector3(-16, -16, 0), new Vector3(16, 16, 72));
     private static readonly AABB PlayerHullDucked = new(new Vector3(-16, -16, 0), new Vector3(16, 16, 48));
 
     // Movement constants from Source engine (movevars_shared.cpp)
@@ -60,6 +60,9 @@ public class FpsMovement
     private const float SurfaceEpsilon = 0.03125f;        // Minimum distance from surfaces (1/32 unit) to prevent getting stuck
     private const float StepSize = 18f;                   // Maximum height of steps/obstacles player can climb
 
+    // Crouch blend constants
+    private const float CrouchBlendTime = 0.2f;           // Time to complete crouch/uncrouch animation (seconds)
+
     // Movement state
     public Vector3 Velocity { get; private set; }
     private Vector3 AABBCenteredPosition;
@@ -68,6 +71,7 @@ public class FpsMovement
     private bool WasDuckingLastFrame;
     private Rubikon? Physics;
     private bool IsInitialized;
+    private float CrouchBlend;                       // 0 = standing, 1 = fully ducked
 
     // Horizontal speed in units/second (for HUD display)
     public float HorizontalSpeed => new Vector3(Velocity.X, Velocity.Y, 0).Length();
@@ -111,8 +115,10 @@ public class FpsMovement
         // We need to convert from eye height to feet position
         if (!IsInitialized)
         {
-            ResetPosition(camera, input.Holding(TrackedKeys.Control));
-            TryUnstuck(ref AABBCenteredPosition, input.Holding(TrackedKeys.Control));
+            var isDuckingInit = input.Holding(TrackedKeys.Control);
+            ResetPosition(camera, isDuckingInit);
+            var initHull = isDuckingInit ? PlayerHullDucked : PlayerHullStanding;
+            TryUnstuck(ref AABBCenteredPosition, initHull);
         }
 
         var position = AABBCenteredPosition; // Use character's feet position for physics
@@ -122,6 +128,22 @@ public class FpsMovement
         // Track input state for acceleration modifiers and collision hull
         var isDucking = input.Holding(TrackedKeys.Control);
         var isWalking = !isDucking && input.Holding(TrackedKeys.Shift);
+
+        if (isDucking)
+        {
+            CrouchBlend += 1f / CrouchBlendTime * deltaTime;
+            CrouchBlend = MathUtils.Saturate(CrouchBlend);
+        }
+        else
+        {
+            CrouchBlend = 0f;
+        }
+
+        // Create lerped hull based on crouch blend
+        var standingHeight = PlayerHullStanding.Size.Z;
+        var duckedHeight = PlayerHullDucked.Size.Z;
+        var lerpedHeight = standingHeight + (duckedHeight - standingHeight) * CrouchBlend;
+        var lerpedHull = new AABB(new Vector3(-16, -16, 0), new Vector3(16, 16, lerpedHeight));
 
         // Handle crouch/uncrouch transitions
         if (WasDuckingLastFrame && !isDucking)
@@ -155,8 +177,9 @@ public class FpsMovement
             }
             else
             {
-                // Can't uncrouch - blocked by geometry above, stay ducked
+                // Can't uncrouch - blocked by geometry above, stay ducked and stop blend
                 isDucking = true;
+                CrouchBlend = 1f;
             }
         }
 
@@ -165,8 +188,8 @@ public class FpsMovement
         // Store previous ground state
         WasOnGroundLastFrame = OnGround;
 
-        // Categorize position (check if on ground)
-        CategorizePosition(ref position, isDucking);
+        // Categorize position (check if on ground) - use lerped hull for collision
+        CategorizePosition(ref position, lerpedHull);
 
         // Check if we just landed this frame
         bool justLanded = !WasOnGroundLastFrame && OnGround;
@@ -207,7 +230,7 @@ public class FpsMovement
             }
         }
 
-        // Ground or air movement
+        // Ground or air movement - use isDucking (input) for speed modifiers
         if (OnGround)
         {
             // Apply friction before movement
@@ -223,11 +246,11 @@ public class FpsMovement
         // Check velocity for NaN/bounds
         CheckVelocity(ref position);
 
-        // Update position based on velocity
-        position = TryPlayerMove(position, Velocity * deltaTime, isDucking);
+        // Update position based on velocity - use lerped hull for collision
+        position = TryPlayerMove(position, Velocity * deltaTime, lerpedHull);
 
         // Recategorize position after movement (now that position is updated)
-        CategorizePosition(ref position, isDucking);
+        CategorizePosition(ref position, lerpedHull);
 
         // Check velocity again for NaN/bounds
         CheckVelocity(ref position);
@@ -242,17 +265,15 @@ public class FpsMovement
         // Store the updated position
         AABBCenteredPosition = position;
 
-        // Set camera at eye height (not feet position)
-        var eyeHeight = isDucking ? ViewHeightDucked : ViewHeightStanding;
-        var hull = isDucking ? PlayerHullDucked : PlayerHullStanding;
-        var groundPos = AABBCenteredPosition - new Vector3(0, 0, hull.Size.Z / 2);
-        camera.Location = groundPos + Vector3.UnitZ * eyeHeight;
+        // Set camera at eye height with smooth crouch blend
+        var blendedEyeHeight = ViewHeightStanding + (ViewHeightDucked - ViewHeightStanding) * CrouchBlend;
+        var groundPos = AABBCenteredPosition - new Vector3(0, 0, lerpedHull.Size.Z / 2);
+        camera.Location = groundPos + Vector3.UnitZ * blendedEyeHeight;
 
-        // Draw player AABB for debugging
+        // Draw player AABB for debugging - use lerped hull for collision
         if (Physics?.SelectedNodeRenderer != null)
         {
-            var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
-            var worldAABB = aabb.Translate(groundPos);
+            var worldAABB = lerpedHull.Translate(groundPos);
             var color = OnGround ? new Color32(0f, 1f, 0f, 1f) : new Color32(1f, 1f, 0f, 1f); // Green when grounded, yellow in air
             ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
         }
@@ -264,7 +285,7 @@ public class FpsMovement
     /// Check if player is on ground using swept AABB trace
     /// Traces down based on current downward velocity to detect ground contact
     /// </summary>
-    private void CategorizePosition(ref Vector3 position, bool isDucking)
+    private void CategorizePosition(ref Vector3 position, AABB aabb)
     {
         if (Physics == null)
         {
@@ -272,9 +293,6 @@ public class FpsMovement
             OnGround = position.Z <= 0.1f;
             return;
         }
-
-        // Get player AABB based on ducking state
-        var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
 
         // Trace down from current position to check for ground
         // Use a small distance (2 units) to check if we're on or very close to ground
@@ -302,14 +320,12 @@ public class FpsMovement
     /// Attempt to find a valid position if stuck inside geometry
     /// We're stuck if traces result in no movement (start pos = end pos, normally we're epsilon units away)
     /// </summary>
-    private bool TryUnstuck(ref Vector3 position, bool isDucking)
+    private bool TryUnstuck(ref Vector3 position, AABB aabb)
     {
         if (Physics == null)
         {
             return false;
         }
-
-        var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
 
         // Check if we're actually stuck by trying a small downward trace
         var testTrace = Physics.TraceAABB(position, position + new Vector3(0, 0, -0.1f), aabb);
@@ -360,14 +376,13 @@ public class FpsMovement
     /// <summary>
     /// Perform swept AABB collision detection for player movement with multi-bounce sliding
     /// </summary>
-    private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, bool isDucking)
+    private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, AABB aabb)
     {
         if (Physics == null || delta.LengthSquared() < 1e-6f)
         {
             return start + delta;
         }
 
-        var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
         const int MaxBumps = 6;
 
         // Try step climbing immediately if on ground and moving horizontally
@@ -411,6 +426,11 @@ public class FpsMovement
             Velocity = vel;
 
             remainingDistance = remainingDelta.Length();
+            if (remainingDistance <= SurfaceEpsilon)
+            {
+                // We're stuck
+                break;
+            }
         }
 
         return position;
