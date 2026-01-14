@@ -166,10 +166,10 @@ public class Rubikon
 
         //TODO: Do we want trace handling that guarantees the position is short of an intersection? The math for that is annoying so I will just ignore it for now.
 
-        if (VertsInsideAABB(new AABB(closestHit.HitPosition - trace.HalfExtents, closestHit.HitPosition + trace.HalfExtents)))
-        {
-            Console.WriteLine("ALARM");
-        }
+        //if (VertsInsideAABB(new AABB(closestHit.HitPosition - trace.HalfExtents, closestHit.HitPosition + trace.HalfExtents)))
+        // {
+        //     Console.WriteLine("ALARM");
+        // }
 
         return closestHit;
     }
@@ -1070,11 +1070,11 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                bool hasHit =   PointInAABB(aabb, v0);
-                hasHit      |=  PointInAABB(aabb, v1);
-                hasHit      |=  PointInAABB(aabb, v2);
+                bool hasHit = PointInAABB(aabb, v0);
+                hasHit |= PointInAABB(aabb, v1);
+                hasHit |= PointInAABB(aabb, v2);
 
-                if(hasHit)
+                if (hasHit)
                 {
                     return true;
                 }
@@ -1144,14 +1144,14 @@ public class Rubikon
     {
         var edgeDir = Vector3.Normalize(edgeEnd - edgeStart);
         var perpendicular = Vector3.Normalize(Vector3.Cross(triangleNormal, edgeDir));
-        
+
         var color = isInside ? new Color32(1f, 0f, 0f, 1f) : new Color32(0.5f, 0.5f, 0.5f, 1f); // Red if inside, gray if outside
-        
+
         // Draw the expanded edge boundaries
         var offset = perpendicular * expansion;
         ShapeSceneNode.AddLine(vertices, edgeStart + offset, edgeEnd + offset, color);
         ShapeSceneNode.AddLine(vertices, edgeStart - offset, edgeEnd - offset, color);
-        
+
         // Draw connecting lines at ends
         ShapeSceneNode.AddLine(vertices, edgeStart + offset, edgeStart - offset, color);
         ShapeSceneNode.AddLine(vertices, edgeEnd + offset, edgeEnd - offset, color);

@@ -112,6 +112,7 @@ public class FpsMovement
         if (!IsInitialized)
         {
             ResetPosition(camera, input.Holding(TrackedKeys.Control));
+            TryUnstuck(ref AABBCenteredPosition, input.Holding(TrackedKeys.Control));
         }
 
         var position = AABBCenteredPosition; // Use character's feet position for physics
@@ -298,6 +299,65 @@ public class FpsMovement
     }
 
     /// <summary>
+    /// Attempt to find a valid position if stuck inside geometry
+    /// We're stuck if traces result in no movement (start pos = end pos, normally we're epsilon units away)
+    /// </summary>
+    private bool TryUnstuck(ref Vector3 position, bool isDucking)
+    {
+        if (Physics == null)
+        {
+            return false;
+        }
+
+        var aabb = isDucking ? PlayerHullDucked : PlayerHullStanding;
+
+        // Check if we're actually stuck by trying a small downward trace
+        var testTrace = Physics.TraceAABB(position, position + new Vector3(0, 0, -0.1f), aabb);
+        if (!testTrace.Hit || (testTrace.HitPosition - position).Length() > 0.01f)
+        {
+            return true; // Not stuck
+        }
+
+        // Try moving in various directions to find a valid position
+        var directions = new[]
+        {
+            Vector3.UnitZ,        // Up
+            -Vector3.UnitZ,       // Down
+            Vector3.UnitX,        // Right
+            -Vector3.UnitX,       // Left
+            Vector3.UnitY,        // Forward
+            -Vector3.UnitY,       // Back
+            Vector3.Normalize(new Vector3(1, 1, 0)),   // Diagonal
+            Vector3.Normalize(new Vector3(-1, 1, 0)),
+            Vector3.Normalize(new Vector3(1, -1, 0)),
+            Vector3.Normalize(new Vector3(-1, -1, 0)),
+        };
+
+        // Try increasingly larger offsets
+        for (var distance = 1f; distance <= 64f; distance *= 4f)
+        {
+            foreach (var dir in directions)
+            {
+                var testPos = position + dir * distance;
+
+                // Try a trace to this position to see if it's valid
+                var trace = Physics.TraceAABB(position, testPos, aabb);
+
+                // If we can move at least halfway there without hitting, it's a good position
+                if (!trace.Hit || trace.Distance > distance * 0.5f)
+                {
+                    // Found a valid position
+                    position = testPos;
+                    Velocity = Vector3.Zero; // Reset velocity when unstucking
+                    return true;
+                }
+            }
+        }
+
+        return false; // Couldn't find a valid position
+    }
+
+    /// <summary>
     /// Perform swept AABB collision detection for player movement with multi-bounce sliding
     /// </summary>
     private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, bool isDucking)
@@ -372,8 +432,8 @@ public class FpsMovement
 
         // Step 2: Move forward from the stepped-up position
         var forwardTrace = Physics.TraceAABB(steppedUpPosition, steppedUpPosition + delta, aabb);
-        var forwardPosition = forwardTrace.Hit 
-            ? forwardTrace.HitPosition + forwardTrace.HitNormal * SurfaceEpsilon 
+        var forwardPosition = forwardTrace.Hit
+            ? forwardTrace.HitPosition + forwardTrace.HitNormal * SurfaceEpsilon
             : steppedUpPosition + delta;
 
         // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
