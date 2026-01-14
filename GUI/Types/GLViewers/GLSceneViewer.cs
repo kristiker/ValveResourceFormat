@@ -128,8 +128,6 @@ namespace GUI.Types.GLViewers
             if (Scene.PhysicsWorld != null)
             {
                 Input.PhysicsWorld = Scene.PhysicsWorld;
-                Scene.PhysicsWorld.SelectedNodeRenderer = SelectedNodeRenderer;
-                Scene.PhysicsWorld.DebugTriangleIndices = [391177/*, 391174*/];
             }
 
             SkyboxScene?.Initialize();
@@ -346,7 +344,6 @@ namespace GUI.Types.GLViewers
                 var updateContext = new Scene.UpdateContext
                 {
                     TextRenderer = TextRenderer,
-                    SelectedNodeRenderer = SelectedNodeRenderer,
                     Timestep = frameTime,
                     Camera = Renderer.Camera,
                 };

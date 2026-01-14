@@ -182,7 +182,7 @@ public class PlayerMovement
         }
 
         // Check for jump (auto bunny hop if enabled and holding jump)
-        var wantsToJump = AutoBunnyHop ? input.Holding(TrackedKeys.Jump) : input.Pressed(TrackedKeys.Jump);
+        var wantsToJump = AutoBunnyHop ? input.Holding(TrackedKeys.Space) : input.Pressed(TrackedKeys.Space);
 
         // For auto bhop, also jump immediately when landing while holding jump
         if (wantsToJump && (OnGround || (AutoBunnyHop && justLanded)))
@@ -261,7 +261,7 @@ public class PlayerMovement
         {
             var worldAABB = playerHull.Translate(groundPos);
             var color = OnGround ? new Color32(0f, 1f, 0f, 1f) : new Color32(1f, 1f, 0f, 1f); // Green when grounded, yellow in air
-            ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
+            //ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
         }
 
         return;

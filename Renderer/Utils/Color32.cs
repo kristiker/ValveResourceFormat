@@ -14,8 +14,6 @@ namespace ValveResourceFormat.Renderer
         public static readonly Color32 Blue = new(0f, 0f, 1f, 1f);
         public static readonly Color32 Black = new(0f, 0f, 0f, 1f);
         public static readonly Color32 Yellow = new(1f, 1f, 0f, 1f);
-        public static readonly Color32 Orange = new(1f, 0.5f, 0f, 1f);
-        public static readonly Color32 Cyan = new(0f, 1f, 1f, 1f);
 
         /// <summary>
         /// Creates a color from RGB bytes (alpha = 255).

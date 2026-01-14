@@ -124,7 +124,7 @@ public class UserInput
         }
 
         // Handle noclip toggle (X key)
-        if (Pressed(TrackedKeys.ToggleNoclip))
+        if (Pressed(TrackedKeys.X))
         {
             NoclipEnabled = !NoclipEnabled;
             PlayerMovement.Initialize = !NoclipEnabled;

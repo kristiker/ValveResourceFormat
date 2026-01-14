@@ -3,6 +3,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
+using ValveResourceFormat.Serialization.KeyValues;
 using static ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Mesh;
 
 namespace ValveResourceFormat.Renderer;
@@ -26,18 +27,13 @@ public class Rubikon
         Hull.Plane[] Planes
     );
 
-
     public PhysicsMeshData[] Meshes { get; }
     public PhysicsHullData[] Hulls { get; }
-
-    // Debug visualization references
-    public SelectedNodeRenderer? SelectedNodeRenderer { get; set; }
-    public HashSet<int> DebugTriangleIndices { get; set; } = [];
 
     public Rubikon(PhysAggregateData physicsData)
     {
         var worldMeshes = physicsData.Parts[0].Shape.Meshes
-            //.Where(m => physicsData.CollisionAttributes[m.CollisionAttributeIndex].GetStringProperty("m_CollisionGroupString") == "Default")
+            .Where(m => physicsData.CollisionAttributes[m.CollisionAttributeIndex].GetStringProperty("m_CollisionGroupString") == "Default")
             .ToArray();
 
         Meshes = new PhysicsMeshData[worldMeshes.Length];
@@ -399,17 +395,6 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                // Debug visualization for specific triangles
-                trace.DebugVisualize = false;
-                if (DebugTriangleIndices.Contains(i) && SelectedNodeRenderer != null)
-                {
-                    //DrawExpandedTriangleDebug(trace, v0, v1, v2);
-                    trace.DebugVisualize = true;
-                    ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v0, v1, Color32.Orange);
-                    ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v1, v2, Color32.Orange);
-                    ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v2, v0, Color32.Orange);
-                }
-
                 if (!SweptAABBTriangle(trace, v0, v1, v2, out var hitPoint, out var hitNormal, out var hitDistance))
                 {
                     continue;
@@ -536,31 +521,6 @@ public class Rubikon
         // Calculate the AABB center position at time of impact
         var contactCenter = trace.Origin + moveDir * t;
 
-        // draw contact center and expanded triangle for debug visualization
-        if (trace.DebugVisualize && SelectedNodeRenderer != null)
-        {
-            // Draw old vs new t comparison
-            var contactCenterOld = trace.Origin + moveDir * tOld;
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, trace.Origin, contactCenterOld, new Color32(1f, 0f, 0f, 1f)); // Red for old
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, trace.Origin, contactCenter, Color32.Green); // Green for new
-
-            // Draw delta between old and new positions
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, contactCenterOld, contactCenter, new Color32(1f, 1f, 0f, 1f)); // Yellow line showing difference
-
-            // draw triangle normal
-            DrawNormalArrow(SelectedNodeRenderer.Vertices, contactCenter, triangleNormal);
-
-            // draw aabb at contact center
-            var aabbMin = contactCenter - trace.HalfExtents;
-            var aabbMax = contactCenter + trace.HalfExtents;
-            ShapeSceneNode.AddBox(SelectedNodeRenderer.Vertices, new AABB(aabbMin, aabbMax), Color32.Blue);
-
-            // Draw expanded triangle edges
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v0, v1, Color32.Orange);
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v1, v2, Color32.Orange);
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v2, v0, Color32.Orange);
-        }
-
         // Check if the contact center is within the expanded triangle
         // Use the absolute normal for expansion testing (double-sided)
         if (!PointInExpandedTriangle(trace, contactCenter, v0, v1, v2, trace.HalfExtents, triangleNormal))
@@ -568,48 +528,11 @@ public class Rubikon
             return false;
         }
 
-        if (trace.DebugVisualize && SelectedNodeRenderer != null)
-        {
-            // draw aabb at contact center
-            var aabbMin = contactCenter - trace.HalfExtents;
-            var aabbMax = contactCenter + trace.HalfExtents;
-            ShapeSceneNode.AddBox(SelectedNodeRenderer.Vertices, new AABB(aabbMin, aabbMax), Color32.Green);
-        }
-
         // Valid hit found - return the normal pointing against movement direction
         hitPoint = contactCenter;
         normal = moveDot < 0 ? triangleNormal : -triangleNormal;
         distance = t;
         return true;
-    }
-
-    private static void DrawNormalArrow(List<SimpleVertex> vertices, Vector3 triangleCenter, Vector3 triangleNormal)
-    {
-        var normalLength = 2f;
-        var normalEnd = triangleCenter + triangleNormal * normalLength;
-
-        ShapeSceneNode.AddLine(vertices, triangleCenter, normalEnd, Color32.Cyan);
-
-        // Draw arrow head at the end of the normal
-        var arrowSize = normalLength * 0.2f;
-        var perpendicular1 = Vector3.Normalize(Vector3.Cross(triangleNormal, Vector3.UnitY));
-        if (perpendicular1.LengthSquared() < 0.01f) // If normal is aligned with Y, use X instead
-        {
-            perpendicular1 = Vector3.Normalize(Vector3.Cross(triangleNormal, Vector3.UnitX));
-        }
-        var perpendicular2 = Vector3.Cross(triangleNormal, perpendicular1);
-
-        // Create arrow head with 4 lines forming a cone
-        var arrowBase = normalEnd - triangleNormal * arrowSize;
-        var arrowTip1 = arrowBase + perpendicular1 * arrowSize * 0.5f;
-        var arrowTip2 = arrowBase - perpendicular1 * arrowSize * 0.5f;
-        var arrowTip3 = arrowBase + perpendicular2 * arrowSize * 0.5f;
-        var arrowTip4 = arrowBase - perpendicular2 * arrowSize * 0.5f;
-
-        ShapeSceneNode.AddLine(vertices, normalEnd, arrowTip1, Color32.Cyan);
-        ShapeSceneNode.AddLine(vertices, normalEnd, arrowTip2, Color32.Cyan);
-        ShapeSceneNode.AddLine(vertices, normalEnd, arrowTip3, Color32.Cyan);
-        ShapeSceneNode.AddLine(vertices, normalEnd, arrowTip4, Color32.Cyan);
     }
 
     /// <summary>
@@ -622,13 +545,6 @@ public class Rubikon
         var toPoint = point - v0;
         var distToPlane = Vector3.Dot(toPoint, triangleNormal);
         var projectedPoint = point - triangleNormal * distToPlane;
-
-        if (ctx.DebugVisualize && SelectedNodeRenderer != null)
-        {
-            // Draw projected point
-            ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, point, projectedPoint, Color32.Yellow);
-            ShapeSceneNode.AddBox(SelectedNodeRenderer.Vertices, new AABB(projectedPoint - new Vector3(0.05f), projectedPoint + new Vector3(0.05f)), Color32.Yellow);
-        }
 
         // Check if point is inside the original triangle
         if (PointInTriangle(projectedPoint, v0, v1, v2))
@@ -644,20 +560,6 @@ public class Rubikon
         var edge1Dist = PointToEdgeDistance(projectedPoint, v0, v1);
         var edge2Dist = PointToEdgeDistance(projectedPoint, v1, v2);
         var edge3Dist = PointToEdgeDistance(projectedPoint, v2, v0);
-
-        if (ctx.DebugVisualize && SelectedNodeRenderer != null)
-        {
-            // Draw expansion visualization for each edge
-            DrawExpandedEdge(SelectedNodeRenderer.Vertices, v0, v1, triangleNormal, expansion, true/*(edge1Dist <= expansion)*/);
-            DrawExpandedEdge(SelectedNodeRenderer.Vertices, v1, v2, triangleNormal, expansion, true/*(edge2Dist <= expansion)*/);
-            DrawExpandedEdge(SelectedNodeRenderer.Vertices, v2, v0, triangleNormal, expansion, true/*(edge3Dist <= expansion)*/);
-
-            // Draw vertex spheres
-            var vertexSphereRadius = MathF.Max(halfExtents.X, MathF.Max(halfExtents.Y, halfExtents.Z));
-            //DrawSphere(SelectedNodeRenderer.Vertices, v0, vertexSphereRadius, Vector3.Distance(projectedPoint, v0) <= vertexSphereRadius);
-            //DrawSphere(SelectedNodeRenderer.Vertices, v1, vertexSphereRadius, Vector3.Distance(projectedPoint, v1) <= vertexSphereRadius);
-            //DrawSphere(SelectedNodeRenderer.Vertices, v2, vertexSphereRadius, Vector3.Distance(projectedPoint, v2) <= vertexSphereRadius);
-        }
 
         if (edge1Dist <= expansion)
         {
@@ -835,17 +737,6 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                // Debug visualization for specific triangles
-                trace.DebugVisualize = false;
-                if (DebugTriangleIndices.Contains(i) && SelectedNodeRenderer != null)
-                {
-                    //DrawExpandedTriangleDebug(trace, v0, v1, v2);
-                    trace.DebugVisualize = true;
-                    ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v0, v1, Color32.Orange);
-                    ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v1, v2, Color32.Orange);
-                    ShapeSceneNode.AddLine(SelectedNodeRenderer.Vertices, v2, v0, Color32.Orange);
-                }
-
                 Vector3 hitPoint = new Vector3(0);
                 Vector3 hitNormal = new Vector3(0);
                 float hitDistance = trace.Length;
@@ -1021,6 +912,7 @@ public class Rubikon
 
         return hasHit;
     }
+
     public static bool MeshVertsInsideAABB(AABB aabb, PhysicsMeshData mesh)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
@@ -1135,65 +1027,5 @@ public class Rubikon
         }
 
         return intersects;
-    }
-
-    /// <summary>
-    /// Draws an expanded edge for debug visualization
-    /// </summary>
-    private static void DrawExpandedEdge(List<SimpleVertex> vertices, Vector3 edgeStart, Vector3 edgeEnd, Vector3 triangleNormal, float expansion, bool isInside)
-    {
-        var edgeDir = Vector3.Normalize(edgeEnd - edgeStart);
-        var perpendicular = Vector3.Normalize(Vector3.Cross(triangleNormal, edgeDir));
-
-        var color = isInside ? new Color32(1f, 0f, 0f, 1f) : new Color32(0.5f, 0.5f, 0.5f, 1f); // Red if inside, gray if outside
-
-        // Draw the expanded edge boundaries
-        var offset = perpendicular * expansion;
-        ShapeSceneNode.AddLine(vertices, edgeStart + offset, edgeEnd + offset, color);
-        ShapeSceneNode.AddLine(vertices, edgeStart - offset, edgeEnd - offset, color);
-
-        // Draw connecting lines at ends
-        ShapeSceneNode.AddLine(vertices, edgeStart + offset, edgeStart - offset, color);
-        ShapeSceneNode.AddLine(vertices, edgeEnd + offset, edgeEnd - offset, color);
-    }
-
-    /// <summary>
-    /// Draws a sphere for debug visualization of vertex expansion
-    /// </summary>
-    private static void DrawSphere(List<SimpleVertex> vertices, Vector3 center, float radius, bool isInside)
-    {
-        var color = isInside ? new Color32(1f, 0f, 0f, 1f) : new Color32(0.5f, 0.5f, 0.5f, 1f); // Red if inside, gray if outside
-        var segments = 8;
-        var angleStep = MathF.PI * 2f / segments;
-
-        // Draw XY circle
-        for (var i = 0; i < segments; i++)
-        {
-            var angle1 = i * angleStep;
-            var angle2 = (i + 1) * angleStep;
-            var p1 = center + new Vector3(MathF.Cos(angle1) * radius, MathF.Sin(angle1) * radius, 0);
-            var p2 = center + new Vector3(MathF.Cos(angle2) * radius, MathF.Sin(angle2) * radius, 0);
-            ShapeSceneNode.AddLine(vertices, p1, p2, color);
-        }
-
-        // Draw XZ circle
-        for (var i = 0; i < segments; i++)
-        {
-            var angle1 = i * angleStep;
-            var angle2 = (i + 1) * angleStep;
-            var p1 = center + new Vector3(MathF.Cos(angle1) * radius, 0, MathF.Sin(angle1) * radius);
-            var p2 = center + new Vector3(MathF.Cos(angle2) * radius, 0, MathF.Sin(angle2) * radius);
-            ShapeSceneNode.AddLine(vertices, p1, p2, color);
-        }
-
-        // Draw YZ circle
-        for (var i = 0; i < segments; i++)
-        {
-            var angle1 = i * angleStep;
-            var angle2 = (i + 1) * angleStep;
-            var p1 = center + new Vector3(0, MathF.Cos(angle1) * radius, MathF.Sin(angle1) * radius);
-            var p2 = center + new Vector3(0, MathF.Cos(angle2) * radius, MathF.Sin(angle2) * radius);
-            ShapeSceneNode.AddLine(vertices, p1, p2, color);
-        }
     }
 }
