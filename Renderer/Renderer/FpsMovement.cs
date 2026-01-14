@@ -16,6 +16,7 @@ namespace ValveResourceFormat.Renderer;
 /// - Velocity checking (NaN protection) and clamping
 /// - WalkMove speed clamping to prevent turning acceleration
 /// - Swept AABB collision detection using Rubikon physics
+/// - StayOnGround() to keep player stuck to slopes/stairs during downward movement
 ///
 /// NOT IMPLEMENTED (intentionally simplified):
 /// - Water movement/swimming
@@ -23,7 +24,6 @@ namespace ValveResourceFormat.Renderer;
 /// - Stamina system (jump height/speed penalties when tired)
 /// - Duck spam penalties and duck speed tracking
 /// - Full duck mechanics (view height changes, collision hull shrinking)
-/// - StayOnGround() for slopes/stairs
 /// - Trailing velocity tracking for accuracy fishtailing
 /// </summary>
 public class FpsMovement
@@ -249,6 +249,12 @@ public class FpsMovement
         // Update position based on velocity - use lerped hull for collision
         position = TryPlayerMove(position, Velocity * deltaTime, lerpedHull);
 
+        // StayOnGround - keep player stuck to ground when going down slopes/stairs
+        if (OnGround)
+        {
+            StayOnGround(ref position, lerpedHull);
+        }
+
         // Recategorize position after movement (now that position is updated)
         CategorizePosition(ref position, lerpedHull);
 
@@ -279,6 +285,32 @@ public class FpsMovement
         }
 
         return;
+    }
+
+    /// <summary>
+    /// Keep player stuck to ground when moving down slopes/stairs
+    /// Prevents player from becoming airborne and losing friction
+    /// Ported from gamemovement.cpp StayOnGround()
+    /// </summary>
+    private void StayOnGround(ref Vector3 position, AABB aabb)
+    {
+        if (Physics == null)
+        {
+            return;
+        }
+
+        // Trace down to find ground (trace extra distance to catch steep slopes)
+        var traceStart = position;
+        var traceEnd = position + new Vector3(0, 0, -StepSize);
+
+        var trace = Physics.TraceAABB(traceStart, traceEnd, aabb);
+
+        // If we hit ground, snap down to it
+        if (trace.Hit && trace.HitNormal.Z > 0.7f)
+        {
+            var groundZ = trace.HitPosition.Z + trace.HitNormal.Z * SurfaceEpsilon;
+            position = new Vector3(position.X, position.Y, groundZ);
+        }
     }
 
     /// <summary>
