@@ -256,13 +256,14 @@ public class PlayerMovement
         var groundPos = AABBCenteredPosition - new Vector3(0, 0, playerHull.Size.Z / 2);
         camera.Location = groundPos + Vector3.UnitZ * blendedEyeHeight;
 
-        // Draw player AABB for debugging - use lerped hull for collision
+        // Draw player AABB for debugging
+        /*
         if (Physics?.SelectedNodeRenderer != null)
         {
             var worldAABB = playerHull.Translate(groundPos);
             var color = OnGround ? new Color32(0f, 1f, 0f, 1f) : new Color32(1f, 1f, 0f, 1f); // Green when grounded, yellow in air
             //ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
-        }
+        }*/
 
         return;
     }
