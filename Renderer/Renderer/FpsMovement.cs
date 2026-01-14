@@ -298,17 +298,16 @@ public class FpsMovement
         // Use a small distance (2 units) to check if we're on or very close to ground
         // This distance should be enough to detect ground contact in Source engine scale
         var traceStart = position;
-        var traceDistance = 2.0f; // Fixed small distance for ground check
-        var traceEnd = position + new Vector3(0, 0, -traceDistance);
+        var traceEnd = position + new Vector3(0, 0, -2f);
 
         var result = Physics.TraceAABB(traceStart, traceEnd, aabb);
-
 
         if (result.Hit && result.HitNormal.Z > 0.8f && Velocity.Z < 140.0f)
         {
             OnGround = true;
-            // Snap to ground if very close, but maintain epsilon distance from surface
-            position = result.HitPosition + result.HitNormal * SurfaceEpsilon;
+            // Snap to ground vertically only, preserve XY position to prevent sliding on slopes
+            var groundZ = result.HitPosition.Z + result.HitNormal.Z * SurfaceEpsilon;
+            position = new Vector3(position.X, position.Y, groundZ);
         }
         else
         {
