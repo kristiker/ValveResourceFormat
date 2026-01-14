@@ -50,10 +50,21 @@ public class PlayerMovement
     private UserInput Input { get; }
     private Rubikon? Physics => Input.PhysicsWorld;
 
-    private float CrouchBlend;                       // 0 = standing, 1 = fully ducked
-    private AABB Hull => HoldingCtrl ? PlayerHullDucked : PlayerHullStanding;
+    private float CrouchBlend; // 0 = standing, 1 = fully ducked
+    private AABB SnappedHull => HoldingCtrl ? PlayerHullDucked : PlayerHullStanding;
 
-    // Surface properties (simplified - always 1.0 for now)
+    private AABB Hull
+    {
+        get
+        {
+            var standingHeight = PlayerHullStanding.Size.Z;
+            var duckedHeight = PlayerHullDucked.Size.Z;
+            var lerpedHeight = standingHeight + (duckedHeight - standingHeight) * CrouchBlend;
+            var lerpedHull = new AABB(new Vector3(-16, -16, 0), new Vector3(16, 16, lerpedHeight));
+            return lerpedHull;
+        }
+    }
+
     private const float SurfaceFriction = 1.0f;
 
     // options
@@ -90,7 +101,7 @@ public class PlayerMovement
         if (Initialize)
         {
             ResetPosition(camera);
-            TryUnstuck(ref AABBCenteredPosition, Hull);
+            TryUnstuck(ref AABBCenteredPosition, SnappedHull);
             Initialize = false;
         }
 
@@ -112,11 +123,7 @@ public class PlayerMovement
             CrouchBlend = 0f;
         }
 
-        // Create lerped hull based on crouch blend
-        var standingHeight = PlayerHullStanding.Size.Z;
-        var duckedHeight = PlayerHullDucked.Size.Z;
-        var lerpedHeight = standingHeight + (duckedHeight - standingHeight) * CrouchBlend;
-        var lerpedHull = new AABB(new Vector3(-16, -16, 0), new Vector3(16, 16, lerpedHeight));
+        var playerHull = Hull;
 
         // Handle crouch/uncrouch transitions
         if (WasDuckingLastFrame && !isDucking)
@@ -162,7 +169,7 @@ public class PlayerMovement
         WasOnGroundLastFrame = OnGround;
 
         // Categorize position (check if on ground) - use lerped hull for collision
-        CategorizePosition(ref position, lerpedHull);
+        CategorizePosition(ref position, playerHull);
 
         // Check if we just landed this frame
         var justLanded = !WasOnGroundLastFrame && OnGround;
@@ -220,16 +227,16 @@ public class PlayerMovement
         CheckVelocity(ref position);
 
         // Update position based on velocity - use lerped hull for collision
-        position = TryPlayerMove(position, Velocity * deltaTime, lerpedHull);
+        position = TryPlayerMove(position, Velocity * deltaTime, playerHull);
 
         // StayOnGround - keep player stuck to ground when going down slopes/stairs
         if (OnGround)
         {
-            StayOnGround(ref position, lerpedHull);
+            StayOnGround(ref position, playerHull);
         }
 
         // Recategorize position after movement (now that position is updated)
-        CategorizePosition(ref position, lerpedHull);
+        CategorizePosition(ref position, playerHull);
 
         // Check velocity again for NaN/bounds
         CheckVelocity(ref position);
@@ -246,13 +253,13 @@ public class PlayerMovement
 
         // Set camera at eye height with smooth crouch blend
         var blendedEyeHeight = ViewHeightStanding + (ViewHeightDucked - ViewHeightStanding) * CrouchBlend;
-        var groundPos = AABBCenteredPosition - new Vector3(0, 0, lerpedHull.Size.Z / 2);
+        var groundPos = AABBCenteredPosition - new Vector3(0, 0, playerHull.Size.Z / 2);
         camera.Location = groundPos + Vector3.UnitZ * blendedEyeHeight;
 
         // Draw player AABB for debugging - use lerped hull for collision
         if (Physics?.SelectedNodeRenderer != null)
         {
-            var worldAABB = lerpedHull.Translate(groundPos);
+            var worldAABB = playerHull.Translate(groundPos);
             var color = OnGround ? new Color32(0f, 1f, 0f, 1f) : new Color32(1f, 1f, 0f, 1f); // Green when grounded, yellow in air
             ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
         }
