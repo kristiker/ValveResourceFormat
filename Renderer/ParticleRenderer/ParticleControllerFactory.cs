@@ -123,6 +123,7 @@ namespace ValveResourceFormat.Renderer.Particles
             {
                 ["C_OP_RenderSprites"] = (rendererInfo, rendererContext) => new RenderSprites(rendererInfo, rendererContext),
                 ["C_OP_RenderTrails"] = (rendererInfo, rendererContext) => new RenderTrails(rendererInfo, rendererContext),
+                ["C_OP_RenderCables"] = (rendererInfo, rendererContext) => new RenderCables(rendererInfo, rendererContext),
             };
 
         // Register particle pre-emission operators (mostly stuff with control points)

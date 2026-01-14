@@ -112,9 +112,9 @@ namespace ValveResourceFormat.Renderer
         {
             LoadWorldLightingInfo();
             LoadEntities();
-            LoadWorldNodes();
-            LoadWorldPhysics();
-            LoadNavigationMesh();
+            //LoadWorldNodes();
+            //LoadWorldPhysics();
+            //LoadNavigationMesh();
         }
 
         private void LoadEntities()
