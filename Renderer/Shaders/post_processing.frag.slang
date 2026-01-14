@@ -1,7 +1,7 @@
 #version 460
 
 #include "common/utils.slang"
-
+#include "common/ViewConstants.slang"
 // Bloom might eventually be supported
 //uniform sampler2D g_tBloom; // t13
 //uniform vec4 g_vBloomUvScaleClamp;
@@ -82,13 +82,10 @@ void SampleStencilMSAA(ivec2 pixelCoords, out uint insideCount, out int totalSam
     totalSamples += g_nNumSamplesMSAA;
 }
 
-vec3 DrawOutline(vec3 vColor)
+vec3 DrawOutline(ivec2 pixelCoords, vec3 vColor)
 {
     const int width = 2;
     const int shadingRate = 1;
-
-    ivec2 pixelCoords = ivec2(gl_FragCoord.xy);
-    pixelCoords.y = g_bFlipY ? textureSize(g_tStencilBuffer).y - pixelCoords.y - 1 : pixelCoords.y;
 
     int totalSamples = 0;
     uint insideCountCenter = 0;
@@ -139,12 +136,9 @@ vec3 DrawOutline(vec3 vColor)
     return mix(vColor.rgb, vOutlineColor, outlineAlpha);
 }
 
-vec4 SampleColorBuffer(vec2 coords)
+vec4 SampleColorBuffer(ivec2 pixelCoords)
 {
     vec4 vColorMSAA = vec4(0.0);
-
-    ivec2 pixelCoords = ivec2(coords.xy);
-    pixelCoords.y = g_bFlipY ? textureSize(g_tColorBuffer).y - pixelCoords.y - 1 : pixelCoords.y;
 
     for (int i = 0; i < g_nNumSamplesMSAA; i++)
     {
@@ -157,9 +151,64 @@ vec4 SampleColorBuffer(vec2 coords)
     return vColorMSAA;
 }
 
+vec2 CylindricalProjection(vec2 vTexCoords, float flDistance)
+{
+    if (flDistance == 0.0)
+    {
+        return vTexCoords;
+    }
+
+    vTexCoords = UnpackFromColor(vTexCoords);
+    float flViewDistance = 1.0f + flDistance;
+    float flHypotenuse = vTexCoords.x * vTexCoords.x + flViewDistance * flViewDistance;
+
+    float flIntersectionDistance = vTexCoords.x * flDistance;
+    float flIntersectionDiscriminator = sqrt( flHypotenuse - flIntersectionDistance * flIntersectionDistance );
+
+    float flCylindricalDistanceNoD = ( -flIntersectionDistance * vTexCoords.x + flViewDistance * flIntersectionDiscriminator ) / flHypotenuse;
+    float flCylindricalDistance = flCylindricalDistanceNoD + flDistance;
+
+    vec2 vPosition = vTexCoords * (flCylindricalDistance / flViewDistance);
+    vec2 vProjected = vPosition / flCylindricalDistanceNoD;
+    
+    float d = flDistance;
+    float vd = 1.0 + d;
+    float S;
+    
+    if (d >= 0.0) {
+        // Positive distance: scale so edge (x=1) reaches 1.0
+        float h_edge = 1.0 + vd * vd;
+        float s_edge = sqrt(h_edge - d * d);
+        float cylNoD_edge = (-d + vd * s_edge) / h_edge;
+        float cylD_edge = cylNoD_edge + d;
+        float projected_edge = (cylD_edge / vd) / cylNoD_edge;
+        S = 1.0 / projected_edge;
+    } else {
+        // Negative distance: scale so center (x=0) reaches maximum
+        float h_center = vd * vd; // x=0
+        float s_center = sqrt(h_center - 0.0);
+        float cylNoD_center = (vd * s_center) / h_center;
+        float cylD_center = cylNoD_center + d;
+        float projected_center = (cylD_center / vd) / cylNoD_center;
+        S = 1.0 / projected_center;
+    }
+
+    return PackToColor(vProjected * S);
+}
+
 void main()
 {
-    vec4 vColor = SampleColorBuffer(gl_FragCoord.xy);
+    vec2 size = textureSize(g_tColorBuffer);
+    vec2 vInvTextureCoords = 1.0 / size;
+
+    vec2 vColorUv = gl_FragCoord.xy * vInvTextureCoords;
+    vColorUv.y = g_bFlipY ? 1.0 - vColorUv.y : vColorUv.y;
+    
+    vColorUv = CylindricalProjection(vColorUv, mix(0.0, 0.5, sin(g_flTime * 0.5) + 0.3));
+
+    ivec2 pixelCoords = ivec2(vColorUv * size);
+
+    vec4 vColor = SampleColorBuffer(pixelCoords);
 
     if (g_bPostProcessEnabled)
     {
@@ -174,6 +223,6 @@ void main()
         vColor.rgb = DitherColor(vColor.rgb);
     }
 
-    vColor.rgb = DrawOutline(vColor.rgb);
+    vColor.rgb = DrawOutline(pixelCoords, vColor.rgb);
     outputColor = vColor;
 }
