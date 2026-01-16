@@ -90,14 +90,41 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
         }
 
         /// <summary>
+        /// Represents a region node in the hull SVM tree.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public readonly struct RegionNode
+        {
+            /// <summary>
+            /// Left child index or plane index for leaf nodes
+            /// </summary>
+            public readonly byte LeftOrPlaneIndex;
+            /// <summary>
+            /// Right child index (0 for leaf nodes)
+            /// </summary>
+            public readonly byte RightChildIndex;
+            /// <summary>
+            /// Plane index for internal nodes
+            /// </summary>
+            public readonly byte PlaneIndex;
+            /// <summary>
+            /// Node flags - 0x80 = internal node, 0x40/0x60 = leaf variants, 0x20 = flags
+            /// </summary>
+            public readonly byte Flags;
+
+            public readonly bool IsLeaf => (Flags & 0x80) == 0;
+            public readonly bool IsInternal => (Flags & 0x80) != 0;
+        }
+
+        /// <summary>
         /// Represents a region in the hull.
         /// </summary>
         public class Region
         {
             /// <summary>
-            /// Gets the region nodes.
+            /// Gets the region nodes in binary format.
             /// </summary>
-            public object[]? Nodes { get; }
+            public RegionNode[] Nodes { get; }
             /// <summary>
             /// Gets the region data.
             /// </summary>
@@ -109,7 +136,17 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
             public Region(KVObject data)
             {
                 Data = data;
-                Nodes = null; // TODO
+
+                // Parse binary node data
+                if (data.ContainsKey("m_Nodes"))
+                {
+                    var nodesBytes = data.GetArray<byte>("m_Nodes");
+                    Nodes = MemoryMarshal.Cast<byte, RegionNode>(nodesBytes).ToArray();
+                }
+                else
+                {
+                    Nodes = [];
+                }
             }
 
             /// <summary>

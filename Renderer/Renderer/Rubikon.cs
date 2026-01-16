@@ -26,7 +26,8 @@ public class Rubikon
         Vector3[] VertexPositions,
         Hull.HalfEdge[] HalfEdges,
         byte[] FaceEdgeIndices,
-        Hull.Plane[] Planes
+        Hull.Plane[] Planes,
+        Hull.Region? RegionSVM
     );
 
     public PhysicsMeshData[] Meshes { get; }
@@ -77,7 +78,8 @@ public class Rubikon
                 [.. vertexPositions],
                 [.. halfEdges],
                 [.. MemoryMarshal.Cast<Hull.Face, byte>(faceEdgeIndices)],
-                [.. planes]
+                [.. planes],
+                hull.RegionSVM
             );
         }
 
@@ -271,6 +273,12 @@ public class Rubikon
             return closestHit;
         }
 
+        // Use RegionSVM for hierarchical culling if available
+        if (hull.RegionSVM != null && !AABBIntersectsRegionHierarchy(trace, hull.RegionSVM))
+        {
+            return closestHit;
+        }
+
         foreach (var firstEdgeCcw in hull.FaceEdgeIndices)
         {
             var edge0 = hull.HalfEdges[firstEdgeCcw];
@@ -297,6 +305,65 @@ public class Rubikon
         }
 
         return closestHit;
+    }
+
+    private static bool AABBIntersectsRegionHierarchy(AABBTraceContext trace, Hull.Region region)
+    {
+        if (region.Nodes.Length == 0)
+        {
+            return true;
+        }
+
+        // Use stack-based traversal of binary tree
+        Span<int> stack = stackalloc int[32];
+        var stackCount = 0;
+        stack[stackCount++] = 0; // Start at root node
+
+        var planes = region.GetPlanes();
+
+        while (stackCount > 0)
+        {
+            var nodeIndex = stack[--stackCount];
+            var node = region.Nodes[nodeIndex];
+
+            if (node.IsLeaf)
+            {
+                // Found a leaf node that wasn't culled - AABB intersects
+                return true;
+            }
+
+            // Internal node - test against splitting plane
+            var plane = planes[node.PlaneIndex];
+            var aabbMin = trace.Origin - trace.HalfExtents;
+            var aabbMax = trace.Origin + trace.HalfExtents;
+
+            // Get AABB vertices aligned with plane
+            var p = new Vector3(
+                plane.Normal.X >= 0 ? aabbMax.X : aabbMin.X,
+                plane.Normal.Y >= 0 ? aabbMax.Y : aabbMin.Y,
+                plane.Normal.Z >= 0 ? aabbMax.Z : aabbMin.Z
+            );
+            var n = new Vector3(
+                plane.Normal.X >= 0 ? aabbMin.X : aabbMax.X,
+                plane.Normal.Y >= 0 ? aabbMin.Y : aabbMax.Y,
+                plane.Normal.Z >= 0 ? aabbMin.Z : aabbMax.Z
+            );
+
+            var dMin = Vector3.Dot(plane.Normal, n) - plane.Offset;
+            var dMax = Vector3.Dot(plane.Normal, p) - plane.Offset;
+
+            // Traverse children based on which side(s) of plane the AABB is on
+            if (dMax >= 0 && node.RightChildIndex > 0)
+            {
+                stack[stackCount++] = node.RightChildIndex;
+            }
+            if (dMin <= 0)
+            {
+                stack[stackCount++] = node.LeftOrPlaneIndex;
+            }
+        }
+
+        return false;
     }
 
     private TraceResult AABBTraceHullBVH(AABBTraceContext trace)
@@ -429,6 +496,37 @@ public class Rubikon
 
         var intersects = tNearMax <= tFarMin && tFarMin >= 0 && tNearMax <= ray.Length;
         return intersects;
+    }
+
+    private static bool AABBIntersectsRegion(AABBTraceContext trace, Hull.Region region)
+    {
+        var planes = region.GetPlanes();
+        var aabbMin = trace.Origin - trace.HalfExtents;
+        var aabbMax = trace.Origin + trace.HalfExtents;
+
+        // Test swept AABB against region planes
+        foreach (var plane in planes)
+        {
+            // Get AABB vertices that are most aligned with plane normal
+            var p = new Vector3(
+                plane.Normal.X >= 0 ? aabbMax.X : aabbMin.X,
+                plane.Normal.Y >= 0 ? aabbMax.Y : aabbMin.Y,
+                plane.Normal.Z >= 0 ? aabbMax.Z : aabbMin.Z
+            );
+            var n = new Vector3(
+                plane.Normal.X >= 0 ? aabbMin.X : aabbMax.X,
+                plane.Normal.Y >= 0 ? aabbMin.Y : aabbMax.Y,
+                plane.Normal.Z >= 0 ? aabbMin.Z : aabbMax.Z
+            );
+
+            // If positive vertex is outside, AABB is outside this plane
+            if (Vector3.Dot(plane.Normal, p) < plane.Offset)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool RayIntersectsTriangle(RayTraceContext ray, Vector3 v0, Vector3 v1, Vector3 v2, out (float Distance, Vector3 Normal) intersection)
