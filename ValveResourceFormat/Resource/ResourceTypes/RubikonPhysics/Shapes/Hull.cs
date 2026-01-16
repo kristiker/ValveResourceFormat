@@ -90,77 +90,96 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
         }
 
         /// <summary>
-        /// Represents a region node in the hull SVM tree.
+        /// Represents a node in the hull's Support Vector Machine (SVM) binary tree structure.
+        /// The SVM tree is used for efficient spatial queries and collision detection by hierarchically
+        /// subdividing the hull's volume using splitting planes. This allows for fast point-in-hull tests,
+        /// closest point queries, and ray intersections by traversing the tree and quickly eliminating
+        /// irrelevant regions of the hull without testing every face.
         /// </summary>
         [StructLayout(LayoutKind.Sequential)]
         public readonly struct RegionNode
         {
             /// <summary>
-            /// Left child index or plane index for leaf nodes
+            /// Flags for SVM tree node types and classification.
             /// </summary>
-            public readonly byte LeftOrPlaneIndex;
+            [Flags]
+            public enum SVMNodeFlags : byte
+            {
+                /// <summary>
+                /// meaning to be determined
+                /// </summary>
+                LeafTypeB = 0x20,
+
+                /// <summary>
+                /// meaning to be determined
+                /// </summary>
+                LeafTypeA = 0x40,
+
+                /// <summary>
+                /// Flag indicating an internal node with child nodes for spatial subdivision.
+                /// </summary>
+                Internal = 0x80,
+            }
+
             /// <summary>
-            /// Right child index (0 for leaf nodes)
-            /// </summary>
-            public readonly byte RightChildIndex;
-            /// <summary>
-            /// Plane index for internal nodes
+            /// Splitting plane index for internal nodes. Support plane index for leaf nodes.
             /// </summary>
             public readonly byte PlaneIndex;
             /// <summary>
-            /// Node flags - 0x80 = internal node, 0x40/0x60 = leaf variants, 0x20 = flags
+            /// Left child index. Always zero for internal nodes because the left child is implicitly the next node in the array (currentIndex + 1).
+            /// Points to the negative half-space of the splitting plane.
             /// </summary>
-            public readonly byte Flags;
+            public readonly byte LeftChildIndex;
+            /// <summary>
+            /// Right child index. For internal nodes, this is an absolute index in the nodes array (not a relative offset).
+            /// Points to the positive half-space of the splitting plane. Zero for leaf nodes.
+            /// </summary>
+            public readonly byte RightChildIndex;
 
-            public readonly bool IsLeaf => (Flags & 0x80) == 0;
-            public readonly bool IsInternal => (Flags & 0x80) != 0;
+            /// <summary>
+            /// Node type and classification flags.
+            /// See <see cref="SVMNodeFlags"/> for flag constants.
+            /// </summary>
+            public readonly SVMNodeFlags Flags;
+
+            /// <summary>
+            /// Gets a value indicating whether this node is an internal node (has child nodes for spatial subdivision).
+            /// </summary>
+            public readonly bool IsInternal => (Flags & SVMNodeFlags.Internal) != 0;
         }
 
         /// <summary>
-        /// Represents a region in the hull.
+        /// Represents a region in the hull with an optional Support Vector Machine (SVM) tree for spatial optimization.
+        /// The SVM tree structure enables efficient collision detection and spatial queries by organizing hull geometry
+        /// into a binary space partitioning tree.
+        /// The tree works by recursively subdividing space with planes, allowing algorithms to quickly eliminate
+        /// large portions of the hull without testing individual faces, reducing O(n) operations to O(log n).
         /// </summary>
         public class Region
         {
             /// <summary>
-            /// Gets the region nodes in binary format.
+            /// Gets the SVM binary tree nodes that hierarchically subdivide the hull's volume.
+            /// Each node represents either a splitting plane (internal node) or a terminal region (leaf node).
+            /// Note: The array may contain more nodes than are reachable from the root node (index 0).
+            /// Additional nodes may be used for auxiliary data or pre-computed leaf region information.
             /// </summary>
             public RegionNode[] Nodes { get; }
+
             /// <summary>
-            /// Gets the region data.
+            /// Gets the splitting planes.
             /// </summary>
-            public KVObject Data { get; }
+            public Plane[] Planes { get; }
+
 
             /// <summary>
             /// Initializes a new instance of the <see cref="Region"/> class.
+            /// Parses the region data including SVM tree nodes if present.
             /// </summary>
+            /// <param name="data">The KeyValues data containing region information.</param>
             public Region(KVObject data)
             {
-                Data = data;
-
-                // Parse binary node data
-                if (data.ContainsKey("m_Nodes"))
-                {
-                    var nodesBytes = data.GetArray<byte>("m_Nodes");
-                    Nodes = MemoryMarshal.Cast<byte, RegionNode>(nodesBytes).ToArray();
-                }
-                else
-                {
-                    Nodes = [];
-                }
-            }
-
-            /// <summary>
-            /// Hull face planes with outward pointing normals (n1, -d1, n2, -d2, ...)
-            /// </summary>
-            public ReadOnlySpan<Plane> GetPlanes()
-            {
-                if (Data.IsNotBlobType("m_Planes"))
-                {
-                    var planesArr = Data.GetArray("m_Planes");
-                    return planesArr.Select(p => new Plane(p)).ToArray().AsSpan();
-                }
-
-                return MemoryMarshal.Cast<byte, Plane>(Data.GetArray<byte>("m_Planes"));
+                Nodes = MemoryMarshal.Cast<byte, RegionNode>(data.GetArray<byte>("m_Nodes")).ToArray();
+                Planes = MemoryMarshal.Cast<byte, Plane>(data.GetArray<byte>("m_Planes")).ToArray();
             }
         }
 
@@ -170,7 +189,9 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
         public Vector3 Centroid { get; }
 
         /// <summary>
-        /// Angular radius for CCD
+        /// Gets the maximum angular radius for Continuous Collision Detection (CCD).
+        /// This value represents the maximum distance from the centroid to any vertex,
+        /// used to predict potential collisions during rotational movement.
         /// </summary>
         public float MaxAngularRadius { get; }
 
@@ -206,6 +227,7 @@ namespace ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes
         /// <summary>
         /// Initializes a new instance of the <see cref="Hull"/> struct.
         /// </summary>
+        /// <param name="data">The KeyValues data containing hull information including geometry, bounds, and optional SVM tree.</param>
         public Hull(KVObject data)
         {
             Centroid = data.GetSubCollection("m_vCentroid").ToVector3();
