@@ -319,123 +319,68 @@ public class Rubikon
 
     private TraceResult AABBTraceHullBVH(AABBTraceContext trace)
     {
-        Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
-        var stackCount = 0;
-        stack[stackCount++] = (HullTree[0], 0);
-
-        var closestHit = new TraceResult();
         var ray = new RayTraceContext(trace.Origin, trace.End);
 
-        while (stackCount > 0)
-        {
-            var nodeWithIndex = stack[--stackCount];
-            var node = nodeWithIndex.Node;
-
-            // Expand node AABB by trace half extents for conservative culling
-            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents))
+        return TraverseBVH(
+            HullTree,
+            ray.Direction,
+            node => !RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents),
+            (node, ref closestHit) =>
             {
-                continue;
-            }
+                var count = (int)node.ChildOffset;
+                var startIndex = (int)node.TriangleOffset;
 
-            if (node.Type != NodeType.Leaf)
-            {
-                var leftChild = nodeWithIndex.Index + 1;
-                var rightChild = nodeWithIndex.Index + (int)node.ChildOffset;
-
-                var rayIsPositive = ray.Direction[(int)node.Type] >= 0;
-                var (nearId, farId) = rayIsPositive
-                    ? (leftChild, rightChild)
-                    : (rightChild, leftChild);
-
-                // Push far node first so near node is processed first (stack is LIFO)
-                stack[stackCount++] = new(HullTree[farId], farId);
-                stack[stackCount++] = new(HullTree[nearId], nearId);
-                continue;
-            }
-
-            // Process hulls in leaf node
-            var count = (int)node.ChildOffset;
-            var startIndex = (int)node.TriangleOffset;
-
-            for (var i = startIndex; i < startIndex + count; i++)
-            {
-                var hullIndex = HullIndices[i];
-                var hull = Hulls[hullIndex];
-                var hit = AABBTraceHull(trace, hull);
-                if (hit.Hit && hit.Distance < closestHit.Distance)
+                for (var i = startIndex; i < startIndex + count; i++)
                 {
-                    closestHit = hit;
-
-                    // Early out if we hit something very close to start
-                    if (hit.Distance < 1e-4f)
+                    var hullIndex = HullIndices[i];
+                    var hull = Hulls[hullIndex];
+                    var hit = AABBTraceHull(trace, hull);
+                    if (hit.Hit && hit.Distance < closestHit.Distance)
                     {
-                        return closestHit;
+                        closestHit = hit;
+
+                        // Early out if we hit something very close to start
+                        if (hit.Distance < 1e-4f)
+                        {
+                            return true; // Request early exit
+                        }
                     }
                 }
-            }
-        }
-
-        return closestHit;
+                return false; // Continue traversal
+            });
     }
 
     private static TraceResult RayIntersectsWithMesh(RayTraceContext ray, PhysicsMeshData mesh)
     {
-        Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
-        var stackCount = 0;
-        stack[stackCount++] = (mesh.PhysicsTree[0], 0);
-
-        var closestHit = new TraceResult();
-
-        while (stackCount > 0)
-        {
-            var nodeWithIndex = stack[--stackCount];
-            var node = nodeWithIndex.Node;
-            if (!RayIntersectsAABB(ray, node.Min, node.Max))
+        return TraverseBVH(
+            mesh.PhysicsTree,
+            ray.Direction,
+            node => !RayIntersectsAABB(ray, node.Min, node.Max),
+            (node, ref closestHit) =>
             {
-                continue;
-            }
+                var count = (int)node.ChildOffset;
+                var startIndex = (int)node.TriangleOffset;
 
-            if (node.Type != NodeType.Leaf)
-            {
-                var leftChild = nodeWithIndex.Index + 1;
-                var rightChild = nodeWithIndex.Index + (int)node.ChildOffset;
-
-                var rayIsPositive = ray.Direction[(int)node.Type] >= 0;
-                var (nearId, farId) = rayIsPositive
-                    ? (leftChild, rightChild)    // Ray going positive direction, traverse left first
-                    : (rightChild, leftChild);   // Ray going negative direction, traverse right first
-
-                // Push far node first so near node is processed first (stack is LIFO)
-                stack[stackCount++] = new(mesh.PhysicsTree[farId], farId);
-                stack[stackCount++] = new(mesh.PhysicsTree[nearId], nearId);
-                continue;
-            }
-
-            // Check triangles in this leaf node
-            var count = (int)node.ChildOffset;
-            var startIndex = (int)node.TriangleOffset;
-
-            for (var i = startIndex; i < startIndex + count; i++)
-            {
-                var triangle = mesh.Triangles[i];
-                var v0 = mesh.VertexPositions[triangle.X];
-                var v1 = mesh.VertexPositions[triangle.Y];
-                var v2 = mesh.VertexPositions[triangle.Z];
-
-                if (!RayIntersectsTriangle(ray, v0, v1, v2, out var intersection))
+                for (var i = startIndex; i < startIndex + count; i++)
                 {
-                    continue;
-                }
+                    var triangle = mesh.Triangles[i];
+                    var v0 = mesh.VertexPositions[triangle.X];
+                    var v1 = mesh.VertexPositions[triangle.Y];
+                    var v2 = mesh.VertexPositions[triangle.Z];
 
-                // Update if this is the closest hit
-                if (intersection.Distance < closestHit.Distance)
-                {
-                    closestHit = new(true, ray.Origin + ray.Direction * intersection.Distance, intersection.Normal, intersection.Distance, i);
-                }
-            }
-        }
+                    if (!RayIntersectsTriangle(ray, v0, v1, v2, out var intersection))
+                    {
+                        continue;
+                    }
 
-        return closestHit;
+                    // Update if this is the closest hit
+                    if (intersection.Distance < closestHit.Distance)
+                    {
+                        closestHit = new(true, ray.Origin + ray.Direction * intersection.Distance, intersection.Normal, intersection.Distance, i);
+                    }
+                }
+                return false; // Continue traversal
+            });
     }
 
     private static bool RayIntersectsAABB(RayTraceContext ray, Vector3 min, Vector3 max)
@@ -503,77 +448,48 @@ public class Rubikon
 
     private TraceResult AABBTraceMesh(AABBTraceContext trace, PhysicsMeshData mesh)
     {
-        Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
-        var stackCount = 0;
-        stack[stackCount++] = (mesh.PhysicsTree[0], 0);
-
-        var closestHit = new TraceResult();
-
         var ray = new RayTraceContext(trace.Origin, trace.End);
 
-        while (stackCount > 0)
-        {
-            var nodeWithIndex = stack[--stackCount];
-            var node = nodeWithIndex.Node;
-
-            // Expand node AABB by trace half extents for conservative culling
-            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents))
+        return TraverseBVH(
+            mesh.PhysicsTree,
+            ray.Direction,
+            node => !RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents),
+            (node, ref closestHit) =>
             {
-                continue;
-            }
+                var count = (int)node.ChildOffset;
+                var startIndex = (int)node.TriangleOffset;
 
-            if (node.Type != NodeType.Leaf)
-            {
-                var leftChild = nodeWithIndex.Index + 1;
-                var rightChild = nodeWithIndex.Index + (int)node.ChildOffset;
-
-                var rayIsPositive = ray.Direction[(int)node.Type] >= 0;
-                var (nearId, farId) = rayIsPositive
-                    ? (leftChild, rightChild)
-                    : (rightChild, leftChild);
-
-                // Push far node first so near node is processed first (stack is LIFO)
-                stack[stackCount++] = new(mesh.PhysicsTree[farId], farId);
-                stack[stackCount++] = new(mesh.PhysicsTree[nearId], nearId);
-                continue;
-            }
-
-            // Process triangles in leaf node
-            var count = (int)node.ChildOffset;
-            var startIndex = (int)node.TriangleOffset;
-
-            for (var i = startIndex; i < startIndex + count; i++)
-            {
-                var triangle = mesh.Triangles[i];
-                var v0 = mesh.VertexPositions[triangle.X];
-                var v1 = mesh.VertexPositions[triangle.Y];
-                var v2 = mesh.VertexPositions[triangle.Z];
-
-                var hit = AABBTraceTriangle(trace, v0, v1, v2);
-
-                if (!hit.Hit)
+                for (var i = startIndex; i < startIndex + count; i++)
                 {
-                    continue;
+                    var triangle = mesh.Triangles[i];
+                    var v0 = mesh.VertexPositions[triangle.X];
+                    var v1 = mesh.VertexPositions[triangle.Y];
+                    var v2 = mesh.VertexPositions[triangle.Z];
+
+                    var hit = AABBTraceTriangle(trace, v0, v1, v2);
+
+                    if (!hit.Hit)
+                    {
+                        continue;
+                    }
+
+                    // Skip if we're already past a closer hit
+                    if (hit.Distance >= closestHit.Distance)
+                    {
+                        continue;
+                    }
+
+                    // Update closest hit
+                    closestHit = new(true, hit.HitPosition, hit.HitNormal, hit.Distance, i);
+
+                    // Early out if we hit at the very start
+                    if (hit.Distance < 1e-6f)
+                    {
+                        return true; // Request early exit
+                    }
                 }
-
-                // Skip if we're already past a closer hit
-                if (hit.Distance >= closestHit.Distance)
-                {
-                    continue;
-                }
-
-                // Update closest hit
-                closestHit = new(true, hit.HitPosition, hit.HitNormal, hit.Distance, i);
-
-                // Early out if we hit at the very start
-                if (hit.Distance < 1e-6f)
-                {
-                    return closestHit;
-                }
-            }
-        }
-
-        return closestHit;
+                return false; // Continue traversal
+            });
     }
 
     private static TraceResult AABBTraceTriangle(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2)
@@ -755,63 +671,32 @@ public class Rubikon
 
     public static bool MeshVertsInsideAABB(AABB aabb, PhysicsMeshData mesh)
     {
-        Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
-        var stackCount = 0;
-        stack[stackCount++] = (mesh.PhysicsTree[0], 0);
-
-        var closestHit = new TraceResult();
-
-
-        while (stackCount > 0)
-        {
-            var nodeWithIndex = stack[--stackCount];
-            var node = nodeWithIndex.Node;
-
-            // Skip nodes that don't intersect with query AABB
-            if (!aabb.Intersects(new AABB(node.Min, node.Max)))
+        var result = TraverseBVH(
+            mesh.PhysicsTree,
+            null, // No directional ordering needed
+            node => !aabb.Intersects(new AABB(node.Min, node.Max)),
+            (node, ref _) =>
             {
-                continue;
-            }
+                var count = (int)node.ChildOffset;
+                var startIndex = (int)node.TriangleOffset;
 
-            if (node.Type != NodeType.Leaf)
-            {
-                var leftChild = nodeWithIndex.Index + 1;
-                var rightChild = nodeWithIndex.Index + (int)node.ChildOffset;
-
-                //can't be bothered with this, we really don't gaf about the order here, efficiency is for nerds
-                var rayIsPositive = true;
-                var (nearId, farId) = rayIsPositive
-                    ? (leftChild, rightChild)
-                    : (rightChild, leftChild);
-
-                // Push far node first so near node is processed first (stack is LIFO)
-                stack[stackCount++] = new(mesh.PhysicsTree[farId], farId);
-                stack[stackCount++] = new(mesh.PhysicsTree[nearId], nearId);
-                continue;
-            }
-
-            // Process triangles in leaf node
-            var count = (int)node.ChildOffset;
-            var startIndex = (int)node.TriangleOffset;
-
-            for (var i = startIndex; i < startIndex + count; i++)
-            {
-                var triangle = mesh.Triangles[i];
-                var v0 = mesh.VertexPositions[triangle.X];
-                var v1 = mesh.VertexPositions[triangle.Y];
-                var v2 = mesh.VertexPositions[triangle.Z];
-
-                var hasHit = aabb.Contains(v0);
-                hasHit |= aabb.Contains(v1);
-                hasHit |= aabb.Contains(v2);
-
-                if (hasHit)
+                for (var i = startIndex; i < startIndex + count; i++)
                 {
-                    return true;
+                    var triangle = mesh.Triangles[i];
+                    var v0 = mesh.VertexPositions[triangle.X];
+                    var v1 = mesh.VertexPositions[triangle.Y];
+                    var v2 = mesh.VertexPositions[triangle.Z];
+
+                    if (aabb.Contains(v0) || aabb.Contains(v1) || aabb.Contains(v2))
+                    {
+                        return true; // Request early exit (found a vertex inside)
+                    }
                 }
-            }
-        }
-        return false;
+                return false; // Continue traversal
+            });
+
+        // Return true if we found any vertex (indicated by early exit from traversal)
+        return result.Hit;
     }
 
     private static bool AabbAgainstVert(
@@ -954,5 +839,63 @@ public class Rubikon
             childOffset,
             0
         );
+    }
+
+    /// <summary>
+    /// Should we traverse into this node?
+    /// </summary>
+    private delegate bool NodeCullFunc(Node node);
+
+    /// <summary>
+    /// Process a leaf node. Return true to stop traversal early.
+    /// </summary>
+    private delegate bool LeafProcessFunc(Node node, ref TraceResult closestHit);
+
+    private static TraceResult TraverseBVH(
+        Node[] tree,
+        Vector3? rayDirection,
+        NodeCullFunc shouldCull,
+        LeafProcessFunc processLeaf)
+    {
+        Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
+        var stackCount = 0;
+        stack[stackCount++] = (tree[0], 0);
+
+        var closestHit = new TraceResult();
+
+        while (stackCount > 0)
+        {
+            var nodeWithIndex = stack[--stackCount];
+            var node = nodeWithIndex.Node;
+
+            if (shouldCull(node))
+            {
+                continue;
+            }
+
+            if (node.Type != NodeType.Leaf)
+            {
+                var leftChild = nodeWithIndex.Index + 1;
+                var rightChild = nodeWithIndex.Index + (int)node.ChildOffset;
+
+                // Order children based on ray direction if provided
+                var (nearId, farId) = rayDirection.HasValue && rayDirection.Value[(int)node.Type] >= 0
+                    ? (leftChild, rightChild)
+                    : (rightChild, leftChild);
+
+                // Push far node first so near node is processed first (stack is LIFO)
+                stack[stackCount++] = new(tree[farId], farId);
+                stack[stackCount++] = new(tree[nearId], nearId);
+                continue;
+            }
+
+            // Process leaf node - return early if requested
+            if (processLeaf(node, ref closestHit))
+            {
+                return closestHit;
+            }
+        }
+
+        return closestHit;
     }
 }
