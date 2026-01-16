@@ -17,7 +17,19 @@ public class Rubikon
         Vector3[] VertexPositions,
         Triangle[] Triangles,
         Node[] PhysicsTree
-    );
+    )
+    {
+        public bool TraceAABBTri(int i, AABBTraceContext trace, ref TraceResult closestHit)
+        {
+            var triangle = Triangles[i];
+            var v0 = VertexPositions[triangle.X];
+            var v1 = VertexPositions[triangle.Y];
+            var v2 = VertexPositions[triangle.Z];
+
+            var hit = AABBTraceTriangle(trace, v0, v1, v2);
+            return closestHit.MinimizeWith(hit) && hit.IsMinimalDistance;
+        }
+    }
 
     public record PhysicsHullData(
         Vector3 Min,
@@ -81,13 +93,42 @@ public class Rubikon
         }
 
         // Build BVH for hulls
-        HullIndices = Enumerable.Range(0, Hulls.Length).ToArray();
+        HullIndices = [.. Enumerable.Range(0, Hulls.Length)];
         HullTree = BuildHullBVH();
     }
 
     public record struct TraceResult(bool Hit, Vector3 HitPosition, Vector3 HitNormal, float Distance, int TriangleIndex)
     {
         public TraceResult() : this(false, Vector3.Zero, Vector3.UnitZ, float.MaxValue, -1) { }
+
+        /// <summary>
+        /// Did we hit something very close to the starting position?
+        /// </summary>
+        public readonly bool IsMinimalDistance => Distance < 1e-4f;
+
+        /// <summary>
+        /// Updates this TraceResult if the other is closer. Returns true if updated.
+        /// </summary>
+        public bool MinimizeWith(TraceResult other)
+        {
+            if (other.Hit && other.Distance < Distance)
+            {
+                this = other;
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    private static bool ReplaceIfCloser_ExitIfMinimal(ref TraceResult closestHit, TraceResult hit)
+    {
+        if (closestHit.MinimizeWith(hit))
+        {
+            return closestHit.IsMinimalDistance;
+        }
+
+        return false;
     }
 
     public readonly struct RayTraceContext
@@ -122,19 +163,13 @@ public class Rubikon
             }
 
             var hit = RayIntersectsWithMesh(ray, mesh);
-            if (hit.Hit && hit.Distance < closestHit.Distance)
-            {
-                closestHit = hit;
-            }
+            closestHit.MinimizeWith(hit);
         }
 
         foreach (var hull in Hulls)
         {
             var hit = RayIntersectsWithHull(ray, hull);
-            if (hit.Hit && hit.Distance < closestHit.Distance)
-            {
-                closestHit = hit;
-            }
+            closestHit.MinimizeWith(hit);
         }
 
         return closestHit;
@@ -182,33 +217,17 @@ public class Rubikon
             }
 
             var hit = AABBTraceMesh(trace, mesh);
-            if (hit.Hit && hit.Distance < closestHit.Distance)
+            if (ReplaceIfCloser_ExitIfMinimal(ref closestHit, hit))
             {
-                closestHit = hit;
-
-                // Early out if we hit something very close to start
-                if (hit.Distance < 1e-4f)
-                {
-                    break;
-                }
+                break;
             }
         }
-
-        //TODO: Do we want trace handling that guarantees the position is short of an intersection? The math for that is annoying so I will just ignore it for now.
-
-        //if (VertsInsideAABB(new AABB(closestHit.HitPosition - trace.HalfExtents, closestHit.HitPosition + trace.HalfExtents)))
-        // {
-        //     Debuger.Break();
-        // }
 
         // Check against hulls using BVH
         if (HullTree.Length > 0)
         {
             var hit = AABBTraceHullBVH(trace);
-            if (hit.Hit && hit.Distance < closestHit.Distance)
-            {
-                closestHit = hit;
-            }
+            closestHit.MinimizeWith(hit);
         }
 
         return closestHit;
@@ -307,7 +326,7 @@ public class Rubikon
     {
         var ray = new RayTraceContext(trace.Origin, trace.End);
 
-        return TraverseBVH(
+        return RayTraceKdTree(
             HullTree,
             ray,
             trace.HalfExtents,
@@ -321,15 +340,9 @@ public class Rubikon
                     var hullIndex = HullIndices[i];
                     var hull = Hulls[hullIndex];
                     var hit = AABBTraceHull(trace, hull);
-                    if (hit.Hit && hit.Distance < closestHit.Distance)
+                    if (ReplaceIfCloser_ExitIfMinimal(ref closestHit, hit))
                     {
-                        closestHit = hit;
-
-                        // Early out if we hit something very close to start
-                        if (hit.Distance < 1e-4f)
-                        {
-                            return true; // Request early exit
-                        }
+                        return true; // Request early exit
                     }
                 }
                 return false; // Continue traversal
@@ -338,7 +351,7 @@ public class Rubikon
 
     private static TraceResult RayIntersectsWithMesh(RayTraceContext ray, PhysicsMeshData mesh)
     {
-        return TraverseBVH(
+        return RayTraceKdTree(
             mesh.PhysicsTree,
             ray,
             Vector3.Zero,
@@ -434,51 +447,10 @@ public class Rubikon
 
     private TraceResult AABBTraceMesh(AABBTraceContext trace, PhysicsMeshData mesh)
     {
-        var ray = new RayTraceContext(trace.Origin, trace.End);
-
-        return TraverseBVH(
-            mesh.PhysicsTree,
-            ray,
-            trace.HalfExtents,
-            (node, ref closestHit) =>
-            {
-                var count = (int)node.ChildOffset;
-                var startIndex = (int)node.TriangleOffset;
-
-                for (var i = startIndex; i < startIndex + count; i++)
-                {
-                    var triangle = mesh.Triangles[i];
-                    var v0 = mesh.VertexPositions[triangle.X];
-                    var v1 = mesh.VertexPositions[triangle.Y];
-                    var v2 = mesh.VertexPositions[triangle.Z];
-
-                    var hit = AABBTraceTriangle(trace, v0, v1, v2);
-
-                    if (!hit.Hit)
-                    {
-                        continue;
-                    }
-
-                    // Skip if we're already past a closer hit
-                    if (hit.Distance >= closestHit.Distance)
-                    {
-                        continue;
-                    }
-
-                    // Update closest hit
-                    closestHit = new(true, hit.HitPosition, hit.HitNormal, hit.Distance, i);
-
-                    // Early out if we hit at the very start
-                    if (hit.Distance < 1e-6f)
-                    {
-                        return true; // Request early exit
-                    }
-                }
-                return false; // Continue traversal
-            });
+        return RayTraceKdTree(mesh.PhysicsTree, trace, mesh.TraceAABBTri);
     }
 
-    private static TraceResult AABBTraceTriangle(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2)
+    public static TraceResult AABBTraceTriangle(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2)
     {
         var hitPoint = Vector3.Zero;
         var hitNormal = Vector3.Zero;
@@ -798,28 +770,28 @@ public class Rubikon
     }
 
     /// <summary>
-    /// Process a leaf node. Return true to stop traversal early.
+    /// Process a child inside the leaf node. Return true to stop iteration and further traversal.
     /// </summary>
-    private delegate bool LeafProcessFunc(Node node, ref TraceResult closestHit);
+    private delegate bool ChildProcessFunc(int childIndex, ref TraceResult traceResult);
 
-    private static TraceResult TraverseBVH(
-        Node[] tree,
-        RayTraceContext ray,
-        Vector3 halfExtents,
-        LeafProcessFunc processLeaf)
+    private static TraceResult RayTraceKdTree(
+        Node[] kdTree,
+        AABBTraceContext trace,
+        ChildProcessFunc processChild)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
         var stackCount = 0;
-        stack[stackCount++] = (tree[0], 0);
+        stack[stackCount++] = (kdTree[0], 0);
 
-        var closestHit = new TraceResult();
+        var traceResult = new TraceResult();
+        var ray = new RayTraceContext(trace.Origin, trace.End);
 
         while (stackCount > 0)
         {
             var nodeWithIndex = stack[--stackCount];
             var node = nodeWithIndex.Node;
 
-            if (!RayIntersectsAABB(ray, node.Min - halfExtents, node.Max + halfExtents))
+            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents))
             {
                 continue;
             }
@@ -835,18 +807,23 @@ public class Rubikon
                     : (rightChild, leftChild);
 
                 // Push far node first so near node is processed first (stack is LIFO)
-                stack[stackCount++] = new(tree[farId], farId);
-                stack[stackCount++] = new(tree[nearId], nearId);
+                stack[stackCount++] = new(kdTree[farId], farId);
+                stack[stackCount++] = new(kdTree[nearId], nearId);
                 continue;
             }
 
-            // Process leaf node - return early if requested
-            if (processLeaf(node, ref closestHit))
+            var count = (int)node.ChildOffset;
+            var startIndex = (int)node.TriangleOffset;
+
+            for (var i = startIndex; i < startIndex + count; i++)
             {
-                return closestHit;
+                if (processChild(i, ref traceResult))
+                {
+                    return traceResult;
+                }
             }
         }
 
-        return closestHit;
+        return traceResult;
     }
 }
