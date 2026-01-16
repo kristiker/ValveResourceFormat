@@ -214,20 +214,6 @@ public class Rubikon
         return closestHit;
     }
 
-    public bool VertsInsideAABB(AABB aabb)
-    {
-        foreach (var mesh in Meshes)
-        {
-            var hit = MeshVertsInsideAABB(aabb, mesh);
-
-            if (hit)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static TraceResult RayIntersectsWithHull(RayTraceContext ray, PhysicsHullData hull)
     {
         var closestHit = new TraceResult();
@@ -323,8 +309,8 @@ public class Rubikon
 
         return TraverseBVH(
             HullTree,
-            ray.Direction,
-            node => !RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents),
+            ray,
+            trace.HalfExtents,
             (node, ref closestHit) =>
             {
                 var count = (int)node.ChildOffset;
@@ -354,8 +340,8 @@ public class Rubikon
     {
         return TraverseBVH(
             mesh.PhysicsTree,
-            ray.Direction,
-            node => !RayIntersectsAABB(ray, node.Min, node.Max),
+            ray,
+            Vector3.Zero,
             (node, ref closestHit) =>
             {
                 var count = (int)node.ChildOffset;
@@ -452,8 +438,8 @@ public class Rubikon
 
         return TraverseBVH(
             mesh.PhysicsTree,
-            ray.Direction,
-            node => !RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents),
+            ray,
+            trace.HalfExtents,
             (node, ref closestHit) =>
             {
                 var count = (int)node.ChildOffset;
@@ -669,36 +655,6 @@ public class Rubikon
         return hasHit;
     }
 
-    public static bool MeshVertsInsideAABB(AABB aabb, PhysicsMeshData mesh)
-    {
-        var result = TraverseBVH(
-            mesh.PhysicsTree,
-            null, // No directional ordering needed
-            node => !aabb.Intersects(new AABB(node.Min, node.Max)),
-            (node, ref _) =>
-            {
-                var count = (int)node.ChildOffset;
-                var startIndex = (int)node.TriangleOffset;
-
-                for (var i = startIndex; i < startIndex + count; i++)
-                {
-                    var triangle = mesh.Triangles[i];
-                    var v0 = mesh.VertexPositions[triangle.X];
-                    var v1 = mesh.VertexPositions[triangle.Y];
-                    var v2 = mesh.VertexPositions[triangle.Z];
-
-                    if (aabb.Contains(v0) || aabb.Contains(v1) || aabb.Contains(v2))
-                    {
-                        return true; // Request early exit (found a vertex inside)
-                    }
-                }
-                return false; // Continue traversal
-            });
-
-        // Return true if we found any vertex (indicated by early exit from traversal)
-        return result.Hit;
-    }
-
     private static bool AabbAgainstVert(
         AABBTraceContext trace,
         Vector3 v0, Vector3 v1, Vector3 v2,
@@ -842,19 +798,14 @@ public class Rubikon
     }
 
     /// <summary>
-    /// Should we traverse into this node?
-    /// </summary>
-    private delegate bool NodeCullFunc(Node node);
-
-    /// <summary>
     /// Process a leaf node. Return true to stop traversal early.
     /// </summary>
     private delegate bool LeafProcessFunc(Node node, ref TraceResult closestHit);
 
     private static TraceResult TraverseBVH(
         Node[] tree,
-        Vector3? rayDirection,
-        NodeCullFunc shouldCull,
+        RayTraceContext ray,
+        Vector3 halfExtents,
         LeafProcessFunc processLeaf)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
@@ -868,7 +819,7 @@ public class Rubikon
             var nodeWithIndex = stack[--stackCount];
             var node = nodeWithIndex.Node;
 
-            if (shouldCull(node))
+            if (!RayIntersectsAABB(ray, node.Min - halfExtents, node.Max + halfExtents))
             {
                 continue;
             }
@@ -878,8 +829,8 @@ public class Rubikon
                 var leftChild = nodeWithIndex.Index + 1;
                 var rightChild = nodeWithIndex.Index + (int)node.ChildOffset;
 
-                // Order children based on ray direction if provided
-                var (nearId, farId) = rayDirection.HasValue && rayDirection.Value[(int)node.Type] >= 0
+                var rayIsPositive = ray.Direction[(int)node.Type] >= 0;
+                var (nearId, farId) = rayIsPositive
                     ? (leftChild, rightChild)
                     : (rightChild, leftChild);
 
