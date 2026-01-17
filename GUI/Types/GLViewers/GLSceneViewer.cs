@@ -187,6 +187,7 @@ namespace GUI.Types.GLViewers
 
             var (w, h) = (GLControl!.Width, GLControl.Height);
 
+            Renderer.Postprocess.ResolutionScale = ResolutionScale;
             Renderer.Camera.SetViewportSize(w, h);
             Picker?.Resize(w, h);
         }

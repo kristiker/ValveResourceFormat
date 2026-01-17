@@ -10,6 +10,7 @@
 
 uniform int g_nNumSamplesMSAA = 1;
 uniform bool g_bFlipY = false;
+uniform float g_flResolutionScale = 1.0;
 uniform bool g_bPostProcessEnabled = true;
 
 float InvNumSamples = 1.0 / float(g_nNumSamplesMSAA);
@@ -220,7 +221,7 @@ void main()
     vec2 size = textureSize(g_tColorBuffer);
     vec2 vInvTextureCoords = 1.0 / size;
 
-    vec2 vColorUv = gl_FragCoord.xy * vInvTextureCoords;
+    vec2 vColorUv = gl_FragCoord.xy * vInvTextureCoords * g_flResolutionScale;
     vColorUv.y = g_bFlipY ? 1.0 - vColorUv.y : vColorUv.y;
     
     //vColorUv = CylindricalProjection(vColorUv, blink() ?  0.2 : 0.0 /*mix(0.0, 0.5, sin(g_flTime * 0.5) + 0.3)*/);

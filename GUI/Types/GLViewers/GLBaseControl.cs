@@ -52,6 +52,7 @@ internal abstract class GLBaseControl : IDisposable
 
     protected Framebuffer? GLDefaultFramebuffer;
     protected Framebuffer? MainFramebuffer;
+    protected float ResolutionScale = 1.33f;
 
     public GLBaseControl(RendererContext rendererContext)
     {
@@ -219,7 +220,7 @@ internal abstract class GLBaseControl : IDisposable
 
         if (MainFramebuffer != GLDefaultFramebuffer)
         {
-            MainFramebuffer.Resize(w, h, NumSamples);
+            MainFramebuffer.Resize((int)(w * ResolutionScale), (int)(h * ResolutionScale), NumSamples);
         }
     }
 

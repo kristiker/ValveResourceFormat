@@ -15,6 +15,7 @@ namespace ValveResourceFormat.Renderer
         public bool Enabled { get; set; } = true;
         public float TonemapScalar { get; set; }
         public bool ColorCorrectionEnabled { get; set; } = true;
+        public float ResolutionScale { get; set; } = 1.0f;
 
         public PostProcessRenderer(RendererContext rendererContext)
         {
@@ -64,6 +65,7 @@ namespace ValveResourceFormat.Renderer
             shader.SetTexture(3, "g_tStencilBuffer", colorBuffer.Stencil!);
 
             shader.SetUniform1("g_nNumSamplesMSAA", colorBuffer.NumSamples);
+            shader.SetUniform1("g_flResolutionScale", ResolutionScale);
             shader.SetUniform1("g_bFlipY", flipY);
             shader.SetUniform1("g_bPostProcessEnabled", Enabled);
 
