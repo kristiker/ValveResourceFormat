@@ -151,6 +151,25 @@ vec4 SampleColorBuffer(ivec2 pixelCoords)
     return vColorMSAA;
 }
 
+vec4 SampleColorBufferBilinear(vec2 vColorUv, vec2 size)
+{
+    // Manual bilinear filtering
+    vec2 pixelCoord = vColorUv * size - 0.5;
+    ivec2 pixelCoords = ivec2(floor(pixelCoord));
+    vec2 frac = fract(pixelCoord);
+
+    vec4 sample00 = SampleColorBuffer(pixelCoords + ivec2(0, 0));
+    vec4 sample10 = SampleColorBuffer(pixelCoords + ivec2(1, 0));
+    vec4 sample01 = SampleColorBuffer(pixelCoords + ivec2(0, 1));
+    vec4 sample11 = SampleColorBuffer(pixelCoords + ivec2(1, 1));
+
+    return mix(
+        mix(sample00, sample10, frac.x),
+        mix(sample01, sample11, frac.x),
+        frac.y
+    );
+}
+
 vec2 CylindricalProjection(vec2 vTexCoords, float flDistance)
 {
     if (flDistance == 0.0)
@@ -204,11 +223,13 @@ void main()
     vec2 vColorUv = gl_FragCoord.xy * vInvTextureCoords;
     vColorUv.y = g_bFlipY ? 1.0 - vColorUv.y : vColorUv.y;
     
-    vColorUv = CylindricalProjection(vColorUv, mix(0.0, 0.5, sin(g_flTime * 0.5) + 0.3));
+    //vColorUv = CylindricalProjection(vColorUv, blink() ?  0.2 : 0.0 /*mix(0.0, 0.5, sin(g_flTime * 0.5) + 0.3)*/);
 
     ivec2 pixelCoords = ivec2(vColorUv * size);
 
-    vec4 vColor = SampleColorBuffer(pixelCoords);
+    vec4 vColor = blink()
+        ? SampleColorBufferBilinear(vColorUv, size)
+        : SampleColorBuffer(pixelCoords);
 
     if (g_bPostProcessEnabled)
     {
