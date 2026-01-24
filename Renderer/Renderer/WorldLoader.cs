@@ -16,7 +16,6 @@ namespace ValveResourceFormat.Renderer
 {
     public class WorldLoader
     {
-        private readonly Scene scene;
         private readonly RendererContext RendererContext;
 
         public string MapName { get; }
@@ -31,6 +30,7 @@ namespace ValveResourceFormat.Renderer
         public List<string> CameraNames { get; } = [];
         public List<Matrix4x4> CameraMatrices { get; } = [];
 
+        public Scene Scene { get; }
         public Scene? SkyboxScene { get; set; }
         public SceneSkybox2D? Skybox2D { get; set; }
         public NavMeshFile? NavMesh { get; set; }
@@ -39,7 +39,39 @@ namespace ValveResourceFormat.Renderer
         public float WorldScale { get; set; } = 1.0f;
         // TODO: also store skybox reference rotation
 
-        public static WorldLoader LoadMap(string mapResourceName, Scene scene)
+        public Options LoadOptions { get; set; }
+
+        public struct Options
+        {
+            public Options() { }
+
+            public static Options Base => new()
+            {
+                World = true,
+                WorldPhysics = true,
+                SkyboxWorld = true,
+
+                ParallelPreload = true,
+            };
+
+            public static Options All => Base with
+            {
+                ToolEntityModels = true,
+                WorldPhysicsDebugMesh = true,
+                NavigationMesh = true,
+            };
+
+            public bool World { get; set; }
+            public bool ToolEntityModels { get; set; }
+            public bool SkyboxWorld { get; set; }
+            public bool WorldPhysics { get; set; }
+            public bool WorldPhysicsDebugMesh { get; set; }
+            public bool NavigationMesh { get; set; }
+
+            public bool ParallelPreload { get; set; }
+        }
+
+        public static WorldLoader LoadMap(string mapResourceName, Scene scene, Options? options = null)
         {
             if (mapResourceName.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.OrdinalIgnoreCase))
             {
@@ -51,17 +83,19 @@ namespace ValveResourceFormat.Renderer
             var worldPath = GetWorldNameFromMap(mapResourceName);
             var worldResource = renderContext.FileLoader.LoadFileCompiled(worldPath) ?? throw new FileNotFoundException($"Failed to load world file '{worldPath}'.");
 
-            return new WorldLoader((World)worldResource.DataBlock!, scene, mapResource.ExternalReferences);
+            return new WorldLoader((World)worldResource.DataBlock!, scene, mapResource.ExternalReferences, options);
         }
 
-        public WorldLoader(World world, Scene scene, ResourceExtRefList? mapResourceReferences)
+        public WorldLoader(World world, Scene scene, ResourceExtRefList? mapResourceReferences, Options? options = null)
         {
+            Scene = scene;
+            LoadOptions = options ?? Options.All;
+
             MapName = Path.GetDirectoryName(world.Resource!.FileName!)!.Replace('\\', '/');
             World = world;
-            this.scene = scene;
             RendererContext = scene.RendererContext;
 
-            if (mapResourceReferences != null)
+            if (mapResourceReferences != null && LoadOptions.ParallelPreload)
             {
                 Resource? PreloadResource(string resourceName)
                 {
@@ -161,20 +195,25 @@ namespace ValveResourceFormat.Renderer
                 LoadEntitiesFromLump(entityLump, "Entities", Matrix4x4.Identity);
             }
 
-            Action<List<SceneLight>> lightEntityStore = scene.LightingInfo.LightmapGameVersionNumber switch
+            Action<List<SceneLight>> lightEntityStore = Scene.LightingInfo.LightmapGameVersionNumber switch
             {
-                0 or 1 => scene.LightingInfo.StoreLightMappedLights_V1,
-                >= 2 => scene.LightingInfo.StoreLightMappedLights_V2,
-                _ => x => RendererContext.Logger.LogError("Storing lights for lightmap version {Version} is not supported", scene.LightingInfo.LightmapGameVersionNumber),
+                0 or 1 => Scene.LightingInfo.StoreLightMappedLights_V1,
+                >= 2 => Scene.LightingInfo.StoreLightMappedLights_V2,
+                _ => x => RendererContext.Logger.LogError("Storing lights for lightmap version {Version} is not supported", Scene.LightingInfo.LightmapGameVersionNumber),
             };
 
             lightEntityStore.Invoke(
-                scene.AllNodes.Where(static n => n is SceneLight).Cast<SceneLight>().ToList()
+                Scene.AllNodes.Where(static n => n is SceneLight).Cast<SceneLight>().ToList()
             );
         }
 
         private void LoadWorldNodes()
         {
+            if (LoadOptions.World == false)
+            {
+                return;
+            }
+
             // Output is World_t we need to iterate m_worldNodes inside it.
             var worldNodes = World.GetWorldNodeNames();
             foreach (var worldNode in worldNodes)
@@ -196,7 +235,7 @@ namespace ValveResourceFormat.Renderer
                     MainWorldNode ??= worldNodeData;
 
                     var subloader = new WorldNodeLoader(RendererContext, worldNodeData);
-                    subloader.Load(scene);
+                    subloader.Load(Scene);
 
                     foreach (var layer in subloader.LayerNames)
                     {
@@ -208,6 +247,11 @@ namespace ValveResourceFormat.Renderer
 
         public void LoadWorldPhysics()
         {
+            if (LoadOptions.WorldPhysics == false)
+            {
+                return;
+            }
+
             // TODO: Ideally we would use the vrman files to find relevant files.
             PhysAggregateData? phys = null;
             var physResource = RendererContext.FileLoader.LoadFile($"{MapName}/world_physics.vmdl_c");
@@ -230,13 +274,16 @@ namespace ValveResourceFormat.Renderer
             {
                 Debug.Assert(physResource?.FileName != null);
 
-                foreach (var physSceneNode in PhysSceneNode.CreatePhysSceneNodes(scene, phys, physResource.FileName[..^2]))
+                if (LoadOptions.WorldPhysicsDebugMesh)
                 {
-                    physSceneNode.LayerName = "world_layer_base";
-                    scene.Add(physSceneNode, true);
+                    foreach (var physSceneNode in PhysSceneNode.CreatePhysSceneNodes(Scene, phys, physResource.FileName[..^2]))
+                    {
+                        physSceneNode.LayerName = "world_layer_base";
+                        Scene.Add(physSceneNode, true);
+                    }
                 }
 
-                scene.PhysicsWorld = new Rubikon(phys);
+                Scene.PhysicsWorld = new Rubikon(phys);
             }
         }
 
@@ -260,15 +307,20 @@ namespace ValveResourceFormat.Renderer
 
         private void LoadWorldLightingInfo()
         {
+            if (LoadOptions.World == false)
+            {
+                return;
+            }
+
             var worldLightingInfo = World.GetWorldLightingInfo();
             if (worldLightingInfo == null)
             {
                 return;
             }
 
-            var result = scene.LightingInfo;
+            var result = Scene.LightingInfo;
             result.LightmapVersionNumber = worldLightingInfo.GetInt32Property("m_nLightmapVersionNumber");
-            if (scene.LightingInfo.LightmapVersionNumber == 8)
+            if (Scene.LightingInfo.LightmapVersionNumber == 8)
             {
                 result.LightmapGameVersionNumber = worldLightingInfo.GetInt32Property("m_nLightmapGameVersionNumber");
                 result.LightingData.LightmapUvScale = worldLightingInfo.GetSubCollection("m_vLightmapUvScale").ToVector2();
@@ -316,7 +368,7 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            scene.RenderAttributes.TryAdd("S_LIGHTMAP_VERSION_MINOR", (byte)scene.LightingInfo.LightmapGameVersionNumber);
+            Scene.RenderAttributes.TryAdd("S_LIGHTMAP_VERSION_MINOR", (byte)Scene.LightingInfo.LightmapGameVersionNumber);
         }
 
         static bool IsCamera(string cls)
@@ -401,10 +453,10 @@ namespace ValveResourceFormat.Renderer
                 }
                 else if (light.Accepted)
                 {
-                    var lightNode = SceneLight.FromEntityProperties(scene, light.Type, entity);
+                    var lightNode = SceneLight.FromEntityProperties(Scene, light.Type, entity);
                     lightNode.Transform = transformationMatrix;
                     lightNode.LayerName = layerName;
-                    scene.Add(lightNode, true);
+                    Scene.Add(lightNode, true);
                 }
                 else if (classname == "point_template")
                 {
@@ -452,7 +504,7 @@ namespace ValveResourceFormat.Renderer
                     if (classname == "env_global_light")
                     {
                         var angles = new Vector3(50, 43, 0);
-                        scene.Add(new SceneLight(scene)
+                        Scene.Add(new SceneLight(Scene)
                         {
                             Type = SceneLight.LightType.Directional,
                             Transform = EntityTransformHelper.CreateRotationMatrixFromEulerAngles(angles),
@@ -463,16 +515,16 @@ namespace ValveResourceFormat.Renderer
                             Name = "Source 2 Viewer dynamic sunlight for Dota",
                         }, false);
 
-                        scene.LightingInfo.EnableDynamicShadows = true;
-                        scene.LightingInfo.SunLightShadowCoverageScale = 4f;
+                        Scene.LightingInfo.EnableDynamicShadows = true;
+                        Scene.LightingInfo.SunLightShadowCoverageScale = 4f;
                     }
                 }
                 else if (classname == "env_gradient_fog")
                 {
                     // If it has "start_disabled", only take it if we haven't found any others yet.
-                    if (!entity.GetProperty<bool>("start_disabled") || scene.FogInfo.GradientFogActive)
+                    if (!entity.GetProperty<bool>("start_disabled") || Scene.FogInfo.GradientFogActive)
                     {
-                        scene.FogInfo.GradientFogActive = true;
+                        Scene.FogInfo.GradientFogActive = true;
 
                         var distExponent = entity.GetPropertyUnchecked<float>("fogfalloffexponent");
                         var startDist = entity.GetPropertyUnchecked<float>("fogstart");
@@ -498,7 +550,7 @@ namespace ValveResourceFormat.Renderer
                         var color = entity.GetColor32Property("fogcolor");
                         var maxOpacity = entity.GetPropertyUnchecked<float>("fogmaxopacity");
 
-                        scene.FogInfo.GradientFog = new SceneGradientFog(scene)
+                        Scene.FogInfo.GradientFog = new SceneGradientFog(Scene)
                         {
                             StartDist = startDist,
                             EndDist = endDist,
@@ -516,9 +568,9 @@ namespace ValveResourceFormat.Renderer
                 {
                     // If it has "start_disabled", only take it if it's the first one in the map.
                     // this might not be right, and the first env_cubemap_fog found might take priority, like with post processing
-                    if (!entity.GetProperty<bool>("start_disabled") || scene.FogInfo.CubeFogActive)
+                    if (!entity.GetProperty<bool>("start_disabled") || Scene.FogInfo.CubeFogActive)
                     {
-                        scene.FogInfo.CubeFogActive = true;
+                        Scene.FogInfo.CubeFogActive = true;
 
                         var lodBias = entity.GetPropertyUnchecked<float>("cubemapfoglodbiase");
 
@@ -584,7 +636,7 @@ namespace ValveResourceFormat.Renderer
                                     else
                                     {
                                         RendererContext.Logger.LogWarning("Disabling cubemap fog because failed to find env_sky of target name {SkyEntTargetName}", skyEntTargetName);
-                                        scene.FogInfo.CubeFogActive = false;
+                                        Scene.FogInfo.CubeFogActive = false;
                                     }
                                 }
                             }
@@ -616,10 +668,10 @@ namespace ValveResourceFormat.Renderer
 
                         if (fogTexture == null)
                         {
-                            scene.FogInfo.CubeFogActive = false;
+                            Scene.FogInfo.CubeFogActive = false;
                         }
 
-                        scene.FogInfo.CubemapFog = new SceneCubemapFog(scene)
+                        Scene.FogInfo.CubemapFog = new SceneCubemapFog(Scene)
                         {
                             StartDist = startDist,
                             EndDist = endDist,
@@ -681,7 +733,7 @@ namespace ValveResourceFormat.Renderer
                             var edgeFadeDists = entity.GetVector3Property("edge_fade_dists"); // TODO: Not available on all entities
                             var isCustomTexture = entity.GetProperty<string>("customcubemaptexture") != null;
 
-                            var envMap = new SceneEnvMap(scene, bounds)
+                            var envMap = new SceneEnvMap(Scene, bounds)
                             {
                                 LayerName = layerName,
                                 Transform = transformationMatrix,
@@ -695,7 +747,7 @@ namespace ValveResourceFormat.Renderer
 
                             if (!isCustomTexture)
                             {
-                                scene.LightingInfo.AddEnvironmentMap(envMap);
+                                Scene.LightingInfo.AddEnvironmentMap(envMap);
                             }
                         }
                     }
@@ -707,7 +759,7 @@ namespace ValveResourceFormat.Renderer
                             ? RendererContext.MaterialLoader.GetTexture(lightProbeTextureName, srgbRead: true)
                             : null;
 
-                        var lightProbe = new SceneLightProbe(scene, bounds)
+                        var lightProbe = new SceneLightProbe(Scene, bounds)
                         {
                             LayerName = layerName,
                             Transform = transformationMatrix,
@@ -734,7 +786,7 @@ namespace ValveResourceFormat.Renderer
                             lightProbe.DirectLightIndices.SetWrapMode(TextureWrapMode.ClampToEdge);
                         }
 
-                        scene.LightingInfo.LightProbeType = entity.ContainsKey("light_probe_atlas_x") switch
+                        Scene.LightingInfo.LightProbeType = entity.ContainsKey("light_probe_atlas_x") switch
                         {
                             false => LightProbeType.IndividualProbes,
                             true => LightProbeType.ProbeAtlas,
@@ -758,7 +810,7 @@ namespace ValveResourceFormat.Renderer
                             );
                         }
 
-                        scene.LightingInfo.AddProbe(lightProbe);
+                        Scene.LightingInfo.AddProbe(lightProbe);
                     }
                 }
 
@@ -791,14 +843,14 @@ namespace ValveResourceFormat.Renderer
 
                         try
                         {
-                            var particleNode = new ParticleSceneNode(scene, particleSystem)
+                            var particleNode = new ParticleSceneNode(Scene, particleSystem)
                             {
                                 Name = particle,
                                 Transform = Matrix4x4.CreateTranslation(origin),
                                 LayerName = "Particles",
                                 EntityData = entity,
                             };
-                            scene.Add(particleNode, true);
+                            Scene.Add(particleNode, true);
                         }
                         catch (Exception e)
                         {
@@ -822,7 +874,7 @@ namespace ValveResourceFormat.Renderer
                     var useExposure = entity.GetProperty<bool>("enableexposure");
                     var fadeTime = entity.GetPropertyUnchecked<float>("fadetime");
 
-                    var postProcess = new ScenePostProcessVolume(scene)
+                    var postProcess = new ScenePostProcessVolume(Scene)
                     {
                         ExposureSettings = exposureParams,
                         FadeTime = fadeTime,
@@ -853,7 +905,7 @@ namespace ValveResourceFormat.Renderer
                         {
                             postProcess.ModelVolume = ppModelResource;
 
-                            var ppModelNode = new ModelSceneNode(scene, ppModelResource, skin)
+                            var ppModelNode = new ModelSceneNode(Scene, ppModelResource, skin)
                             {
                                 Transform = transformationMatrix,
                                 LayerName = layerName,
@@ -863,7 +915,7 @@ namespace ValveResourceFormat.Renderer
 
                             postProcessHasModel = true; // for collision we'd need to collect phys data within the class
 
-                            scene.Add(ppModelNode, true);
+                            Scene.Add(ppModelNode, true);
                         }
                         else
                         {
@@ -872,7 +924,7 @@ namespace ValveResourceFormat.Renderer
 
                     }
 
-                    scene.PostProcessInfo.AddPostProcessVolume(postProcess);
+                    Scene.PostProcessInfo.AddPostProcessVolume(postProcess);
 
                     // If the post process model exists, we hackily let it add the model to the scene nodes
                     if (!postProcessHasModel)
@@ -895,15 +947,15 @@ namespace ValveResourceFormat.Renderer
                         ExposureSpeedUp = exposureRate,
                     };
 
-                    var tonemapController = new SceneTonemapController(scene)
+                    var tonemapController = new SceneTonemapController(Scene)
                     {
                         ControllerExposureSettings = exposureSettings,
                     };
 
 
-                    if (scene.PostProcessInfo.MasterTonemapController == null)
+                    if (Scene.PostProcessInfo.MasterTonemapController == null)
                     {
-                        scene.PostProcessInfo.MasterTonemapController = tonemapController;
+                        Scene.PostProcessInfo.MasterTonemapController = tonemapController;
                     }
                 }
 
@@ -921,7 +973,7 @@ namespace ValveResourceFormat.Renderer
 
                     if (errorModelResource?.DataBlock is Model errorModelData)
                     {
-                        var errorModel = new ModelSceneNode(scene, errorModelData, skin)
+                        var errorModel = new ModelSceneNode(Scene, errorModelData, skin)
                         {
                             Name = "error",
                             Transform = transformationMatrix,
@@ -929,7 +981,7 @@ namespace ValveResourceFormat.Renderer
                             EntityData = entity,
                         };
 
-                        scene.Add(errorModel, true);
+                        Scene.Add(errorModel, true);
                     }
 
                     return;
@@ -949,7 +1001,7 @@ namespace ValveResourceFormat.Renderer
                     return;
                 }
 
-                var modelNode = new ModelSceneNode(scene, newModel, skin)
+                var modelNode = new ModelSceneNode(Scene, newModel, skin)
                 {
                     Transform = transformationMatrix,
                     Tint = new Vector4(rendercolor, renderamt),
@@ -981,7 +1033,7 @@ namespace ValveResourceFormat.Renderer
                         modelNode.SetActiveMeshGroups(groups.Skip((int)body).Take(1));
                     }
 
-                    scene.Add(modelNode, true);
+                    Scene.Add(modelNode, true);
                 }
 
                 var phys = newModel?.GetEmbeddedPhys();
@@ -1000,13 +1052,13 @@ namespace ValveResourceFormat.Renderer
 
                 if (phys != null)
                 {
-                    foreach (var physSceneNode in PhysSceneNode.CreatePhysSceneNodes(scene, phys, model, classname))
+                    foreach (var physSceneNode in PhysSceneNode.CreatePhysSceneNodes(Scene, phys, model, classname))
                     {
                         physSceneNode.Transform = transformationMatrix;
                         physSceneNode.LayerName = layerName;
                         physSceneNode.EntityData = entity;
 
-                        scene.Add(physSceneNode, true);
+                        Scene.Add(physSceneNode, true);
                     }
                 }
                 else if (!modelNode.HasMeshes)
@@ -1137,7 +1189,7 @@ namespace ValveResourceFormat.Renderer
 
         public void LoadNavigationMesh()
         {
-            if (NavMesh is not null)
+            if (!LoadOptions.NavigationMesh == false || NavMesh is not null)
             {
                 return;
             }
@@ -1187,20 +1239,20 @@ namespace ValveResourceFormat.Renderer
                 // Do not use transformationMatrix because scales need to be ignored
                 EntityTransformHelper.DecomposeTransformationMatrix(entity, out _, out var rotationMatrix, out var positionVector);
 
-                var boxNode = new SimpleBoxSceneNode(scene, color, new Vector3(16f))
+                var boxNode = new SimpleBoxSceneNode(Scene, color, new Vector3(16f))
                 {
                     Transform = rotationMatrix * Matrix4x4.CreateTranslation(positionVector),
                     LayerName = layerName,
                     Name = filename,
                     EntityData = entity,
                 };
-                scene.Add(boxNode, true);
+                Scene.Add(boxNode, true);
             }
             else if (resource.ResourceType == ResourceType.Model && resource.DataBlock is Model modelData)
             {
                 var modelNode = IsCamera(classname)
-                    ? new CameraSceneNode(scene, modelData)
-                    : new ModelSceneNode(scene, modelData, null, isWorldPreview: true) { Name = filename };
+                    ? new CameraSceneNode(Scene, modelData)
+                    : new ModelSceneNode(Scene, modelData, null, isWorldPreview: true) { Name = filename };
 
                 modelNode.Transform = transformationMatrix;
                 modelNode.LayerName = layerName;
@@ -1208,17 +1260,17 @@ namespace ValveResourceFormat.Renderer
 
                 var isAnimated = modelNode.SetAnimationForWorldPreview("tools_preview");
 
-                scene.Add(modelNode, true);
+                Scene.Add(modelNode, true);
             }
             else if (resource.ResourceType == ResourceType.Material)
             {
-                var spriteNode = new SpriteSceneNode(scene, RendererContext, resource, transformationMatrix.Translation)
+                var spriteNode = new SpriteSceneNode(Scene, RendererContext, resource, transformationMatrix.Translation)
                 {
                     LayerName = layerName,
                     Name = filename,
                     EntityData = entity,
                 };
-                scene.Add(spriteNode, true);
+                Scene.Add(spriteNode, true);
             }
             else
             {
@@ -1265,12 +1317,12 @@ namespace ValveResourceFormat.Renderer
                     end -= origin;
                     start -= origin;
 
-                    var lineNode = new LineSceneNode(scene, start, end, line.Color, line.Color)
+                    var lineNode = new LineSceneNode(Scene, start, end, line.Color, line.Color)
                     {
                         LayerName = layerName,
                         Transform = Matrix4x4.CreateTranslation(origin)
                     };
-                    scene.Add(lineNode, true);
+                    Scene.Add(lineNode, true);
                 }
             }
         }
@@ -1314,7 +1366,7 @@ namespace ValveResourceFormat.Renderer
                 end -= origin;
                 var lineStart = start - origin;
 
-                var lineNode = new LineSceneNode(scene, lineStart, end, new Color32(0, 255, 0), new Color32(255, 0, 0))
+                var lineNode = new LineSceneNode(Scene, lineStart, end, new Color32(0, 255, 0), new Color32(255, 0, 0))
                 {
                     LayerName = "Entity Connections",
                     Transform = Matrix4x4.CreateTranslation(origin),
@@ -1322,7 +1374,7 @@ namespace ValveResourceFormat.Renderer
                     Name = $"Line from {entity.GetProperty<string>("hammeruniqueid")} to {endEntity.GetProperty<string>("hammeruniqueid")}"
 #endif
                 };
-                scene.Add(lineNode, true);
+                Scene.Add(lineNode, true);
             }
         }
 
