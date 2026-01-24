@@ -1166,14 +1166,12 @@ namespace ValveResourceFormat.Renderer
 
             foreach (var node in SkyboxScene.AllNodes)
             {
-                if (node.LayerName == "Entities")
-                {
-                    node.Transform *= offsetTransform;
-                }
-                else
-                {
-                    node.Transform *= offsetAndScaleTransform;
-                }
+                var className = node.EntityData?.GetProperty<string>("classname");
+                var ignoreScale = node.LayerName == "Entities" && className?.StartsWith("prop_", StringComparison.InvariantCultureIgnoreCase) != true;
+
+                node.Transform *= ignoreScale
+                    ? offsetTransform
+                    : offsetAndScaleTransform;
             }
 
             foreach (var envmap in SkyboxScene.LightingInfo.EnvMaps)
