@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using static ValveResourceFormat.Renderer.ShaderLoader;
@@ -335,8 +337,8 @@ namespace ValveResourceFormat.Renderer
         }
 #else
         // Path to the folder where the ValveResourceFormat.slnx is on disk (parent of the GUI folder)
-        private static readonly string SolutionRootDirector = GetSolutionRootDirectory();
-        private static readonly string ShaderRootDirectory = Path.Combine(SolutionRootDirector, ShaderDirectory.Replace('.', Path.DirectorySeparatorChar));
+        private static readonly string SolutionRootDirectory = GetSolutionRootDirectory();
+        private static readonly string ShaderRootDirectory = Path.Combine(SolutionRootDirectory, ShaderDirectory.Replace('.', Path.DirectorySeparatorChar));
 
         private static FileStream GetShaderStream(string name)
         {
@@ -363,9 +365,8 @@ namespace ValveResourceFormat.Renderer
             return Path.Combine(ShaderRootDirectory, name);
         }
 
-        private static string GetSolutionRootDirectory()
+        private static string GetSolutionRootDirectory([CallerFilePath] string? root = "")
         {
-            var root = AppContext.BaseDirectory;
             var failsafe = 10;
             var fileName = string.Empty;
 
