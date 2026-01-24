@@ -16,6 +16,7 @@ namespace GUI.Types.GLViewers;
 internal abstract class GLBaseControl : IDisposable
 {
     protected RendererControl? UiControl;
+    protected CancellationTokenSource loaderCancellation;
 
     protected OpenTK.Windowing.Desktop.NativeWindow? GLNativeWindow;
     public GLControl? GLControl { get; private set; }
@@ -57,6 +58,8 @@ internal abstract class GLBaseControl : IDisposable
     {
         LastUpdate = Stopwatch.GetTimestamp();
         RendererContext = rendererContext;
+
+        loaderCancellation = new CancellationTokenSource();
 
 #if DEBUG
         ShaderHotReload = new ShaderHotReload(this, rendererContext.ShaderLoader);
@@ -279,7 +282,11 @@ internal abstract class GLBaseControl : IDisposable
             GLControl.LostFocus -= OnLostFocus;
 
             UiControl?.Dispose();
+
+            loaderCancellation.Cancel();
         }
+
+        loaderCancellation.Dispose();
 
 #if DEBUG
         ShaderHotReload?.Dispose();
@@ -506,6 +513,8 @@ internal abstract class GLBaseControl : IDisposable
 
         Debug.Assert(GLNativeWindow is not null);
 
+        loaderCancellation.Token.ThrowIfCancellationRequested();
+
         using var lockedGl = MakeCurrent();
 
         GLNativeWindow.Context.SwapInterval = Settings.Config.Vsync;
@@ -566,7 +575,7 @@ internal abstract class GLBaseControl : IDisposable
 
     protected virtual void OnGLLoad()
     {
-        //
+        loaderCancellation.Token.ThrowIfCancellationRequested();
     }
 
     protected void SetMoveSpeedOrZoomLabel(string text) => UiControl?.SetMoveSpeed(text);

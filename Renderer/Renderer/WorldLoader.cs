@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using OpenTK.Graphics.OpenGL;
 using SteamDatabase.ValvePak;
@@ -18,6 +19,7 @@ namespace ValveResourceFormat.Renderer
     {
         private readonly Scene scene;
         private readonly RendererContext RendererContext;
+        private readonly CancellationToken cancellationToken;
 
         public string MapName { get; }
 
@@ -54,12 +56,13 @@ namespace ValveResourceFormat.Renderer
             return new WorldLoader((World)worldResource.DataBlock!, scene, mapResource.ExternalReferences);
         }
 
-        public WorldLoader(World world, Scene scene, ResourceExtRefList? mapResourceReferences)
+        public WorldLoader(World world, Scene scene, ResourceExtRefList? mapResourceReferences, CancellationToken cancellationToken = default)
         {
             MapName = Path.GetDirectoryName(world.Resource!.FileName!)!.Replace('\\', '/');
             World = world;
             this.scene = scene;
             RendererContext = scene.RendererContext;
+            this.cancellationToken = cancellationToken;
 
             if (mapResourceReferences != null)
             {
@@ -84,15 +87,16 @@ namespace ValveResourceFormat.Renderer
                     .Select(x => x.Name)
                     .Where(r => !r.StartsWith("_bakeresourcecache", StringComparison.Ordinal));
 
-                var otherTask = Task.Run(LoadNavigationMesh);
+                var otherTask = Task.Run(LoadNavigationMesh, cancellationToken);
+                var parallelOptions = new ParallelOptions { CancellationToken = cancellationToken };
 
-                Parallel.ForEach(resourceNames, resourceReference =>
+                Parallel.ForEach(resourceNames, parallelOptions, resourceReference =>
                 {
                     var resource = PreloadResource(resourceReference);
 
                     if (resource is { ExternalReferences.ResourceRefInfoList: var refs })
                     {
-                        Parallel.ForEach(refs, extRef =>
+                        Parallel.ForEach(refs, parallelOptions, extRef =>
                         {
                             PreloadResource(extRef.Name);
                         });
@@ -114,16 +118,17 @@ namespace ValveResourceFormat.Renderer
                             }
                         }
 
-                        Parallel.ForEach(toolIcons, file =>
+                        Parallel.ForEach(toolIcons, parallelOptions, file =>
                         {
                             PreloadResource(file);
                         });
                     }
                 });
 
-                otherTask.Wait();
+                otherTask.Wait(cancellationToken);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             Load();
         }
 
@@ -175,6 +180,7 @@ namespace ValveResourceFormat.Renderer
 
         private void LoadWorldNodes()
         {
+            cancellationToken.ThrowIfCancellationRequested();
             // Output is World_t we need to iterate m_worldNodes inside it.
             var worldNodes = World.GetWorldNodeNames();
             foreach (var worldNode in worldNodes)
@@ -196,7 +202,7 @@ namespace ValveResourceFormat.Renderer
                     MainWorldNode ??= worldNodeData;
 
                     var subloader = new WorldNodeLoader(RendererContext, worldNodeData);
-                    subloader.Load(scene);
+                    subloader.Load(scene, cancellationToken);
 
                     foreach (var layer in subloader.LayerNames)
                     {
@@ -327,6 +333,7 @@ namespace ValveResourceFormat.Renderer
 
         private void LoadEntitiesFromLump(EntityLump entityLump, string layerName, Matrix4x4 parentTransform)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var childEntities = entityLump.GetChildEntityNames();
             var childEntityLumps = new Dictionary<string, EntityLump>(childEntities.Length);
 
@@ -1018,6 +1025,7 @@ namespace ValveResourceFormat.Renderer
 
             foreach (var (entity, classname) in entitiesReordered)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
                     LoadEntity(classname, entity);

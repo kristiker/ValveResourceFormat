@@ -29,7 +29,7 @@ namespace ValveResourceFormat.Renderer
             }
         }
 
-        public void Load(Scene scene)
+        public void Load(Scene scene, System.Threading.CancellationToken cancellationToken = default)
         {
             if (externalReferences is not null)
             {
@@ -51,6 +51,8 @@ namespace ValveResourceFormat.Renderer
             // Output is WorldNode_t we need to iterate m_sceneObjects inside it
             foreach (var sceneObject in node.SceneObjects)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 var layerIndex = (int)(node.SceneObjectLayerIndices?[i++] ?? -1);
 
                 // m_vCubeMapOrigin in older files
@@ -128,6 +130,8 @@ namespace ValveResourceFormat.Renderer
 
             foreach (var sceneObject in node.AggregateSceneObjects)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 var renderableModel = sceneObject.GetProperty<string>("m_renderableModel");
 
                 if (renderableModel != null)

@@ -163,7 +163,7 @@ namespace GUI.Types.GLViewers
 
             if (world != null)
             {
-                LoadedWorld = new WorldLoader(world, Scene, mapExternalReferences);
+                LoadedWorld = new WorldLoader(world, Scene, mapExternalReferences, loaderCancellation.Token);
 
                 if (LoadedWorld.SkyboxScene != null)
                 {
