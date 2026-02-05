@@ -14,9 +14,14 @@ void main()
 {
     vec4 color = texture(g_tColor, vTexCoordOut);
 
+    float orig = color.a;
+
 #if (F_ALPHA_TEST == 1) || (F_ALPHA_TEST == 2)
     color.a = AlphaTestAntiAliasing(color.a, vTexCoordOut);
 #endif
 
-    outputColor = color;
+    outputColor = color.aaaa;
+    outputColor.rg = orig.xx;
+
+    outputColor = color.rgba;
 }
