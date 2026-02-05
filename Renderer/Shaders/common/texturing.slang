@@ -230,24 +230,36 @@ vec3 calculateWorldNormal(vec3 normalMap, vec3 normal, vec3 tangent, vec3 bitang
 
 #if (F_ALPHA_TEST > 0) || (alphatest)
 
-    uniform float g_flAlphaTestReference = 0.5; // min = 1 / 1000
+    const int g_nMsaaSamples = 4;
+    uniform float g_flAlphaTestReference = 0.5;
     uniform float g_flAntiAliasedEdgeStrength = 1.0;
 
     float AlphaTestAntiAliasing(float flOpacity, vec2 UVs)
     {
+        const bool isMsaa = (g_nMsaaSamples > 1);
+
         const float epsilon = 1 / 255.0;
-        
-        // Clip first to try to kill the wave if we're in an area of all zero
-        if (flOpacity - epsilon < g_flAlphaTestReference)
+        float flTestValue = isMsaa
+            ? 0.0
+            : g_flAlphaTestReference;
+
+        if (flOpacity - epsilon < flTestValue)
         {
             discard;
         }
+    
+        if (isMsaa)
+        {
+            // Sharp anti-aliased edge using shader derivatives
+            float flAlphaTestAA = saturate( (flOpacity - g_flAlphaTestReference) / ClampToPositive( fwidth(flOpacity) ) + 0.5 );
+            float flAlphaTestAA_Amount = min(1.0, length( fwidth(UVs) ) * 4.0);
+            float flAntiAliasAlphaBlend = mix(1.0, flAlphaTestAA_Amount, g_flAntiAliasedEdgeStrength);
+
+            // opacity will be used to determine sample coverage
+            flOpacity = mix( flAlphaTestAA, flOpacity, flAntiAliasAlphaBlend );
+        }
         
-        // Sharp anti-aliased edge using shader derivatives
-        float flAlphaTestAA = saturate( (flOpacity - g_flAlphaTestReference) / ClampToPositive( fwidth(flOpacity) ) + 0.5 );
-        float flAlphaTestAA_Amount = min(1.0, length( fwidth(UVs) ) * 4.0);
-        float flAntiAliasAlphaBlend = mix(1.0, flAlphaTestAA_Amount, g_flAntiAliasedEdgeStrength);
-        return mix( flAlphaTestAA, flOpacity, flAntiAliasAlphaBlend );
+        return flOpacity;
     }
 #endif
 
