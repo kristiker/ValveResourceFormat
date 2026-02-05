@@ -297,7 +297,7 @@ namespace ValveResourceFormat.Renderer
 
             if (blendMode == BlendMode.AlphaTest)
             {
-                GL.Enable(EnableCap.SampleAlphaToCoverage); // todo: only if msaa samples > 1
+                GL.Enable(EnableCap.SampleAlphaToCoverage);
             }
             else if (blendMode >= BlendMode.Translucent)
             {
