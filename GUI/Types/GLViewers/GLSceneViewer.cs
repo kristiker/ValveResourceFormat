@@ -44,6 +44,25 @@ namespace GUI.Types.GLViewers
         private int frametimeQuery1;
         private int frametimeQuery2;
 
+        private static Color32 ColorFromId(uint id, uint offset)
+        {
+            uint hash = id + offset;
+            hash = hash * 1664525u + 1013904223u; // LCG constants
+
+            uint r = hash;
+            hash = hash * 1664525u + 1013904223u;
+            uint g = hash;
+            hash = hash * 1664525u + 1013904223u;
+            uint b = hash;
+
+            return new Color32(
+                (byte)(r & 0xFFu),
+                (byte)(g & 0xFFu),
+                (byte)(b & 0xFFu),
+                255
+            );
+        }
+
         protected GLSceneViewer(VrfGuiContext vrfGuiContext, RendererContext rendererContext, Frustum cullFrustum) : this(vrfGuiContext, rendererContext)
         {
             Renderer.LockedCullFrustum = cullFrustum;
@@ -544,6 +563,83 @@ namespace GUI.Types.GLViewers
             if (Renderer.Timings.Capture)
             {
                 Renderer.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
+            }
+
+            if (renderModeCurrentIndex >= 0 && renderModeCurrentIndex < renderModes.Count)
+            {
+                var renderMode = renderModes[renderModeCurrentIndex];
+                TextRenderer.AddText(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
+                {
+                    X = 20,
+                    Y = 40,
+                    Scale = 12,
+                    Color = Color32.White,
+                    Text = $"Render Mode: {renderMode.Name}"
+                });
+
+                if (renderMode.Name is "ShaderId" or "ShaderProgramId")
+                {
+                    using var _  = new GLDebugGroup("Shader Usage Stats");
+
+                    var allShaders = RendererContext.ShaderLoader.CachedShaders.Values
+                        .Where(s => s.IsLoaded && s.IsValid && s.ObjectsDrawnLastFrame > 0)
+                        .OrderBy(s => s.Name.StartsWith("vrf."))
+                        .ThenByDescending(s => s.ObjectsDrawnLastFrame)
+                        .ToList();
+
+                    if (renderMode.Name is "ShaderId")
+                    {
+                        var condensedShaders = allShaders
+                            .GroupBy(shader => shader.Name)
+                            .Select(group => new
+                            {
+                                Name = group.Key,
+                                Hash = group.First().NameHash,
+                                TotalObjectsDrawn = group.Sum(shader => shader.ObjectsDrawnLastFrame)
+                            })
+                            .OrderByDescending(shader => shader.TotalObjectsDrawn)
+                            .ToList();
+
+                        var i = 0;
+                        foreach (var shader in condensedShaders.Take(25))
+                        {
+                            var idLowered = (float)shader.Hash / 7000.0f;
+                            var outputColor = new Color32(
+                                (byte)(255 * (idLowered / 7.0f % 1.0f)),
+                                (byte)(255 * (idLowered / 11.0f % 1.0f)),
+                                (byte)(255 * (idLowered / 13.0f % 1.0f)),
+                                255
+                            );
+
+                            TextRenderer.AddText(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
+                            {
+                                X = MainFramebuffer.Width / 2.5f,
+                                Y = 60 + i++ * 20,
+                                Scale = 14,
+                                Color = outputColor,
+                                Text = $"({shader.TotalObjectsDrawn}) {shader.Name}"
+                            });
+                        }
+                    }
+                    else
+                    {
+                        var i = 0;
+                        foreach (var shader in allShaders.Take(25))
+                        {
+                            TextRenderer.AddText(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
+                            {
+                                X = 20,
+                                Y = 100 + i++ * 16,
+                                Scale = 12,
+                                Color = ColorFromId((uint)shader.Program, 29u),
+                                Text = $"({shader.ObjectsDrawnLastFrame}) {shader.FullIdentifier}"
+                            });
+                        }
+                    }
+
+                    // reset
+                    allShaders.ForEach(s => s.ObjectsDrawnLastFrame = 0);
+                }
             }
 
             TextRenderer.Render(Renderer.Camera);

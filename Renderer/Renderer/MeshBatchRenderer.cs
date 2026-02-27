@@ -256,6 +256,7 @@ namespace ValveResourceFormat.Renderer
                     GL.BindVertexArray(vao);
                 }
 
+                requestMaterial.Shader.ObjectsDrawnLastFrame++;
                 Draw(shader!, ref uniforms, ref config, new(request.Mesh, request.Call, request.Node));
             }
 

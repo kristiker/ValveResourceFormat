@@ -39,7 +39,7 @@ namespace ValveResourceFormat.Renderer
         [GeneratedRegex(@"^(?<SourceFile>[0-9]+):(?<Line>[0-9]+)\((?<Column>[0-9]+)\):")]
         private static partial Regex Mesa3dGlslError();
 
-        private readonly Dictionary<ulong, Shader> CachedShaders = [];
+        public Dictionary<ulong, Shader> CachedShaders { get; } = [];
         public int ShaderCount => CachedShaders.Count;
 
         private static readonly Dictionary<string, byte> EmptyArgs = [];
@@ -204,10 +204,7 @@ namespace ValveResourceFormat.Renderer
 
                 var shader = new Shader(shaderName, RendererContext)
                 {
-#if DEBUG
                     FileName = shaderFileName,
-#endif
-
                     Parameters = arguments,
                     Program = shaderProgram,
                     ShaderObjects = shaderObjects,
@@ -234,9 +231,12 @@ namespace ValveResourceFormat.Renderer
                     }
                 }
 
-                var argsDescription = GetArgumentDescription(SortAndFilterArguments(parsedData.Defines, arguments));
-                RendererContext.Logger.LogInformation("Shader '{ShaderName}' as '{ShaderFileName}'{ArgsDescription} compiled{CompiledStatus} successfully (program={Program})", shaderName, shaderFileName, argsDescription, blocking ? " and linked" : string.Empty, shader.Program);
-
+                shader.ArgumentDescription = GetArgumentDescription(SortAndFilterArguments(parsedData.Defines, arguments));
+                RendererContext.Logger.LogInformation("Shader {ShaderFullIdentifier} compiled{CompiledStatus} successfully (program={Program})", shader.FullIdentifier, blocking ? " and linked" : string.Empty, shader.Program);
+#if DEBUG
+                LastShaderVariantNames = parsedData.ShaderVariants;
+                LastShaderSourceLines = [.. Parser.SourceFileLines];
+#endif
                 return shader;
             }
             catch (ShaderCompilerException)

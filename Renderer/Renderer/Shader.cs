@@ -14,6 +14,7 @@ namespace ValveResourceFormat.Renderer
 
         public bool IsLoaded { get; private set; }
         public bool IsValid { get; private set; }
+        public int ObjectsDrawnLastFrame { get; set; }
 
         public required int[] ShaderObjects { get; init; }
         public required IReadOnlyDictionary<string, byte> Parameters { get; init; }
@@ -31,9 +32,8 @@ namespace ValveResourceFormat.Renderer
         public bool IgnoreMaterialData { get; }
 
 
-#if DEBUG
         public required string FileName { get; init; }
-#endif
+        public string ArgumentDescription { get; set; } = string.Empty;
 
         public Shader(string name, RendererContext rendererContext)
         {
@@ -46,6 +46,8 @@ namespace ValveResourceFormat.Renderer
                                       or "vrf.outline"
                                       or "vrf.depth_only";
         }
+
+        public string FullIdentifier => $"'{Name}' as '{FileName}'{ArgumentDescription}";
 
         public bool EnsureLoaded()
         {
