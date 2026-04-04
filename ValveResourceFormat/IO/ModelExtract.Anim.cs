@@ -108,6 +108,11 @@ partial class ModelExtract
 
         foreach (var bone in skeleton.Bones)
         {
+            if (bone == skeleton.RootMotion)
+            {
+                continue;
+            }
+
             var dag = new DmeJoint
             {
                 Name = bone.Name
@@ -125,6 +130,11 @@ partial class ModelExtract
 
         foreach (var bone in skeleton.Bones)
         {
+            if (bone.Name == "root_motion")
+            {
+                continue; // root_motion bone is in JointList but not in hierarchy
+            }
+
             var boneDag = boneDags[bone.Index];
             if (bone.Parent != null)
             {
@@ -245,8 +255,13 @@ partial class ModelExtract
         {
             var transform = transforms[bone.Index];
 
-            var positionChannel = BuildDmeChannel<Vector3>($"{bone.Name}_p", transform, "position", out var positionLog);
-            var orientationChannel = BuildDmeChannel<Quaternion>($"{bone.Name}_o", transform, "orientation", out var orientationLog);
+            // Special case: root_motion name is removed, so the layer appears like in ProcessRootMotionChannel.
+            var boneName = bone.Name == "root_motion"
+                ? string.Empty
+                : bone.Name;
+
+            var positionChannel = BuildDmeChannel<Vector3>($"{boneName}_p", transform, "position", out var positionLog);
+            var orientationChannel = BuildDmeChannel<Quaternion>($"{boneName}_o", transform, "orientation", out var orientationLog);
 
             var positionLogLayer = positionLog.GetLayer(0);
             var orientationLogLayer = orientationLog.GetLayer(0);
