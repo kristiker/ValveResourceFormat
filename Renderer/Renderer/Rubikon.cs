@@ -14,6 +14,7 @@ namespace ValveResourceFormat.Renderer;
 public class Rubikon
 {
     private const int STACK_SIZE = 64;
+    private const float Epsilon = 1e-6f;
 
     /// <summary>
     /// Triangle mesh collision data for ray tracing.
@@ -177,6 +178,12 @@ public class Rubikon
     {
         TraceResult closestHit = new();
 
+        // A degenerate ray has no direction to normalize (NaN), so nothing can be hit
+        if (Vector3.DistanceSquared(from, to) < Epsilon * Epsilon)
+        {
+            return closestHit;
+        }
+
         RayTraceContext ray = new(from, to);
 
         foreach (var mesh in Meshes)
@@ -240,6 +247,13 @@ public class Rubikon
     public TraceResult TraceAABB(Vector3 from, Vector3 to, AABB aabb, string collisionName)
     {
         TraceResult closestHit = new();
+
+        // A degenerate sweep has no direction to normalize (NaN), so nothing can be hit
+        if (Vector3.DistanceSquared(from, to) < Epsilon * Epsilon)
+        {
+            return closestHit;
+        }
+
         var halfExtents = aabb.Size * 0.5f;
         var trace = new AABBTraceContext(from, to, halfExtents);
 
@@ -501,7 +515,7 @@ public class Rubikon
         intersection = (-1, Vector3.Zero);
 
         // Ray is parallel to triangle
-        if (Math.Abs(a) < 1e-6f)
+        if (Math.Abs(a) < Epsilon)
         {
             return false;
         }
@@ -701,7 +715,7 @@ public class Rubikon
                 var edgeComp1 = EdgeDirection[axis1];
                 var edgeComp2 = EdgeDirection[axis2];
 
-                if (Math.Abs(edgeComp1) < float.Epsilon && Math.Abs(edgeComp2) < float.Epsilon)
+                if (Math.Abs(edgeComp1) < Epsilon && Math.Abs(edgeComp2) < Epsilon)
                 {
                     continue;
                 }
@@ -715,7 +729,7 @@ public class Rubikon
                 };
 
                 var hitNormalLen = hitNormal.Length();
-                if (hitNormalLen < float.Epsilon)
+                if (hitNormalLen < Epsilon)
                 {
                     continue;
                 }
@@ -723,7 +737,7 @@ public class Rubikon
                 hitNormal /= hitNormalLen;
 
                 var dotNormalDir = Vector3.Dot(hitNormal, trace.Direction);
-                if (MathF.Abs(dotNormalDir) < float.Epsilon)
+                if (MathF.Abs(dotNormalDir) < Epsilon)
                 {
                     continue;
                 }
