@@ -649,7 +649,9 @@ public class Rubikon
 
         if (DoesHit)
         {
-            normal = triangleNormal;
+            // The triangle test is double-sided; when hitting the back face the
+            // reported normal must still oppose the direction of motion.
+            normal = Vector3.Dot(triangleNormal, trace.Direction) > 0 ? -triangleNormal : triangleNormal;
             distance = intersection.Distance;
             hitPoint = trace.Origin + trace.Direction * distance;
             return true;
