@@ -602,10 +602,17 @@ public class Rubikon
         var hitNormal = Vector3.Zero;
         var hitDistance = trace.Length;
 
-        var hasHit = false;
-        hasHit = CornerAgainstTri(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
-        hasHit = hasHit || EdgeAgainstTri(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
-        hasHit = hasHit || AabbAgainstVert(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
+        // A corner-vs-face hit is provably the earliest possible contact (the box cannot
+        // touch the triangle before its leading corner reaches the triangle's plane),
+        // so the other tests can be skipped. Edge-edge and face-vertex contacts have no
+        // such ordering between them, so both must run and minimize the shared distance.
+        var hasHit = CornerAgainstTri(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
+
+        if (!hasHit)
+        {
+            hasHit |= EdgeAgainstTri(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
+            hasHit |= AabbAgainstVert(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
+        }
 
         if (!hasHit)
         {
