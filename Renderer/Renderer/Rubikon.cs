@@ -112,6 +112,13 @@ public class Rubikon
         public TraceResult() : this(false, Vector3.Zero, Vector3.UnitZ, float.MaxValue, -1) { }
 
         /// <summary>
+        /// Gets or sets a value indicating whether the swept shape already overlapped geometry
+        /// at the start position. When set, <see cref="Distance"/> is 0 and the reported normal
+        /// belongs to one arbitrary overlapping triangle.
+        /// </summary>
+        public bool StartSolid { get; set; }
+
+        /// <summary>
         /// Did we hit something very close to the starting position?
         /// </summary>
         public readonly bool IsMinimalDistance => Distance < 0.00001f;
@@ -229,11 +236,16 @@ public class Rubikon
         /// <summary>Gets the sweep center line as a precomputed ray.</summary>
         public RayTraceContext Ray { get; }
 
+        /// <summary>Gets a value indicating whether triangles are tested for overlap at the
+        /// start position (reported as <see cref="TraceResult.StartSolid"/>).</summary>
+        public bool DetectStartSolid { get; }
+
         /// <summary>Initializes a new AABB trace context from start/end positions and box half-extents.</summary>
         /// <param name="start">Sweep start position.</param>
         /// <param name="end">Sweep end position.</param>
         /// <param name="halfExtents">Half-extents of the swept box.</param>
-        public AABBTraceContext(Vector3 start, Vector3 end, Vector3 halfExtents)
+        /// <param name="detectStartSolid">Whether to test triangles for overlap at the start position.</param>
+        public AABBTraceContext(Vector3 start, Vector3 end, Vector3 halfExtents, bool detectStartSolid = false)
         {
             Origin = start;
             End = end;
@@ -241,6 +253,7 @@ public class Rubikon
             Direction = Ray.Direction;
             HalfExtents = halfExtents;
             Length = Ray.Length;
+            DetectStartSolid = detectStartSolid;
         }
     }
 
@@ -249,8 +262,9 @@ public class Rubikon
     /// <param name="to">Sweep end position.</param>
     /// <param name="aabb">Box whose size determines the half-extents of the swept volume.</param>
     /// <param name="collisionName">Collision group name used to filter shapes (e.g. "player").</param>
+    /// <param name="detectStartSolid">Whether to also test for overlap at the start position (see <see cref="TraceResult.StartSolid"/>).</param>
     /// <returns>The closest <see cref="TraceResult"/>, or an empty result if nothing was hit.</returns>
-    public TraceResult TraceAABB(Vector3 from, Vector3 to, AABB aabb, string collisionName)
+    public TraceResult TraceAABB(Vector3 from, Vector3 to, AABB aabb, string collisionName, bool detectStartSolid = false)
     {
         TraceResult closestHit = new();
 
@@ -260,7 +274,7 @@ public class Rubikon
         }
 
         var halfExtents = aabb.Size * 0.5f;
-        var trace = new AABBTraceContext(from, to, halfExtents);
+        var trace = new AABBTraceContext(from, to, halfExtents, detectStartSolid);
 
         // Check against all meshes
         foreach (var mesh in Meshes)
@@ -361,6 +375,11 @@ public class Rubikon
                 var v2 = hull.VertexPositions[edge2.Origin];
 
                 AABBTraceTriangle(trace, v0, v1, v2, ref closestHit);
+
+                if (closestHit.IsMinimalDistance)
+                {
+                    return;
+                }
 
                 edgeIndex = edge1.Next;
                 edge3 = hull.HalfEdges[edge2.Next];
@@ -604,6 +623,23 @@ public class Rubikon
 
     private static void AABBTraceTriangle(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
     {
+        // Already overlapping this triangle at the start position - nothing can be closer,
+        // so report start-solid and let the callers early-exit
+        if (trace.DetectStartSolid && TriangleOverlapsBox(trace.Origin, trace.HalfExtents, v0, v1, v2))
+        {
+            var startNormal = Vector3.Cross(v1 - v0, v2 - v0);
+            var startNormalLength = startNormal.Length();
+            startNormal = startNormalLength > Epsilon ? startNormal / startNormalLength : Vector3.UnitZ;
+
+            if (Vector3.Dot(startNormal, trace.Direction) > 0)
+            {
+                startNormal = -startNormal;
+            }
+
+            closestHit = new TraceResult(true, trace.Origin, startNormal, 0f, -1) { StartSolid = true };
+            return;
+        }
+
         var hitPoint = Vector3.Zero;
         var hitNormal = Vector3.Zero;
 
@@ -627,6 +663,71 @@ public class Rubikon
         {
             closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
         }
+    }
+
+    /// <summary>
+    /// Triangle vs. axis-aligned box overlap using the 13-axis separating axis test
+    /// (Akenine-Möller): 3 box face axes, the triangle plane, and 9 edge cross products.
+    /// </summary>
+    private static bool TriangleOverlapsBox(Vector3 center, Vector3 halfExtents, Vector3 v0, Vector3 v1, Vector3 v2)
+    {
+        // Translate so the box is centered at the origin
+        v0 -= center;
+        v1 -= center;
+        v2 -= center;
+
+        // Box face axes: the triangle's bounds must overlap the box extents
+        var triMin = Vector3.Min(v0, Vector3.Min(v1, v2));
+        var triMax = Vector3.Max(v0, Vector3.Max(v1, v2));
+
+        if (triMin.X > halfExtents.X || triMax.X < -halfExtents.X
+            || triMin.Y > halfExtents.Y || triMax.Y < -halfExtents.Y
+            || triMin.Z > halfExtents.Z || triMax.Z < -halfExtents.Z)
+        {
+            return false;
+        }
+
+        // Triangle plane: the box must straddle the triangle's plane
+        var normal = Vector3.Cross(v1 - v0, v2 - v0);
+        var planeDistance = Vector3.Dot(normal, v0);
+        var planeRadius = Vector3.Dot(Vector3.Abs(normal), halfExtents);
+
+        if (Math.Abs(planeDistance) > planeRadius)
+        {
+            return false;
+        }
+
+        // Cross products of each triangle edge with each box axis
+        Span<Vector3> edges = [v1 - v0, v2 - v1, v0 - v2];
+
+        foreach (var edge in edges)
+        {
+            for (var axisIndex = 0; axisIndex < 3; axisIndex++)
+            {
+                var axis = axisIndex switch
+                {
+                    0 => new Vector3(0, -edge.Z, edge.Y),
+                    1 => new Vector3(edge.Z, 0, -edge.X),
+                    _ => new Vector3(-edge.Y, edge.X, 0)
+                };
+
+                var p0 = Vector3.Dot(v0, axis);
+                var p1 = Vector3.Dot(v1, axis);
+                var p2 = Vector3.Dot(v2, axis);
+
+                var projMin = MathF.Min(p0, MathF.Min(p1, p2));
+                var projMax = MathF.Max(p0, MathF.Max(p1, p2));
+
+                var radius = Vector3.Dot(Vector3.Abs(axis), halfExtents);
+
+                if (projMin > radius || projMax < -radius)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private static bool CornerAgainstTri(

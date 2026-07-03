@@ -392,8 +392,9 @@ public class PlayerMovement
     }
 
     /// <summary>
-    /// Attempt to find a valid position if stuck inside geometry
-    /// We're stuck if traces result in no movement (start pos = end pos, normally we're epsilon units away)
+    /// Attempt to find a valid position if stuck inside geometry.
+    /// Uses the trace's start-solid overlap test to detect being stuck and to
+    /// validate candidate positions directly.
     /// </summary>
     private bool TryUnstuck(ref Vector3 position, AABB aabb)
     {
@@ -402,9 +403,7 @@ public class PlayerMovement
             return false;
         }
 
-        // Check if we're actually stuck by trying a small downward trace
-        var testTrace = TraceBBox(position, position + new Vector3(0, 0, -0.1f), aabb);
-        if (!testTrace.Hit || (testTrace.HitPosition - position).Length() > 0.01f)
+        if (!IsStuck(position, aabb))
         {
             return true; // Not stuck
         }
@@ -430,11 +429,7 @@ public class PlayerMovement
             {
                 var testPos = position + dir * distance;
 
-                // Try a trace to this position to see if it's valid
-                var trace = TraceBBox(position, testPos, aabb);
-
-                // If we can move at least halfway there without hitting, it's a good position
-                if (!trace.Hit || trace.Distance > distance * 0.5f)
+                if (!IsStuck(testPos, aabb))
                 {
                     // Found a valid position
                     position = testPos;
@@ -445,6 +440,16 @@ public class PlayerMovement
         }
 
         return false; // Couldn't find a valid position
+    }
+
+    /// <summary>
+    /// Check whether the hull overlaps solid geometry at the given position.
+    /// </summary>
+    private bool IsStuck(Vector3 position, AABB aabb)
+    {
+        // Start-solid is evaluated at the start position; the probe direction is irrelevant
+        var probe = TraceBBox(position, position + new Vector3(0, 0, -0.1f), aabb, detectStartSolid: true);
+        return probe.StartSolid;
     }
 
     /// <summary>
@@ -864,9 +869,9 @@ public class PlayerMovement
         }
     }
 
-    private Rubikon.TraceResult TraceBBox(Vector3 from, Vector3 to, AABB aabb)
+    private Rubikon.TraceResult TraceBBox(Vector3 from, Vector3 to, AABB aabb, bool detectStartSolid = false)
     {
         Debug.Assert(Physics != null, "Physics world must be initialized");
-        return Physics.TraceAABB(from, to, aabb, "player");
+        return Physics.TraceAABB(from, to, aabb, "player", detectStartSolid);
     }
 }
