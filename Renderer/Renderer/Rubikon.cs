@@ -141,19 +141,19 @@ public class Rubikon
     /// <summary>
     /// Precomputed ray direction data for accelerated ray tracing.
     /// </summary>
-    public readonly struct RayTraceContext
+    public readonly record struct RayTraceContext
     {
         /// <summary>Gets the ray start position.</summary>
-        public Vector3 Origin { get; }
+        public Vector3 Origin { get; init; }
 
         /// <summary>Gets the normalized ray direction.</summary>
-        public Vector3 Direction { get; }
+        public Vector3 Direction { get; init; }
 
         /// <summary>Gets the component-wise reciprocal of <see cref="Direction"/> for slab-method AABB tests.</summary>
-        public Vector3 InvDirection { get; }
+        public Vector3 InvDirection { get; init; }
 
         /// <summary>Gets the ray length.</summary>
-        public float Length { get; }
+        public float Length { get; init; }
 
         /// <summary>Gets the ray end position.</summary>
         public readonly Vector3 EndPosition => Origin + Direction * Length;
@@ -162,20 +162,11 @@ public class Rubikon
         /// <param name="start">Ray start position.</param>
         /// <param name="end">Ray end position.</param>
         public RayTraceContext(Vector3 start, Vector3 end)
-            : this(start, Vector3.Normalize(end - start), Vector3.Distance(start, end))
         {
-        }
-
-        /// <summary>Initializes a new ray trace context from an origin, an already-normalized direction, and a length.</summary>
-        /// <param name="origin">Ray start position.</param>
-        /// <param name="direction">Normalized ray direction.</param>
-        /// <param name="length">Ray length.</param>
-        public RayTraceContext(Vector3 origin, Vector3 direction, float length)
-        {
-            Origin = origin;
-            Direction = direction;
-            InvDirection = Vector3.One / direction;
-            Length = length;
+            Origin = start;
+            Direction = Vector3.Normalize(end - start);
+            InvDirection = Vector3.One / Direction;
+            Length = Vector3.Distance(start, end);
         }
     }
 
@@ -658,7 +649,7 @@ public class Rubikon
         var normalDotDirection = Vector3.Dot(triangleNormal, trace.Direction);
         var cornerCoords = trace.Origin + Vector3.Multiply(triNormSign, trace.HalfExtents) * Math.Sign(normalDotDirection);
 
-        var ray = new RayTraceContext(cornerCoords, trace.Direction, trace.Length);
+        var ray = trace.Ray with { Origin = cornerCoords };
 
 
         //RayTraceContext ray = new RayTraceContext(new Vector3(0), new Vector3(0, 1, 0));
