@@ -487,9 +487,12 @@ public class PlayerMovement
                 }
             }
 
-            // Move to hit point with surface epsilon
-            // The inner Max() and sign changes are for numerical stability
-            var adjustedDistance = Math.Max(result.Distance - Math.Max(SurfaceEpsilon / Vector3.Dot(Vector3.Normalize(-remainingDelta), result.HitNormal), 0.0f), 0.0f);
+            // Move to hit point, pulled back so the perpendicular gap to the surface
+            // is SurfaceEpsilon. The dot is clamped away from zero so grazing (or
+            // back-facing) hits get a bounded pullback instead of eating the whole move.
+            var approachDot = Vector3.Dot(Vector3.Normalize(-remainingDelta), result.HitNormal);
+            var pullback = SurfaceEpsilon / MathF.Max(approachDot, 0.1f);
+            var adjustedDistance = Math.Max(result.Distance - pullback, 0.0f);
 
             var fraction = adjustedDistance / remainingDistance;
 
@@ -540,12 +543,14 @@ public class PlayerMovement
         var downEnd = forwardPosition + new Vector3(0, 0, -(StepSize + 2.0f));
         var downTrace = TraceBBox(forwardPosition, downEnd, aabb);
 
-        if (!downTrace.Hit)
+        // Reject non-walkable landing surfaces (also guards the normal-based offset
+        // below against horizontal normals from edge contacts)
+        if (!downTrace.Hit || downTrace.HitNormal.Z < WalkableSlope)
         {
             return (start, false);
         }
 
-        var finalPosition = downTrace.HitPosition + downTrace.HitNormal * (1f / (downTrace.HitNormal.Z * (StepSize + 2.0f))) * SurfaceEpsilon;
+        var finalPosition = downTrace.HitPosition + downTrace.HitNormal * SurfaceEpsilon;
 
         // Validate the step
         var stepHeight = finalPosition.Z - start.Z;
