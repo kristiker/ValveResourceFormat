@@ -206,14 +206,12 @@ public class Rubikon
                 continue;
             }
 
-            var hit = RayIntersectsWithMesh(ray, mesh);
-            closestHit.MinimizeWith(hit);
+            RayIntersectsWithMesh(ray, mesh, ref closestHit);
         }
 
         foreach (var hull in Hulls)
         {
-            var hit = RayIntersectsWithHull(ray, hull);
-            closestHit.MinimizeWith(hit);
+            RayIntersectsWithHull(ray, hull, ref closestHit);
         }
 
         return closestHit;
@@ -290,8 +288,8 @@ public class Rubikon
                 }
             }
 
-            var hit = AABBTraceMesh(trace, mesh);
-            if (closestHit.MinimizeWith_EarlyExit(hit))
+            AABBTraceMesh(trace, mesh, ref closestHit);
+            if (closestHit.IsMinimalDistance)
             {
                 break;
             }
@@ -299,20 +297,18 @@ public class Rubikon
 
         if (HullTree.Length > 0)
         {
-            var hit = AABBTraceHullBVH(trace);
-            closestHit.MinimizeWith(hit);
+            AABBTraceHullBVH(trace, ref closestHit);
         }
 
         return closestHit;
     }
 
-    private static TraceResult RayIntersectsWithHull(RayTraceContext ray, PhysicsHullData hull)
+    private static void RayIntersectsWithHull(RayTraceContext ray, PhysicsHullData hull, ref TraceResult closestHit)
     {
-        var closestHit = new TraceResult();
-
-        if (!RayIntersectsAABB(ray, hull.Min, hull.Max))
+        // Skip hulls that cannot contain a hit closer than the best one found so far
+        if (!RayIntersectsAABB(ray, hull.Min, hull.Max, out var entryDistance) || entryDistance > closestHit.Distance)
         {
-            return closestHit;
+            return;
         }
 
         foreach (var firstEdgeCcw in hull.FaceEdgeIndices)
@@ -345,18 +341,15 @@ public class Rubikon
                 edge3 = hull.HalfEdges[edge2.Next];
             } while (edge3.Origin != edge0.Origin);
         }
-
-        return closestHit;
     }
 
-    private static TraceResult AABBTraceHull(AABBTraceContext trace, PhysicsHullData hull)
+    private static void AABBTraceHull(AABBTraceContext trace, PhysicsHullData hull, ref TraceResult closestHit)
     {
-        var closestHit = new TraceResult();
-
-        // Expand hull AABB by trace half extents for conservative culling
-        if (!RayIntersectsAABB(trace.Ray, hull.Min - trace.HalfExtents, hull.Max + trace.HalfExtents))
+        // Expand hull AABB by trace half extents for conservative culling, and skip
+        // hulls that cannot contain a hit closer than the best one found so far
+        if (!RayIntersectsAABB(trace.Ray, hull.Min - trace.HalfExtents, hull.Max + trace.HalfExtents, out var entryDistance) || entryDistance > closestHit.Distance)
         {
-            return closestHit;
+            return;
         }
 
         foreach (var firstEdgeCcw in hull.FaceEdgeIndices)
@@ -376,24 +369,20 @@ public class Rubikon
                 var v1 = hull.VertexPositions[edge1.Origin];
                 var v2 = hull.VertexPositions[edge2.Origin];
 
-                var hit = AABBTraceTriangle(trace, v0, v1, v2);
-                closestHit.MinimizeWith(hit);
+                AABBTraceTriangle(trace, v0, v1, v2, ref closestHit);
 
                 edgeIndex = edge1.Next;
                 edge3 = hull.HalfEdges[edge2.Next];
             } while (edge3.Origin != edge0.Origin);
         }
-
-        return closestHit;
     }
 
-    private TraceResult AABBTraceHullBVH(AABBTraceContext trace)
+    private void AABBTraceHullBVH(AABBTraceContext trace, ref TraceResult closestHit)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
         var stackCount = 0;
         stack[stackCount++] = (HullTree[0], 0);
 
-        var closestHit = new TraceResult();
         var ray = trace.Ray;
 
         while (stackCount > 0)
@@ -401,8 +390,9 @@ public class Rubikon
             var nodeWithIndex = stack[--stackCount];
             var node = nodeWithIndex.Node;
 
-            // Expand node AABB by trace half extents for conservative culling
-            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents))
+            // Expand node AABB by trace half extents for conservative culling, and skip
+            // nodes that cannot contain a hit closer than the best one found so far
+            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents, out var entryDistance) || entryDistance > closestHit.Distance)
             {
                 continue;
             }
@@ -431,31 +421,29 @@ public class Rubikon
             {
                 var hullIndex = HullIndices[i];
                 var hull = Hulls[hullIndex];
-                var hit = AABBTraceHull(trace, hull);
+                AABBTraceHull(trace, hull, ref closestHit);
 
-                if (closestHit.MinimizeWith_EarlyExit(hit))
+                if (closestHit.IsMinimalDistance)
                 {
-                    return closestHit;
+                    return;
                 }
             }
         }
-
-        return closestHit;
     }
 
-    private static TraceResult RayIntersectsWithMesh(RayTraceContext ray, PhysicsMeshData mesh)
+    private static void RayIntersectsWithMesh(RayTraceContext ray, PhysicsMeshData mesh, ref TraceResult closestHit)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
         var stackCount = 0;
         stack[stackCount++] = (mesh.PhysicsTree[0], 0);
 
-        var closestHit = new TraceResult();
-
         while (stackCount > 0)
         {
             var nodeWithIndex = stack[--stackCount];
             var node = nodeWithIndex.Node;
-            if (!RayIntersectsAABB(ray, node.Min, node.Max))
+
+            // Skip nodes that cannot contain a hit closer than the best one found so far
+            if (!RayIntersectsAABB(ray, node.Min, node.Max, out var entryDistance) || entryDistance > closestHit.Distance)
             {
                 continue;
             }
@@ -499,11 +487,9 @@ public class Rubikon
                 }
             }
         }
-
-        return closestHit;
     }
 
-    private static bool RayIntersectsAABB(RayTraceContext ray, Vector3 min, Vector3 max)
+    private static bool RayIntersectsAABB(RayTraceContext ray, Vector3 min, Vector3 max, out float entryDistance)
     {
         // Calculate intersection with AABB using slab method
         var t1 = (min - ray.Origin) * ray.InvDirection;
@@ -514,6 +500,9 @@ public class Rubikon
 
         var tNearMax = MathF.Max(tNear.X, MathF.Max(tNear.Y, tNear.Z));
         var tFarMin = MathF.Min(tFar.X, MathF.Min(tFar.Y, tFar.Z));
+
+        // Negative when the ray starts inside the box
+        entryDistance = tNearMax;
 
         var intersects = tNearMax <= tFarMin && tFarMin >= 0 && tNearMax <= ray.Length;
         return intersects;
@@ -566,13 +555,11 @@ public class Rubikon
         return true;
     }
 
-    private TraceResult AABBTraceMesh(AABBTraceContext trace, PhysicsMeshData mesh)
+    private static void AABBTraceMesh(AABBTraceContext trace, PhysicsMeshData mesh, ref TraceResult closestHit)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
         var stackCount = 0;
         stack[stackCount++] = (mesh.PhysicsTree[0], 0);
-
-        var closestHit = new TraceResult();
 
         var ray = trace.Ray;
 
@@ -581,8 +568,9 @@ public class Rubikon
             var nodeWithIndex = stack[--stackCount];
             var node = nodeWithIndex.Node;
 
-            // Expand node AABB by trace half extents for conservative culling
-            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents))
+            // Expand node AABB by trace half extents for conservative culling, and skip
+            // nodes that cannot contain a hit closer than the best one found so far
+            if (!RayIntersectsAABB(ray, node.Min - trace.HalfExtents, node.Max + trace.HalfExtents, out var entryDistance) || entryDistance > closestHit.Distance)
             {
                 continue;
             }
@@ -614,22 +602,23 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                var hit = AABBTraceTriangle(trace, v0, v1, v2);
-                if (closestHit.MinimizeWith_EarlyExit(hit))
+                AABBTraceTriangle(trace, v0, v1, v2, ref closestHit);
+                if (closestHit.IsMinimalDistance)
                 {
-                    return closestHit;
+                    return;
                 }
             }
         }
-
-        return closestHit;
     }
 
-    private static TraceResult AABBTraceTriangle(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2)
+    private static void AABBTraceTriangle(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
     {
         var hitPoint = Vector3.Zero;
         var hitNormal = Vector3.Zero;
-        var hitDistance = trace.Length;
+
+        // Start at the best distance so far, so the edge and vertex tests skip
+        // candidates that cannot improve on it
+        var hitDistance = MathF.Min(trace.Length, closestHit.Distance);
 
         // A corner-vs-face hit is provably the earliest possible contact (the box cannot
         // touch the triangle before its leading corner reaches the triangle's plane),
@@ -643,12 +632,10 @@ public class Rubikon
             hasHit |= AabbAgainstVert(trace, v0, v1, v2, ref hitPoint, ref hitNormal, ref hitDistance);
         }
 
-        if (!hasHit)
+        if (hasHit && hitDistance < closestHit.Distance)
         {
-            return new TraceResult();
+            closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
         }
-
-        return new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
     }
 
     private static bool CornerAgainstTri(
@@ -882,20 +869,19 @@ public class Rubikon
             var tNearMax = tNear[tNearMaxIndex];
 
             var tFarMin = MathF.Min(tFar.X, MathF.Min(tFar.Y, tFar.Z));
-            if (tNearMax <= tFarMin && tFarMin > 0 && tNearMax <= trace.Length)
+            // Only report hits that improve on the current best distance, so a hit is
+            // never flagged while normal/hitPoint are left stale
+            if (tNearMax <= tFarMin && tFarMin > 0 && tNearMax <= trace.Length && tNearMax < distance)
             {
                 intersects = true;
-                if (tNearMax < distance)
+                distance = tNearMax;
+                normal = tNearMaxIndex switch
                 {
-                    distance = tNearMax;
-                    normal = tNearMaxIndex switch
-                    {
-                        0 => new Vector3(-Math.Sign(trace.Direction.X), 0, 0),
-                        1 => new Vector3(0, -Math.Sign(trace.Direction.Y), 0),
-                        _ => new Vector3(0, 0, -Math.Sign(trace.Direction.Z))
-                    };
-                    hitPoint = distance * trace.Direction + trace.Origin;
-                }
+                    0 => new Vector3(-Math.Sign(trace.Direction.X), 0, 0),
+                    1 => new Vector3(0, -Math.Sign(trace.Direction.Y), 0),
+                    _ => new Vector3(0, 0, -Math.Sign(trace.Direction.Z))
+                };
+                hitPoint = distance * trace.Direction + trace.Origin;
             }
         }
 
