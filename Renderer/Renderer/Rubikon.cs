@@ -162,12 +162,26 @@ public class Rubikon
         /// <param name="start">Ray start position.</param>
         /// <param name="end">Ray end position.</param>
         public RayTraceContext(Vector3 start, Vector3 end)
+            : this(start, Vector3.Normalize(end - start), Vector3.Distance(start, end))
         {
-            Origin = start;
-            Direction = Vector3.Normalize(end - start);
-            InvDirection = Vector3.One / Direction;
-            Length = Vector3.Distance(start, end);
         }
+
+        /// <summary>Initializes a new ray trace context from an origin, an already-normalized direction, and a length.</summary>
+        /// <param name="origin">Ray start position.</param>
+        /// <param name="direction">Normalized ray direction.</param>
+        /// <param name="length">Ray length.</param>
+        public RayTraceContext(Vector3 origin, Vector3 direction, float length)
+        {
+            Origin = origin;
+            Direction = direction;
+            InvDirection = Vector3.One / direction;
+            Length = length;
+        }
+    }
+
+    private static bool IsInvalidRay(Vector3 from, Vector3 to)
+    {
+        return Vector3.DistanceSquared(from, to) < Epsilon * Epsilon;
     }
 
     /// <summary>Traces a ray against all physics shapes and returns the closest hit.</summary>
@@ -178,8 +192,7 @@ public class Rubikon
     {
         TraceResult closestHit = new();
 
-        // A degenerate ray has no direction to normalize (NaN), so nothing can be hit
-        if (Vector3.DistanceSquared(from, to) < Epsilon * Epsilon)
+        if (IsInvalidRay(from, to))
         {
             return closestHit;
         }
@@ -224,6 +237,9 @@ public class Rubikon
         /// <summary>Gets the total sweep length.</summary>
         public float Length { get; }
 
+        /// <summary>Gets the sweep center line as a precomputed ray.</summary>
+        public RayTraceContext Ray { get; }
+
         /// <summary>Initializes a new AABB trace context from start/end positions and box half-extents.</summary>
         /// <param name="start">Sweep start position.</param>
         /// <param name="end">Sweep end position.</param>
@@ -232,9 +248,10 @@ public class Rubikon
         {
             Origin = start;
             End = end;
-            Direction = Vector3.Normalize(end - start);
+            Ray = new RayTraceContext(start, end);
+            Direction = Ray.Direction;
             HalfExtents = halfExtents;
-            Length = Vector3.Distance(start, end);
+            Length = Ray.Length;
         }
     }
 
@@ -248,8 +265,7 @@ public class Rubikon
     {
         TraceResult closestHit = new();
 
-        // A degenerate sweep has no direction to normalize (NaN), so nothing can be hit
-        if (Vector3.DistanceSquared(from, to) < Epsilon * Epsilon)
+        if (IsInvalidRay(from, to))
         {
             return closestHit;
         }
@@ -336,10 +352,9 @@ public class Rubikon
     private static TraceResult AABBTraceHull(AABBTraceContext trace, PhysicsHullData hull)
     {
         var closestHit = new TraceResult();
-        var ray = new RayTraceContext(trace.Origin, trace.End);
 
         // Expand hull AABB by trace half extents for conservative culling
-        if (!RayIntersectsAABB(ray, hull.Min - trace.HalfExtents, hull.Max + trace.HalfExtents))
+        if (!RayIntersectsAABB(trace.Ray, hull.Min - trace.HalfExtents, hull.Max + trace.HalfExtents))
         {
             return closestHit;
         }
@@ -379,7 +394,7 @@ public class Rubikon
         stack[stackCount++] = (HullTree[0], 0);
 
         var closestHit = new TraceResult();
-        var ray = new RayTraceContext(trace.Origin, trace.End);
+        var ray = trace.Ray;
 
         while (stackCount > 0)
         {
@@ -559,7 +574,7 @@ public class Rubikon
 
         var closestHit = new TraceResult();
 
-        var ray = new RayTraceContext(trace.Origin, trace.End);
+        var ray = trace.Ray;
 
         while (stackCount > 0)
         {
@@ -653,11 +668,10 @@ public class Rubikon
             triangleNormal.X < 0 ? -1f : 1f,
             triangleNormal.Y < 0 ? -1f : 1f,
             triangleNormal.Z < 0 ? -1f : 1f);
-        var cornerCoords = trace.Origin + Vector3.Multiply(triNormSign, trace.HalfExtents) * Math.Sign(Vector3.Dot(triangleNormal, trace.Direction));
+        var normalDotDirection = Vector3.Dot(triangleNormal, trace.Direction);
+        var cornerCoords = trace.Origin + Vector3.Multiply(triNormSign, trace.HalfExtents) * Math.Sign(normalDotDirection);
 
-        //RayTraceContext ray = new RayTraceContext(cornerCoords, trace.Direction);
-
-        var ray = new RayTraceContext(cornerCoords, cornerCoords + trace.Direction * trace.Length);
+        var ray = new RayTraceContext(cornerCoords, trace.Direction, trace.Length);
 
 
         //RayTraceContext ray = new RayTraceContext(new Vector3(0), new Vector3(0, 1, 0));
@@ -672,7 +686,7 @@ public class Rubikon
         {
             // The triangle test is double-sided; when hitting the back face the
             // reported normal must still oppose the direction of motion.
-            normal = Vector3.Dot(triangleNormal, trace.Direction) > 0 ? -triangleNormal : triangleNormal;
+            normal = normalDotDirection > 0 ? -triangleNormal : triangleNormal;
             distance = intersection.Distance;
             hitPoint = trace.Origin + trace.Direction * distance;
             return true;
@@ -762,9 +776,10 @@ public class Rubikon
                 AABBEdgeCenter += trace.Origin;
 
                 var DirToStart = EdgeStart - AABBEdgeCenter;
+                var NormalDistance = Vector3.Dot(DirToStart, hitNormal);
 
                 //if true, we are moving away from the edge here and that means we can skip all further attempts to intersect it
-                if (Vector3.Dot(DirToStart, hitNormal) > 0)
+                if (NormalDistance > 0)
                 {
                     //actually this needs commenting out because we have no check to see if we are already within the box here. If the line is outside the box on this axis, we can't hit it, but we might be alright inside, where this would be wrong.
 
@@ -775,16 +790,20 @@ public class Rubikon
 
                 var zeroAxis = (hitNormal[axis1] == 0 || hitNormal[axis2] == 0) ? (hitNormal[axis1] == 0 ? axis1 : axis2) : -1;
 
+                //I promise this is less clusterfuck than it looks
+                var LongestAxisEdgeDir = Math.Abs(EdgeDirection[axis1]) > Math.Abs(EdgeDirection[axis2]) ? axis1 : axis2;
+
                 for (var positive = 0; positive < (zeroAxis >= 0 ? 2 : 1); positive++)
                 {
                     if (positive == 1)
                     {
                         AABBEdgeCenter[zeroAxis] *= -1;
                         DirToStart = EdgeStart - AABBEdgeCenter;
+                        NormalDistance = Vector3.Dot(DirToStart, hitNormal);
                     }
 
                     //now to figure out the coordinates of where we would land in the extended edge plane
-                    var Distance = Vector3.Dot(DirToStart, hitNormal) / dotNormalDir;
+                    var Distance = NormalDistance / dotNormalDir;
 
                     //same shit here, if we never reach that edge in the first place on any axis, we are not hitting that edge period
                     if (Distance > distance)
@@ -795,9 +814,6 @@ public class Rubikon
                     }
 
                     var PlaneHitCoord = AABBEdgeCenter + trace.Direction * Distance;
-
-                    //I promise this is less clusterfuck than it looks
-                    var LongestAxisEdgeDir = Math.Abs(EdgeDirection[axis1]) > Math.Abs(EdgeDirection[axis2]) ? axis1 : axis2;
 
                     var diff = PlaneHitCoord[LongestAxisEdgeDir] - EdgeStart[LongestAxisEdgeDir];
 
@@ -838,6 +854,7 @@ public class Rubikon
     {
         var TraceOriginMin = trace.Origin - trace.HalfExtents;
         var TraceOriginMax = trace.Origin + trace.HalfExtents;
+        var NegDirection = -trace.Direction;
 
         var intersects = false;
 
@@ -850,9 +867,9 @@ public class Rubikon
                 _ => v2
             };
 
-            var t1 = (TraceOriginMin - point) / -trace.Direction;
+            var t1 = (TraceOriginMin - point) / NegDirection;
 
-            var t2 = (TraceOriginMax - point) / -trace.Direction;
+            var t2 = (TraceOriginMax - point) / NegDirection;
 
             var tNear = Vector3.Min(t1, t2);
 

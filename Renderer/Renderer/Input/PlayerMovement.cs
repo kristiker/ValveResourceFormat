@@ -490,7 +490,7 @@ public class PlayerMovement
             // Move to hit point, pulled back so the perpendicular gap to the surface
             // is SurfaceEpsilon. The dot is clamped away from zero so grazing (or
             // back-facing) hits get a bounded pullback instead of eating the whole move.
-            var approachDot = Vector3.Dot(Vector3.Normalize(-remainingDelta), result.HitNormal);
+            var approachDot = Vector3.Dot(-remainingDelta, result.HitNormal) / remainingDistance;
             var pullback = SurfaceEpsilon / MathF.Max(approachDot, 0.1f);
             var adjustedDistance = Math.Max(result.Distance - pullback, 0.0f);
 
