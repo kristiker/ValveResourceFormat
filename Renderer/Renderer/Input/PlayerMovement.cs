@@ -20,7 +20,7 @@ public class PlayerMovement
     private const float FrictionValue = 5.2f;             // sv_friction
     private const float StopSpeedValue = 80f;             // sv_stopspeed
     private const float AccelerateValue = 5.5f;           // sv_accelerate
-    private const float AirAccelerateValue = 12f;         // sv_airaccelerate
+    private const float AirAccelerateValue = 150f;         // sv_airaccelerate
     //While sv_maxspeed is 320 in GO, the actual max speed is set by CS_PLAYER_SPEED_RUN, which is 260.
     private const float MaxSpeedValue = 260f;             // sv_maxspeed
     private const float JumpImpulseValue = 301.993377f;   // sv_jump_impulse = sqrt(2*800*57)
