@@ -496,7 +496,7 @@ public class PlayerMovement
             // is SurfaceEpsilon. The dot is clamped away from zero so grazing (or
             // back-facing) hits get a bounded pullback instead of eating the whole move.
             var approachDot = Vector3.Dot(-remainingDelta, result.HitNormal) / remainingDistance;
-            var pullback = SurfaceEpsilon / MathF.Max(approachDot, 0.1f);
+            var pullback = MathF.Max(SurfaceEpsilon / approachDot, 0.0f);
             var adjustedDistance = Math.Max(result.Distance - pullback, 0.0f);
 
             var fraction = adjustedDistance / remainingDistance;
@@ -555,7 +555,9 @@ public class PlayerMovement
             return (start, false);
         }
 
-        var finalPosition = downTrace.HitPosition + downTrace.HitNormal * SurfaceEpsilon;
+        var finalPosition = downTrace.HitPosition;
+        // Offset final position vertically to maintain surface epsilon. We don't want to offset along the normal, as we can't verify that that won't put you into a surface.
+        finalPosition.Z += SurfaceEpsilon / downTrace.HitNormal.Z;
 
         // Validate the step
         var stepHeight = finalPosition.Z - start.Z;
