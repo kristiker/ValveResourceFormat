@@ -352,7 +352,7 @@ public class PlayerMovement
         // If we hit ground, snap down to it
         if (trace.Hit && trace.HitNormal.Z > 0.7f)
         {
-            var groundZ = trace.HitPosition.Z + trace.HitNormal.Z * SurfaceEpsilon;
+            var groundZ = trace.HitPosition.Z + SurfaceEpsilon / trace.HitNormal.Z;
             position = new Vector3(position.X, position.Y, groundZ);
         }
     }
@@ -382,7 +382,7 @@ public class PlayerMovement
         {
             OnGround = true;
             // Snap to ground vertically only, preserve XY position to prevent sliding on slopes
-            var groundZ = result.HitPosition.Z + result.HitNormal.Z * SurfaceEpsilon;
+            var groundZ = result.HitPosition.Z + SurfaceEpsilon / result.HitNormal.Z;
             position = new Vector3(position.X, position.Y, groundZ);
         }
         else
@@ -535,13 +535,13 @@ public class PlayerMovement
 
         // Use whatever height we can achieve (even if blocked)
         var steppedUpPosition = upTrace.Hit
-            ? upTrace.HitPosition + upTrace.HitNormal * SurfaceEpsilon
+            ? upTrace.HitPosition + new Vector3(0, 0, SurfaceEpsilon / upTrace.HitNormal.Z)
             : stepUpEnd;
 
         // Step 2: Move forward from the stepped-up position
         var forwardTrace = TraceBBox(steppedUpPosition, steppedUpPosition + delta, aabb);
         var forwardPosition = forwardTrace.Hit
-            ? forwardTrace.HitPosition + forwardTrace.HitNormal * SurfaceEpsilon
+            ? forwardTrace.HitPosition - Vector3.Normalize(delta) * Math.Max(SurfaceEpsilon / Vector3.Dot(-Vector3.Normalize(delta), forwardTrace.HitNormal), 0.0f)
             : steppedUpPosition + delta;
 
         // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
