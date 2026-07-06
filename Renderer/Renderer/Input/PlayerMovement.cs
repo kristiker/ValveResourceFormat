@@ -471,6 +471,8 @@ public class PlayerMovement
         var remainingDistance = delta.Length();
         var remainingFraction = 1.0f;
 
+        Vector3[] planes = new Vector3[MaxBumps];
+
         for (var bump = 0; bump < MaxBumps && remainingFraction > 0; bump++)
         {
             var result = TraceBBox(position, position + remainingDelta, aabb);
@@ -491,6 +493,7 @@ public class PlayerMovement
                     }
                 }
             }
+            planes[bump] = result.HitNormal;
 
             // Move to hit point, pulled back so the perpendicular gap to the surface
             // is SurfaceEpsilon. The dot is clamped away from zero so grazing (or
@@ -506,7 +509,19 @@ public class PlayerMovement
 
             // Clip velocity based on surface type
             var vel = Velocity;
-            ClipVelocity(ref remainingDelta, ref vel, result.HitNormal, OnGround);
+
+            //TODO: Temporary fix. We should rework the bump system in general to match the game better.
+            if (bump == 2 && Vector3.Dot(planes[0], planes[1]) <= 0)
+            {
+                var cross = Vector3.Normalize(Vector3.Cross(planes[0], planes[1]));
+                vel = Vector3.Dot(cross, vel) * cross;
+                remainingDelta = Vector3.Dot(cross, remainingDelta) * cross;
+            }
+            else
+            {
+                ClipVelocity(ref remainingDelta, ref vel, result.HitNormal, OnGround);
+            }
+
             Velocity = vel;
 
             CheckVelocity(ref position);
