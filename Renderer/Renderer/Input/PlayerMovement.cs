@@ -549,15 +549,30 @@ public class PlayerMovement
         var upTrace = TraceBBox(start, stepUpEnd, aabb);
 
         // Use whatever height we can achieve (even if blocked)
-        var steppedUpPosition = upTrace.Hit
-            ? upTrace.HitPosition + new Vector3(0, 0, SurfaceEpsilon / upTrace.HitNormal.Z)
-            : stepUpEnd;
+        var steppedUpPosition = stepUpEnd;
+        if (upTrace.Hit)
+        {
+            // Pull back down along the traced (verified free) path to keep a SurfaceEpsilon
+            // perpendicular gap. Clamping to the trace distance keeps a near-horizontal
+            // edge-contact normal from producing an unbounded offset.
+            var upPullback = MathF.Max(SurfaceEpsilon / -upTrace.HitNormal.Z, 0.0f);
+            upPullback = MathF.Min(upPullback, MathF.Max(upTrace.Distance, 0.0f));
+            steppedUpPosition = upTrace.HitPosition - new Vector3(0, 0, upPullback);
+        }
 
         // Step 2: Move forward from the stepped-up position
         var forwardTrace = TraceBBox(steppedUpPosition, steppedUpPosition + delta, aabb);
-        var forwardPosition = forwardTrace.Hit
-            ? forwardTrace.HitPosition - Vector3.Normalize(delta) * Math.Max(SurfaceEpsilon / Vector3.Dot(-Vector3.Normalize(delta), forwardTrace.HitNormal), 0.0f)
-            : steppedUpPosition + delta;
+        var forwardPosition = steppedUpPosition + delta;
+        if (forwardTrace.Hit)
+        {
+            // Pull back along the traced (verified free) path to keep a SurfaceEpsilon
+            // perpendicular gap. Clamping to the trace distance keeps a grazing hit from
+            // producing an unbounded (or, via infinity * 0, NaN) offset.
+            var moveDirection = Vector3.Normalize(delta);
+            var forwardPullback = MathF.Max(SurfaceEpsilon / Vector3.Dot(-moveDirection, forwardTrace.HitNormal), 0.0f);
+            forwardPullback = MathF.Min(forwardPullback, MathF.Max(forwardTrace.Distance, 0.0f));
+            forwardPosition = forwardTrace.HitPosition - moveDirection * forwardPullback;
+        }
 
         // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
         var downEnd = forwardPosition + new Vector3(0, 0, -(StepSize + 2.0f));
