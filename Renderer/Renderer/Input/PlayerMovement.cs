@@ -471,7 +471,7 @@ public class PlayerMovement
         var remainingDistance = delta.Length();
         var remainingFraction = 1.0f;
 
-        Vector3[] planes = new Vector3[MaxBumps];
+        Span<Vector3> planes = stackalloc Vector3[MaxBumps];
 
         for (var bump = 0; bump < MaxBumps && remainingFraction > 0; bump++)
         {
