@@ -716,7 +716,7 @@ public class Rubikon
 
         var hasHit = true;
 
-        Vector3[] triangle = [v0, v1, v2];
+        ReadOnlySpan<Vector3> triangle = [v0, v1, v2];
 
         float enter = float.NegativeInfinity, exit = float.PositiveInfinity;
 
