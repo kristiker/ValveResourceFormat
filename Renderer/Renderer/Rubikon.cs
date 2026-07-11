@@ -758,17 +758,42 @@ public class Rubikon
 
             //project the triangle onto the axis
 
-            float min = float.PositiveInfinity, max = float.NegativeInfinity;
+            var boxExtent = Vector3.Dot(Vector3.Abs(axisVector), trace.HalfExtents);
+
+            // cosTheta >= 0 because axisVector was flipped toward the ray above.
+            // The sweep advances the box projection by cosTheta * Length over the trace.
+            var cosTheta = Vector3.Dot(trace.Direction, axisVector);
+
+            float minProj = float.PositiveInfinity, maxProj = float.NegativeInfinity;
             for (var vertexIdx = 0; vertexIdx < 3; vertexIdx++)
             {
-                var vertex = triangle[vertexIdx];
-                var relVertPos = vertex - trace.Origin;
-                var projection = Vector3.Dot(relVertPos, axisVector);
-                var boxExtent = Vector3.Dot(Vector3.Abs(axisVector), trace.HalfExtents);
-
-                min = MathF.Min(min, (projection - boxExtent) / Vector3.Dot(trace.Direction * trace.Length, axisVector));
-                max = MathF.Max(max, (projection + boxExtent) / Vector3.Dot(trace.Direction * trace.Length, axisVector));
+                var projection = Vector3.Dot(triangle[vertexIdx] - trace.Origin, axisVector);
+                minProj = MathF.Min(minProj, projection);
+                maxProj = MathF.Max(maxProj, projection);
             }
+
+            float min, max;
+            if (cosTheta > Epsilon)
+            {
+                var denom = cosTheta * trace.Length;
+                min = (minProj - boxExtent) / denom;
+                max = (maxProj + boxExtent) / denom;
+            }
+            else
+            {
+                // Axis is (near) perpendicular to the sweep: the box's projection onto it
+                // does not change over the trace. If the triangle's projection lies outside
+                // the box slab [-boxExtent, boxExtent], this is a permanent separating axis.
+                if (maxProj < -boxExtent || minProj > boxExtent)
+                {
+                    return;
+                }
+
+                // Otherwise this axis never separates and imposes no constraint on the sweep.
+                min = float.NegativeInfinity;
+                max = float.PositiveInfinity;
+            }
+
             if (min > enter)
             {
                 hitNormal = -axisVector;
