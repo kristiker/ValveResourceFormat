@@ -612,13 +612,24 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                var originalClosestHit = closestHit;
+                var referenceHit = closestHit;
 
-                closestHit = originalClosestHit;
-                var copyClosestHit = closestHit;
-
-                //AABBTraceTriangle(trace, v0, v1, v2, ref closestHit);
                 AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
+
+#if DEBUG
+                AABBTraceTriangle(trace, v0, v1, v2, ref referenceHit);
+
+                if (closestHit.Hit != referenceHit.Hit
+                    || (closestHit.Hit && MathF.Abs(closestHit.Distance - referenceHit.Distance) >= 0.05f))
+                {
+                    static string Repr(Vector3 v) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"[{v.X:R}, {v.Y:R}, {v.Z:R}]");
+
+                    System.Diagnostics.Debug.WriteLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                        $"13-axis SAT disagrees with legacy: SAT hit={closestHit.Hit} dist={closestHit.Distance:R}, legacy hit={referenceHit.Hit} dist={referenceHit.Distance:R} | "
+                        + $"TraceCase(from={Repr(trace.Origin)}, to={Repr(trace.End)}, halfExtents={Repr(trace.HalfExtents)}, "
+                        + $"v0={Repr(v0)}, v1={Repr(v1)}, v2={Repr(v2)})"));
+                }
+#endif
 
                 if (closestHit.IsMinimalDistance)
                 {
