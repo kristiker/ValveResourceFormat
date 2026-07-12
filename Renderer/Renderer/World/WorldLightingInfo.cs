@@ -398,12 +398,13 @@ namespace ValveResourceFormat.Renderer.World
         /// </summary>
         /// <param name="camera">The camera used for culling and shadow resolution selection.</param>
         /// <param name="atlasSize">Pixel size of the shadow atlas texture.</param>
-        public void BinBarnLights(Camera camera, int atlasSize)
+        /// <param name="deltaTime">Seconds elapsed since the previous frame, used to time shadow fades.</param>
+        public void BinBarnLights(Camera camera, int atlasSize, float deltaTime)
         {
             BarnLightShadowAtlasSize = atlasSize;
             LightingData.NumBarnLights = 0;
 
-            ShadowMapper.Bin(BarnLights, camera, atlasSize, BarnLightCookiePaths);
+            ShadowMapper.Bin(BarnLights, camera, atlasSize, BarnLightCookiePaths, deltaTime);
 
             foreach (ref readonly var binned in ShadowMapper.BinnedLights)
             {
@@ -432,7 +433,7 @@ namespace ValveResourceFormat.Renderer.World
                         if (placement.Region.IsValid)
                         {
                             data.BarnLightShadowOffsetScale = placement.OffsetScale;
-                            data.BarnLightShadowScale = 1.0f;
+                            data.BarnLightShadowScale = light.ShadowAlpha;
                         }
                     }
 

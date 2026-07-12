@@ -190,6 +190,9 @@ public class SceneLight(Scene scene) : SceneNode(scene)
 
     internal int AdaptiveShadowSize { get; set; }
 
+    /// <summary>Current shadow fade alpha (0..1).</summary>
+    internal float ShadowAlpha { get; set; }
+
     /// <summary>
     /// Returns whether this light will produce energy based on its properties.
     /// </summary>

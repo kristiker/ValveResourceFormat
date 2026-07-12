@@ -44,6 +44,7 @@ public class ShadowMapper
     private const int MinShadowFaceSize = 128;
     private const float AtlasAreaBudget = 0.85f;
     private const int ShadowGutterTexels = 2;
+    private const float ShadowFadeSeconds = 2f;
 
     private readonly ShadowAtlasPacker shadowAtlas = new();
     private readonly ShadowFacePlacement[] facePlacements = new ShadowFacePlacement[BarnLightConstants.MAX_BARN_LIGHTS];
@@ -66,7 +67,8 @@ public class ShadowMapper
     /// <param name="camera">The camera used for culling and shadow resolution selection.</param>
     /// <param name="atlasSize">Pixel size of the shadow atlas texture.</param>
     /// <param name="cookiePaths">Map from cookie material path to cookie atlas index, used when recomputing dirty faces.</param>
-    public void Bin(List<SceneLight> lights, Camera camera, int atlasSize, Dictionary<string, int> cookiePaths)
+    /// <param name="deltaTime">Seconds elapsed since the previous frame, used to time shadow fades.</param>
+    public void Bin(List<SceneLight> lights, Camera camera, int atlasSize, Dictionary<string, int> cookiePaths, float deltaTime)
     {
         candidateCount = 0;
         ShadowCasters.Clear();
@@ -102,7 +104,8 @@ public class ShadowMapper
 
             var candidate = new BinnedLight { Light = light, FirstFaceIndex = -1 };
 
-            if (light.CastShadows > 0)
+            // Lights mid fade-out (residual alpha) stay casters so their shadow keeps rendering while it fades.
+            if (light.CastShadows > 0 || light.ShadowAlpha > 0f)
             {
                 // TODO: demote omni faces that don't face the camera.
                 var importance = ComputeShadowFaceSize(ref candidate, camera.Location, pixelsPerUnit, atlasSize);
@@ -120,7 +123,9 @@ public class ShadowMapper
         // Hysteresis runs after demotion so stable sizes win over small budget corrections.
         DemoteToBudget(candidateSpan, order, atlasSize);
         ApplyHysteresis(candidateSpan, atlasSize);
-        AssignRegions(candidateSpan, order, atlasSize);
+
+        var fadeStep = ShadowFadeSeconds > 0f ? Math.Clamp(deltaTime / ShadowFadeSeconds, 0f, 1f) : 1f;
+        AssignRegions(candidateSpan, order, atlasSize, fadeStep);
     }
 
     private static Vector4 ComputeShadowOffsetScale(ShadowAtlasRegion region, int atlasSize, ref Matrix4x4 shadowMatrix)
@@ -282,56 +287,100 @@ public class ShadowMapper
         }
     }
 
-    private void AssignRegions(Span<BinnedLight> candidateSpan, ReadOnlySpan<(float Importance, int CandidateIndex)> order, int atlasSize)
+    private void AssignRegions(Span<BinnedLight> candidateSpan, ReadOnlySpan<(float Importance, int CandidateIndex)> order, int atlasSize, float fadeStep)
     {
         shadowAtlas.Begin(atlasSize);
 
         var assignedFaces = 0;
+
+        // Two passes so lights already holding shadow space (alpha > 0) keep it: eviction then fades out
+        // over ShadowFadeSeconds instead of popping, and newcomers only take whatever room is left over.
         for (var i = order.Length - 1; i >= 0; i--)
         {
             ref var candidate = ref candidateSpan[order[i].CandidateIndex];
-            var light = candidate.Light;
-            var faceCount = light.BarnFaces.Length;
-
-            if (assignedFaces + faceCount > facePlacements.Length)
+            if (candidate.Light.ShadowAlpha > 0f)
             {
-                continue;
-            }
-
-            candidate.FirstFaceIndex = assignedFaces;
-
-            for (var face = 0; face < faceCount; face++)
-            {
-                var width = candidate.FaceWidth;
-                var height = candidate.FaceHeight;
-
-                ShadowAtlasRegion region;
-                while (!shadowAtlas.TryAllocate(width, height, out region) && Math.Max(width, height) > MinShadowFaceSize)
-                {
-                    ShrinkFace(ref width, ref height);
-                }
-
-                if (region.IsValid)
-                {
-                    var shadowMatrix = light.BarnFaces[face].WorldToFrustum;
-                    var offsetScale = ComputeShadowOffsetScale(region, atlasSize, ref shadowMatrix);
-
-                    facePlacements[assignedFaces] = new ShadowFacePlacement(region, offsetScale);
-                    ShadowCasters.Add(new BinnedShadowCaster
-                    {
-                        WorldToFrustum = shadowMatrix,
-                        Region = region,
-                        Light = light,
-                        FaceIndex = face,
-                    });
-                }
-                else
-                {
-                    facePlacements[assignedFaces] = default;
-                }
-
-                assignedFaces++;
+                AssignLight(ref candidate, ref assignedFaces, atlasSize);
             }
         }
+
+        for (var i = order.Length - 1; i >= 0; i--)
+        {
+            ref var candidate = ref candidateSpan[order[i].CandidateIndex];
+            if (candidate.Light.ShadowAlpha <= 0f)
+            {
+                AssignLight(ref candidate, ref assignedFaces, atlasSize);
+            }
+        }
+
+        // Ramp once every placement is known: toward 1 while the light casts shadows and holds a region,
+        // toward 0 once it stops. With nothing rendered there is no depth to blend, so it snaps to 0.
+        foreach (var (_, candidateIndex) in order)
+        {
+            ref var candidate = ref candidateSpan[candidateIndex];
+            var light = candidate.Light;
+
+            var gotRegion = false;
+            for (var face = 0; candidate.FirstFaceIndex >= 0 && face < light.BarnFaces.Length; face++)
+            {
+                if (facePlacements[candidate.FirstFaceIndex + face].Region.IsValid)
+                {
+                    gotRegion = true;
+                    break;
+                }
+            }
+
+            var target = light.CastShadows > 0 ? 1f : 0f;
+            light.ShadowAlpha = gotRegion ? MoveToward(light.ShadowAlpha, target, fadeStep) : 0f;
+        }
     }
+
+    private void AssignLight(ref BinnedLight candidate, ref int assignedFaces, int atlasSize)
+    {
+        var light = candidate.Light;
+        var faceCount = light.BarnFaces.Length;
+
+        if (assignedFaces + faceCount > facePlacements.Length)
+        {
+            return;
+        }
+
+        candidate.FirstFaceIndex = assignedFaces;
+
+        for (var face = 0; face < faceCount; face++)
+        {
+            var width = candidate.FaceWidth;
+            var height = candidate.FaceHeight;
+
+            ShadowAtlasRegion region;
+            while (!shadowAtlas.TryAllocate(width, height, out region) && Math.Max(width, height) > MinShadowFaceSize)
+            {
+                ShrinkFace(ref width, ref height);
+            }
+
+            if (region.IsValid)
+            {
+                var shadowMatrix = light.BarnFaces[face].WorldToFrustum;
+                var offsetScale = ComputeShadowOffsetScale(region, atlasSize, ref shadowMatrix);
+
+                facePlacements[assignedFaces] = new ShadowFacePlacement(region, offsetScale);
+                ShadowCasters.Add(new BinnedShadowCaster
+                {
+                    WorldToFrustum = shadowMatrix,
+                    Region = region,
+                    Light = light,
+                    FaceIndex = face,
+                });
+            }
+            else
+            {
+                facePlacements[assignedFaces] = default;
+            }
+
+            assignedFaces++;
+        }
+    }
+
+    private static float MoveToward(float current, float target, float step)
+        => current < target ? MathF.Min(current + step, target) : MathF.Max(current - step, target);
 }

@@ -841,7 +841,7 @@ public class Renderer
 
         if (ViewBuffer.Data.ExperimentalLightsEnabled)
         {
-            Scene.LightingInfo.BinBarnLights(Camera, ShadowTextureSize);
+            Scene.LightingInfo.BinBarnLights(Camera, ShadowTextureSize, updateContext.Timestep);
         }
 
         if (Scene is { EnablePvsCulling: true, VoxelVisibility: not null })
