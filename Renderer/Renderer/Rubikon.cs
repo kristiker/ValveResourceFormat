@@ -374,7 +374,7 @@ public class Rubikon
                 var v1 = hull.VertexPositions[edge1.Origin];
                 var v2 = hull.VertexPositions[edge2.Origin];
 
-                AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
+                AABBTraceTriangle13AxisSatOptimized(trace, v0, v1, v2, ref closestHit);
 
                 if (closestHit.IsMinimalDistance)
                 {
@@ -612,7 +612,7 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
+                AABBTraceTriangle13AxisSatOptimized(trace, v0, v1, v2, ref closestHit);
 
                 if (closestHit.IsMinimalDistance)
                 {
@@ -738,6 +738,121 @@ public class Rubikon
         var hitPoint = trace.Origin + trace.Direction * hitDistance;
 
         if (hitDistance < closestHit.Distance)
+        {
+            closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
+        }
+    }
+
+    private static void AABBTraceTriangle13AxisSatOptimized(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
+    {
+        //Needs to exist from the start, as it gets updated while running through the axis.
+        var hitNormal = Vector3.Zero;
+
+        var hasHit = true;
+
+        ReadOnlySpan<Vector3> triangle = [v0, v1, v2];
+
+        float enter = float.NegativeInfinity, exit = float.PositiveInfinity;
+
+        for (int axis = 0; axis < 13; axis++)
+        {
+            Vector3 axisVector;
+            if (axis == 0)
+            {
+                axisVector = Vector3.Normalize(Vector3.Cross(v1 - v0, v2 - v0));
+            }
+            else if (axis > 0 && axis < 10)
+            {
+                var localAxisIndex = axis - 1;
+
+                var triangleEdgeIndex = localAxisIndex / 3;
+                var boxAxisIndex = localAxisIndex % 3;
+
+                Vector3 edge = triangle[(triangleEdgeIndex + 1) % 3] - triangle[triangleEdgeIndex];
+
+                axisVector = edge;
+                axisVector[boxAxisIndex] = 0;
+                axisVector[(boxAxisIndex + 1) % 3] = -edge[(boxAxisIndex + 2) % 3];
+                axisVector[(boxAxisIndex + 2) % 3] = edge[(boxAxisIndex + 1) % 3];
+
+                if (Math.Abs(axisVector[(boxAxisIndex + 1) % 3]) < Epsilon && Math.Abs(axisVector[(boxAxisIndex + 2) % 3]) < Epsilon)
+                {
+                    continue;
+                }
+            }
+            else
+            {
+                var localAxisIndex = axis - 10;
+                axisVector = Vector3.Zero;
+                axisVector[localAxisIndex] = 1;
+            }
+
+            axisVector = Vector3.Normalize(axisVector);
+            axisVector = Vector3.Dot(trace.Direction, axisVector) > 0 ? axisVector : -axisVector;
+            // cosTheta >= 0 because axisVector was flipped toward the ray above.
+            // The sweep advances the box projection by cosTheta * Length over the trace.
+            var cosTheta = Vector3.Dot(trace.Direction, axisVector);
+
+            var tracedDistanceAlongAxis = cosTheta * trace.Length;
+            var boxExtent = Vector3.Dot(Vector3.Abs(axisVector), trace.HalfExtents);
+
+
+            //project the triangle onto the axis
+            float min = float.PositiveInfinity, max = float.NegativeInfinity;
+
+            for (var vertexIdx = 0; vertexIdx < 3; vertexIdx++)
+            {
+                var vertex = triangle[vertexIdx];
+                var relativeVertexPos = vertex - trace.Origin;
+                var projection = Vector3.Dot(relativeVertexPos, axisVector);
+
+                min = MathF.Min(min, projection - boxExtent);
+                max = MathF.Max(max, projection + boxExtent);
+            }
+
+            //avoids division early
+            if (min > tracedDistanceAlongAxis)
+                return;
+
+            min /= tracedDistanceAlongAxis;
+            max /= tracedDistanceAlongAxis;
+
+            if (min > enter)
+            {
+                hitNormal = -axisVector;
+                enter = min;
+            }
+            exit = MathF.Min(exit, max);
+
+            if (enter > exit || exit <= 0)
+                return;
+        }
+        if (enter > 1.0f)
+            return;
+
+
+        // Already overlapping this triangle at the start position - nothing can be closer,
+        // so report start-solid and let the callers early-exit
+        if (trace.DetectStartSolid && enter < 0 && exit >= 0)
+        {
+            var startNormal = Vector3.Cross(v1 - v0, v2 - v0);
+            var startNormalLength = startNormal.Length();
+            startNormal = startNormalLength > Epsilon ? startNormal / startNormalLength : Vector3.UnitZ;
+
+            if (Vector3.Dot(startNormal, trace.Direction) > 0)
+            {
+                startNormal = -startNormal;
+            }
+
+            closestHit = new TraceResult(true, trace.Origin, startNormal, 0f, -1) { StartSolid = true };
+            return;
+        }
+
+        var hitDistance = Math.Max(enter * trace.Length, 0);
+
+        var hitPoint = trace.Origin + trace.Direction * hitDistance;
+
+        if (hasHit && hitDistance < closestHit.Distance)
         {
             closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
         }
