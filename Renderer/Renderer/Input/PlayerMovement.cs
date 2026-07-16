@@ -176,101 +176,10 @@ public class PlayerMovement
         AccumulatedTime = Math.Min(AccumulatedTime, deltaTime * 3f);
 
         int ticks = 0;
-        var playerHull = Hull;
         for (; ticks + 1 < AccumulatedTime * TickRate; ticks++)
         {
-            // Track input state for acceleration modifiers and collision hull
-            var isDucking = HoldingCtrl;
-            var isWalking = !HoldingCtrl && HoldingShift;
+            TickMovement(input, yaw, deltaTime, ref position);
 
-            BlendDuckedHull(deltaTime, ref position, isDucking);
-
-            playerHull = Hull;
-
-            WasOnGroundLastFrame = OnGround;
-
-            // Categorize position (check if on ground) - use lerped hull for collision
-            CategorizePosition(ref position, playerHull);
-
-            // Check if we just landed this frame
-            var justLanded = !WasOnGroundLastFrame && OnGround;
-
-            // StartGravity - add gravity at start of frame (like Source does)
-            if (!OnGround)
-            {
-                ApplyHalfGravity(deltaTime);
-                CheckVelocity(ref position); // StartGravity calls CheckVelocity in Source
-            }
-
-            // Check for jump (auto bunny hop if enabled and holding jump)
-            var wantsToJump = AutoBunnyHop ? input.Holding(TrackedKeys.Space) : false;
-            wantsToJump = wantsToJump || RequestedJump;
-
-            // For auto bhop, also jump immediately when landing while holding jump
-            if (wantsToJump && (OnGround || (AutoBunnyHop && justLanded)))
-            {
-                // Prevent bunnyhopping - cap speed before jumping (only if auto bhop is disabled)
-                if (!AutoBunnyHop)
-                {
-                    PreventBunnyJumping();
-                }
-                CheckJump(deltaTime);
-            }
-
-            // Calculate wish velocity from input (with speed modifiers for duck/crouch)
-            var (wishdir, wishspeed) = CalculateWishVelocity(input, yaw);
-
-            // Apply walk speed modifier only when near walk speed (CS:GO behavior)
-            // This allows natural deceleration instead of instant capping
-            if (isWalking)
-            {
-                var currentSpeed = Velocity.Length();
-                var walkSpeed = MaxSpeedValue * WalkSpeedModifier;
-                if (currentSpeed < walkSpeed + WalkSpeedGraceMargin)
-                {
-                    wishspeed = MathF.Min(wishspeed, walkSpeed);
-                }
-            }
-
-            // Ground or air movement - use isDucking (input) for speed modifiers
-            if (OnGround)
-            {
-                // Apply friction before movement
-                ZeroVerticalVelocity();
-                Friction(deltaTime);
-                CheckVelocity(ref position);
-                WalkMove(wishdir, wishspeed, deltaTime, isDucking, isWalking);
-                CheckVelocity(ref position);
-            }
-            else
-            {
-                AirMove(wishdir, wishspeed, deltaTime);
-            }
-
-            // Check velocity for NaN/bounds
-            CheckVelocity(ref position);
-
-            // Update position based on velocity - use lerped hull for collision
-            position = TryPlayerMove(position, Velocity * deltaTime, playerHull);
-
-            // StayOnGround - keep player stuck to ground when going down slopes/stairs
-            if (OnGround)
-            {
-                StayOnGround(ref position, playerHull);
-            }
-
-            // Recategorize position after movement (now that position is updated)
-            CategorizePosition(ref position, playerHull);
-
-            // Check velocity again for NaN/bounds
-            CheckVelocity(ref position);
-
-            // FinishGravity - add remaining gravity at end of frame
-            if (!OnGround)
-            {
-                ApplyHalfGravity(deltaTime);
-                CheckVelocity(ref position); // FinishGravity calls CheckVelocity in Source
-            }
             // Store the updated position and make SourcePosition the previous DestinationPosition
             TracePositionPrevious = TracePosition;
             TracePosition = position;
@@ -297,6 +206,107 @@ public class PlayerMovement
             var color = OnGround ? new Color32(0f, 1f, 0f, 1f) : new Color32(1f, 1f, 0f, 1f); // Green when grounded, yellow in air
             //ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
         }*/
+    }
+
+    /// <summary>
+    /// Runs one fixed movement tick, mirroring Source's frame order:
+    /// duck blend → categorize → start gravity → jump → wish velocity →
+    /// friction/move → stay on ground → recategorize → finish gravity.
+    /// </summary>
+    private void TickMovement(UserInput input, float yaw, float deltaTime, ref Vector3 position)
+    {
+        // Track input state for acceleration modifiers and collision hull
+        var isDucking = HoldingCtrl;
+        var isWalking = !HoldingCtrl && HoldingShift;
+
+        BlendDuckedHull(deltaTime, ref position, isDucking);
+
+        var playerHull = Hull;
+
+        WasOnGroundLastFrame = OnGround;
+
+        // Categorize position (check if on ground) - use lerped hull for collision
+        CategorizePosition(ref position, playerHull);
+
+        // Check if we just landed this frame
+        var justLanded = !WasOnGroundLastFrame && OnGround;
+
+        // StartGravity - add gravity at start of frame (like Source does)
+        if (!OnGround)
+        {
+            ApplyHalfGravity(deltaTime);
+            CheckVelocity(ref position); // StartGravity calls CheckVelocity in Source
+        }
+
+        // Check for jump (auto bunny hop if enabled and holding jump)
+        var wantsToJump = AutoBunnyHop ? input.Holding(TrackedKeys.Space) : false;
+        wantsToJump = wantsToJump || RequestedJump;
+
+        // For auto bhop, also jump immediately when landing while holding jump
+        if (wantsToJump && (OnGround || (AutoBunnyHop && justLanded)))
+        {
+            // Prevent bunnyhopping - cap speed before jumping (only if auto bhop is disabled)
+            if (!AutoBunnyHop)
+            {
+                PreventBunnyJumping();
+            }
+            CheckJump(deltaTime);
+        }
+
+        // Calculate wish velocity from input (with speed modifiers for duck/crouch)
+        var (wishdir, wishspeed) = CalculateWishVelocity(input, yaw);
+
+        // Apply walk speed modifier only when near walk speed (CS:GO behavior)
+        // This allows natural deceleration instead of instant capping
+        if (isWalking)
+        {
+            var currentSpeed = Velocity.Length();
+            var walkSpeed = MaxSpeedValue * WalkSpeedModifier;
+            if (currentSpeed < walkSpeed + WalkSpeedGraceMargin)
+            {
+                wishspeed = MathF.Min(wishspeed, walkSpeed);
+            }
+        }
+
+        // Ground or air movement - use isDucking (input) for speed modifiers
+        if (OnGround)
+        {
+            // Apply friction before movement
+            ZeroVerticalVelocity();
+            Friction(deltaTime);
+            CheckVelocity(ref position);
+            WalkMove(wishdir, wishspeed, deltaTime, isDucking, isWalking);
+            CheckVelocity(ref position);
+        }
+        else
+        {
+            AirMove(wishdir, wishspeed, deltaTime);
+        }
+
+        // Check velocity for NaN/bounds
+        CheckVelocity(ref position);
+
+        // Update position based on velocity - use lerped hull for collision
+        position = TryPlayerMove(position, Velocity * deltaTime, playerHull);
+
+        // StayOnGround - keep player stuck to ground when going down slopes/stairs
+        if (OnGround)
+        {
+            StayOnGround(ref position, playerHull);
+        }
+
+        // Recategorize position after movement (now that position is updated)
+        CategorizePosition(ref position, playerHull);
+
+        // Check velocity again for NaN/bounds
+        CheckVelocity(ref position);
+
+        // FinishGravity - add remaining gravity at end of frame
+        if (!OnGround)
+        {
+            ApplyHalfGravity(deltaTime);
+            CheckVelocity(ref position); // FinishGravity calls CheckVelocity in Source
+        }
     }
 
     /// <summary>
