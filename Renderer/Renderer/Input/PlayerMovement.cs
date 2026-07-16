@@ -307,28 +307,53 @@ public class PlayerMovement
         var goalCrouch = MathUtils.Saturate(CrouchBlend + crouchDelta);
         crouchDelta = goalCrouch - CrouchBlend;
 
+        // Which end of the hull stays put as it resizes:
+        // On ground, keep feet at same level (the hull grows upward).
+        // In air, keep head at same level (the hull grows downward).
+        var feetAnchored = OnGround;
+
         // Handle crouch/uncrouch transitions
         if (crouchDelta != 0f)
         {
             // uncrouching
             if (crouchDelta < 0f && Physics != null)
             {
-                // do not uncrouch if there is no headroom
-                var traceUp = TraceBBox(position, position + new Vector3(0, 0, crouchHeightDifference), PlayerHullDucked);
-                if (traceUp.Hit)
+                // The hull expands away from the anchored end, so that is the direction that needs
+                // to be clear. This used to always check upward, so an airborne uncrouch grew the
+                // hull downward unchecked and dug the player into whatever they were riding.
+                if (UncrouchBlocked(position, feetAnchored))
                 {
-                    crouchDelta = 0f;
+                    // Head-anchored uncrouch is blocked (e.g. surfing a ramp). If there is room
+                    // above, anchor the feet instead so the player can still stand up.
+                    if (!feetAnchored && !UncrouchBlocked(position, feetAnchored: true))
+                    {
+                        feetAnchored = true;
+                    }
+                    else
+                    {
+                        crouchDelta = 0f;
+                    }
                 }
             }
 
-            // In air, keep head at same level
-            // On ground, keep feet at same level
+            // Move the hull center so the anchored end stays in place
             var bboxPositionDelta = crouchHeightDifference * crouchDelta / 2f;
-            bboxPositionDelta *= OnGround ? -1f : 1f;
+            bboxPositionDelta *= feetAnchored ? -1f : 1f;
             position += new Vector3(0, 0, bboxPositionDelta);
         }
 
         CrouchBlend = MathUtils.Saturate(CrouchBlend + crouchDelta);
+    }
+
+    /// <summary>
+    /// Tests whether a full uncrouch is obstructed. The standing hull occupies exactly the ducked
+    /// hull swept <see cref="crouchHeightDifference"/> away from the anchored end, so sweeping the
+    /// ducked hull in that direction covers precisely the space the player needs to be clear.
+    /// </summary>
+    private bool UncrouchBlocked(Vector3 position, bool feetAnchored)
+    {
+        var growth = new Vector3(0, 0, feetAnchored ? crouchHeightDifference : -crouchHeightDifference);
+        return TraceBBox(position, position + growth, PlayerHullDucked).Hit;
     }
 
     /// <summary>
