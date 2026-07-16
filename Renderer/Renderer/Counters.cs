@@ -39,7 +39,7 @@ public class Counters
     private static readonly string[] LightGroupNames = ["omni", "spot", "barn", "rect", "directional"];
 
     // Declared after LightGroupNames so the instance created here sees it initialized (static initializers run in textual order).
-    /// <summary>Counters for the frame currently being rendered. Always non-null; collects nothing while <see cref="Capture"/> is off.</summary>
+    /// <summary>Counters for the frame currently being rendered. Cllects nothing while <see cref="Capture"/> is off.</summary>
     internal static Counters Active { get; private set; } = new();
 
     /// <summary>Gets or sets whether statistics are actively collected this frame.</summary>
@@ -48,25 +48,17 @@ public class Counters
     /// <summary>Gets the CPU and GPU timings for the same frame. Captured independently of <see cref="Capture"/>.</summary>
     public Timings Timings { get; } = new();
 
-    // Stands in for the frame markers Timings no longer does itself: debug groups outside a marked frame are ignored.
+    // Debug groups opened outside a marked frame are not timed.
     private bool timingFrame;
 
-    // Counting is suspended (nested) around passes that should not contribute to stats: shadows, depth prepass, picking.
     private int suspendDepth;
     private bool Counting => Capture && suspendDepth == 0 && !IsNotOwningThread;
 
-    // Ownership is claimed per frame by whichever thread marks it, because the render loop thread is torn down and
-    // recreated as viewers come and go, and the GL context moves with it. Anything reaching Active from another thread
-    // (the thumbnail GL thread renders with its own context and never marks a frame) then no-ops, rather than racing
-    // the collectors and issuing this frame's queries on the wrong context.
-    //
-    // The lock is not mutual exclusion, painting is already serialized. It publishes a frame's writes to the next
-    // painting thread: marking the end releases, marking the next begin acquires, and that edge carries across the
-    // handoff everything the previous thread did. Timings is marked inside the same scope, so one edge covers both.
+    // Need this since our renderer can move threads.
     private readonly Lock threadLock = new();
     private int owningThreadId;
 
-    /// <summary>Initializes a new <see cref="Counters"/> instance owned by the current thread until a frame is marked.</summary>
+    /// <summary>Initializes a new <see cref="Counters"/> owned by the current thread until a frame is marked.</summary>
     public Counters()
     {
         owningThreadId = Environment.CurrentManagedThreadId;
@@ -74,35 +66,25 @@ public class Counters
 
     private bool IsNotOwningThread => Environment.CurrentManagedThreadId != owningThreadId;
 
-    // Per-frame scalar counters, indexed by Counter.
+    // Stats
     private readonly int[] counts = new int[Enum.GetValues<Counter>().Length];
     private readonly int[] lightsInView = new int[LightGroupNames.Length];
     private readonly int[] staticLightsInView = new int[LightGroupNames.Length];
-
-    // Fraction (0-1) of the barn shadow atlas texture occupied by binned faces this frame.
     private float barnShadowAtlasUsage;
 
     /// <summary>GPU primitives-generated queries for one in-flight frame, one segment per unsuspended span of draws.</summary>
     private sealed class TriangleQueryFrame
     {
-        /// <summary>Query objects, grown on demand and reused once the frame slot comes back around.</summary>
+        /// <summary>Query objects, reused once the frame slot comes back around.</summary>
         public List<int> Segments { get; } = [];
 
-        /// <summary>Segments actually issued this frame; entries beyond it are pooled but idle.</summary>
+        /// <summary>Segments issued this frame. Entries beyond it are pooled but idle.</summary>
         public int SegmentsUsed { get; set; }
 
-        /// <summary>Whether the segments hold a result the GPU has not been drained of yet.</summary>
         public bool Pending { get; set; }
     }
 
-    // GPU primitives-generated queries measure the triangle count, so it includes GPU-culled indirect draws and
-    // particles that the CPU cannot count. A query cannot be paused, so instead of one query per frame it is split
-    // into segments: SuspendCounting ends the current segment and ResumeCounting starts a new one, which keeps the
-    // GPU count in agreement with the CPU-side counters through shadows, the depth prepass and picking. The frame's
-    // triangle count is the sum of its segments.
-    //
-    // Frames are drained oldest-first: the CPU runs ahead of the GPU, so a result is typically not available for a
-    // few frames after the query ended, and the displayed count lags by however many frames the GPU is behind.
+    // The CPU runs ahead of the GPU, so results take a few frames to land and the displayed count lags accordingly.
     private const int TriangleFrameCount = 4;
     private readonly TriangleQueryFrame[] triangleFrames = CreateTriangleFrames();
     private int triangleFrameWrite;
@@ -132,8 +114,8 @@ public class Counters
     private readonly int[] totalStaticLights = new int[LightGroupNames.Length];
     private long lastTotalsUpdate;
 
-    /// <summary>Suspends stat collection for the following draws until <see cref="ResumeCounting"/> is called. Nestable.</summary>
-    internal void SuspendCounting()
+    /// <summary>Suspends stat collection for the following draws until <see cref="ResumeTriangleCounter"/> is called. Nestable.</summary>
+    internal void SuspendTriangleCounter()
     {
         if (IsNotOwningThread)
         {
@@ -146,8 +128,8 @@ public class Counters
         }
     }
 
-    /// <summary>Resumes stat collection suspended by <see cref="SuspendCounting"/>.</summary>
-    internal void ResumeCounting()
+    /// <summary>Resumes stat collection suspended by <see cref="SuspendTriangleCounter"/>.</summary>
+    internal void ResumeTriangleCounter()
     {
         if (IsNotOwningThread)
         {
@@ -160,7 +142,7 @@ public class Counters
         }
     }
 
-    /// <summary>Starts a primitive query covering the draws that follow, unless the frame is not being counted.</summary>
+    /// <summary>Starts a primitive query covering the draws that follow.</summary>
     private void BeginTriangleSegment()
     {
         if (!triangleFrameActive || triangleSegmentActive)
@@ -179,7 +161,7 @@ public class Counters
         triangleSegmentActive = true;
     }
 
-    /// <summary>Ends the primitive query opened by <see cref="BeginTriangleSegment"/>, banking its result for the frame.</summary>
+    /// <summary>Ends the primitive query opened by <see cref="BeginTriangleSegment"/>, banking it for the frame.</summary>
     private void EndTriangleSegment()
     {
         if (!triangleSegmentActive)
@@ -203,7 +185,7 @@ public class Counters
         counts[(int)counter] += amount;
     }
 
-    /// <summary>Records the fraction (0-1) of the barn shadow atlas occupied by binned faces this frame.</summary>
+    /// <summary>Records the fraction (0-1) of the barn shadow atlas utilization.</summary>
     internal void SetBarnShadowAtlasUsage(float fraction)
     {
         if (!Counting)
@@ -225,7 +207,6 @@ public class Counters
         counts[(int)Counter.DrawCall]++;
     }
 
-    /// <summary>Counts an indirect multi-draw submission of an aggregate's meshlets. The meshlet count is as submitted, before GPU culling; triangles are measured by the frame primitive query instead.</summary>
     internal void CountIndirectDraw(SceneAggregate aggregate)
     {
         if (!Counting)
@@ -423,7 +404,7 @@ public class Counters
     /// <summary>Resets per-frame counters, reads back the previous frame's results.</summary>
     public void MarkFrameBegin()
     {
-        // Claimed unconditionally and held for the rest of the method, so that one edge publishes both collectors.
+        // Held for the rest of the method, and spanning Timings, so that one edge publishes both collectors.
         using var _ = threadLock.EnterScope();
         owningThreadId = Environment.CurrentManagedThreadId;
 
@@ -443,8 +424,7 @@ public class Counters
         Array.Clear(staticLightsInView);
         barnShadowAtlasUsage = 0;
 
-        // Drain finished frames oldest-first, keeping the newest result that has landed. The slot about to be
-        // written is the oldest, having been issued TriangleFrameCount frames ago.
+        // Oldest first, keeping the newest result that has landed. The slot about to be written is the oldest.
         for (var i = 0; i < TriangleFrameCount; i++)
         {
             var frame = triangleFrames[(triangleFrameWrite + i) % TriangleFrameCount];
@@ -454,7 +434,7 @@ public class Counters
                 continue;
             }
 
-            // Segments complete in submission order, so the last one standing in for the whole frame is enough.
+            // Segments complete in submission order, so the last one stands in for the whole frame.
             var lastSegment = frame.Segments[frame.SegmentsUsed - 1];
             GL.GetQueryObject(lastSegment, GetQueryObjectParam.QueryResultAvailable, out long available);
 
@@ -470,8 +450,7 @@ public class Counters
 
         if (writeFrame.Pending)
         {
-            // The whole ring is in flight, so the GPU is more than TriangleFrameCount frames behind. Block on the
-            // oldest result rather than reusing its query objects and silently dropping it.
+            // Every slot is in flight, so block rather than reuse these query objects and drop their result.
             trianglesRendered = SumTriangleSegments(writeFrame);
         }
 
@@ -501,7 +480,7 @@ public class Counters
     {
         using var _ = threadLock.EnterScope();
 
-        // Keyed off the query actually having begun rather than Capture, which may have been toggled mid-frame.
+        // Keyed off the query having begun rather than Capture, which may have been toggled mid-frame.
         if (triangleFrameActive)
         {
             EndTriangleSegment();
@@ -517,10 +496,7 @@ public class Counters
         Timings.MarkFrameEnd();
     }
 
-    /// <summary>
-    /// Begins a timing query for a debug group. Returns 0 when this frame is not being timed, or when called off the
-    /// owning thread, which is how the thumbnail renderer's debug groups stay out of the painting thread's timings.
-    /// </summary>
+    /// <summary>Begins a timing query for a debug group, or returns 0 if this frame is not being timed.</summary>
     internal QueryId BeginTimingQuery(string name)
     {
         if (!timingFrame || IsNotOwningThread)

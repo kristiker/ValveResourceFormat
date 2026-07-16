@@ -219,8 +219,7 @@ namespace ValveResourceFormat.Renderer
 
             using var _ = new GLDebugGroup("Text Render");
 
-            // Overlay glyphs are not scene geometry, and the stats overlay would otherwise count itself.
-            Counters.Active.SuspendCounting();
+            Counters.Active.SuspendTriangleCounter();
 
             verticesSize *= Vertex.Size * 4;
             var vertexBuffer = ArrayPool<float>.Shared.Rent(verticesSize);
@@ -356,7 +355,7 @@ namespace ValveResourceFormat.Renderer
             GL.Disable(EnableCap.Blend);
             GL.Enable(EnableCap.DepthTest);
 
-            Counters.Active.ResumeCounting();
+            Counters.Active.ResumeTriangleCounter();
 
             TextRenderRequests.Clear();
         }

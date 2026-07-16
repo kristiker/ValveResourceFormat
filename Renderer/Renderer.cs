@@ -36,7 +36,7 @@ public class Renderer
     /// <summary>
     /// Per-frame rendering statistics, including CPU/GPU profiling timings
     /// </summary>
-    public Counters Counters { get; } = new();
+    public Counters PerformanceCounters { get; } = new();
 
     /// <summary>
     /// The main scene to render.
@@ -460,7 +460,7 @@ public class Renderer
         // Only the standard pass contributes to render stats; picking and other off-screen passes are excluded.
         if (!isStandardPass)
         {
-            Counters.Active.SuspendCounting();
+            Counters.Active.SuspendTriangleCounter();
         }
 
         var isWireframe = IsWireframe && isStandardPass; // To avoid toggling it mid frame
@@ -584,7 +584,7 @@ public class Renderer
         }
         else
         {
-            Counters.Active.ResumeCounting();
+            Counters.Active.ResumeTriangleCounter();
         }
     }
 
@@ -824,7 +824,7 @@ public class Renderer
         ViewBuffer?.Dispose();
         Scene?.Dispose();
         SkyboxScene?.Dispose();
-        Counters?.Dispose();
+        PerformanceCounters?.Dispose();
         ResolvedSceneColor?.Delete();
         ResolvedSceneDepth?.Delete();
     }

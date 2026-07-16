@@ -436,10 +436,10 @@ namespace GUI.Types.GLViewers
             Debug.Assert(Picker != null);
             Debug.Assert(SelectedNodeRenderer != null);
 
-            Renderer.Counters.Capture = perfDisplay == PerfDisplay.Stats;
-            Renderer.Counters.Timings.Capture = perfDisplay == PerfDisplay.Timings;
+            Renderer.PerformanceCounters.Capture = perfDisplay == PerfDisplay.Stats;
+            Renderer.PerformanceCounters.Timings.Capture = perfDisplay == PerfDisplay.Timings;
 
-            Renderer.Counters.MarkFrameBegin();
+            Renderer.PerformanceCounters.MarkFrameBegin();
             GL.BeginQuery(QueryTarget.TimeElapsed, frametimeQuery1);
 
             var renderContext = new Scene.RenderContext
@@ -606,17 +606,17 @@ namespace GUI.Types.GLViewers
 
             if (perfDisplay == PerfDisplay.Stats)
             {
-                Renderer.Counters.DisplayStats(TextRenderer, Renderer.Camera, Scene, SkyboxScene);
+                Renderer.PerformanceCounters.DisplayStats(TextRenderer, Renderer.Camera, Scene, SkyboxScene);
             }
             else if (perfDisplay == PerfDisplay.Timings)
             {
-                Renderer.Counters.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
+                Renderer.PerformanceCounters.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
             }
 
             TextRenderer.Render(Renderer.Camera, Renderer.ResolvedSceneDepth);
             Picker?.TriggerEventIfAny();
 
-            Renderer.Counters.MarkFrameEnd();
+            Renderer.PerformanceCounters.MarkFrameEnd();
         }
 
         protected void AddBaseGridControl()
