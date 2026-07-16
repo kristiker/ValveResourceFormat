@@ -8,7 +8,6 @@ using QueryId = System.Int32;
 
 namespace ValveResourceFormat.Renderer;
 
-/// <summary>Scalar per-frame counters incremented via <see cref="Counters.Count"/>.</summary>
 internal enum Counter
 {
     SceneObjectInView,
@@ -20,6 +19,11 @@ internal enum Counter
     ShadowFaceSubmitted,
     ParticleSystem,
     ParticleDraw,
+}
+
+internal enum Metric
+{
+    ShadowAtlasUsage,
 }
 
 /// <summary>
@@ -68,9 +72,9 @@ public class Counters
 
     // Stats
     private readonly int[] counts = new int[Enum.GetValues<Counter>().Length];
+    private readonly float[] floatMetrics = new float[Enum.GetValues<Metric>().Length];
     private readonly int[] lightsInView = new int[LightGroupNames.Length];
     private readonly int[] staticLightsInView = new int[LightGroupNames.Length];
-    private float barnShadowAtlasUsage;
 
     /// <summary>GPU primitives-generated queries for one in-flight frame, one segment per unsuspended span of draws.</summary>
     private sealed class TriangleQueryFrame
@@ -185,15 +189,15 @@ public class Counters
         counts[(int)counter] += amount;
     }
 
-    /// <summary>Records the fraction (0-1) of the barn shadow atlas utilization.</summary>
-    internal void SetBarnShadowAtlasUsage(float fraction)
+    /// <summary>Assigns a float counter, replacing any value set earlier this frame.</summary>
+    internal void Set(Metric counter, float value)
     {
         if (!Counting)
         {
             return;
         }
 
-        barnShadowAtlasUsage = fraction;
+        floatMetrics[(int)counter] = value;
     }
 
     /// <summary>Counts a direct GL draw call for the given node.</summary>
@@ -397,7 +401,7 @@ public class Counters
         AddLine($"Materials:        {counts[(int)Counter.MaterialChange]:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
         AddLine($"Dynamic Lights:   in view {FormatLightCounts(lightsInView, totalLights)} out of total {FormatLightCounts(totalLights, totalLights)}", valueColor);
         AddLine($"Static Lights:    in view {FormatLightCounts(staticLightsInView, totalStaticLights)} out of total {FormatLightCounts(totalStaticLights, totalStaticLights)}", valueColor);
-        AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMap]:N0} directional, {counts[(int)Counter.BarnShadowMap]:N0} barn, {counts[(int)Counter.ShadowFaceSubmitted]:N0} faces binned, {barnShadowAtlasUsage:0%} atlas utilization", valueColor);
+        AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMap]:N0} directional, {counts[(int)Counter.BarnShadowMap]:N0} barn, {counts[(int)Counter.ShadowFaceSubmitted]:N0} faces binned, {floatMetrics[(int)Metric.ShadowAtlasUsage]:0%} atlas utilization", valueColor);
         AddLine($"Particle Systems: {counts[(int)Counter.ParticleSystem]:N0} particle systems rendered in {counts[(int)Counter.ParticleDraw]:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
     }
 
@@ -422,7 +426,7 @@ public class Counters
         Array.Clear(counts);
         Array.Clear(lightsInView);
         Array.Clear(staticLightsInView);
-        barnShadowAtlasUsage = 0;
+        Array.Clear(floatMetrics);
 
         // Oldest first, keeping the newest result that has landed. The slot about to be written is the oldest.
         for (var i = 0; i < TriangleFrameCount; i++)

@@ -457,7 +457,6 @@ public class Renderer
         var isMainFramebuffer = ReferenceEquals(renderContext.Framebuffer, MainFramebuffer);
         var isStandardPass = renderContext.ReplacementShader == null && isMainFramebuffer;
 
-        // Only the standard pass contributes to render stats; picking and other off-screen passes are excluded.
         if (!isStandardPass)
         {
             Counters.Active.SuspendTriangleCounter();

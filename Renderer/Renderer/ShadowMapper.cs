@@ -340,6 +340,8 @@ public class ShadowMapper
         }
 
         var atlasTexels = (long)atlasSize * atlasSize;
-        Counters.Active.SetBarnShadowAtlasUsage(atlasTexels > 0 ? (float)usedTexels / atlasTexels : 0f);
+        var atlasUsage = atlasTexels > 0 ? (float)usedTexels / atlasTexels : 0f;
+
+        Counters.Active.Set(Metric.ShadowAtlasUsage, atlasUsage);
     }
 }
