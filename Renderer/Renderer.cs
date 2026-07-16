@@ -462,6 +462,12 @@ public class Renderer
         var isMainFramebuffer = ReferenceEquals(renderContext.Framebuffer, MainFramebuffer);
         var isStandardPass = renderContext.ReplacementShader == null && isMainFramebuffer;
 
+        // Only the standard pass contributes to render stats; picking and other off-screen passes are excluded.
+        if (!isStandardPass)
+        {
+            Counters.Active.SuspendCounting();
+        }
+
         var isWireframe = IsWireframe && isStandardPass; // To avoid toggling it mid frame
         var computeFramebufferLuminance = Postprocess.State.ExposureSettings.AutoExposureEnabled;
 
@@ -581,6 +587,10 @@ public class Renderer
                 RenderOutlineLayer(renderContext);
             }
         }
+        else
+        {
+            Counters.Active.ResumeCounting();
+        }
     }
 
     /// <summary>
@@ -609,7 +619,7 @@ public class Renderer
 
         using (new GLDebugGroup("Direct Light Shadows"))
         {
-            Counters.Active.CountShadowMap();
+            Counters.Active.Count(Counter.ShadowMaps);
             Scene.RenderOpaqueShadows(renderContext, depthOnlyShaders, Scene.CulledShadowDrawCalls);
         }
     }
@@ -663,7 +673,7 @@ public class Renderer
                 continue;
             }
 
-            Counters.Active.CountShadowMap();
+            Counters.Active.Count(Counter.ShadowMaps);
 
             GL.Viewport(region.X, region.Y, region.Width, region.Height);
             GL.Scissor(region.X, region.Y, region.Width, region.Height);

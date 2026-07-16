@@ -6,21 +6,22 @@ using ValveResourceFormat.Renderer.SceneNodes;
 
 namespace ValveResourceFormat.Renderer;
 
+/// <summary>Scalar per-frame counters incremented via <see cref="Counters.Count"/>.</summary>
+internal enum Counter
+{
+    DrawCalls,
+    MeshletDispatches,
+    MaterialChanges,
+    ShadowMaps,
+    ParticleSystems,
+    ParticleDraws,
+}
+
 /// <summary>
 /// Collects per frame rendering statistics (draw calls, triangles, lights, etc).
 /// </summary>
 public class Counters
 {
-    /// <summary>Counters for the frame currently being rendered. Always non-null; collects nothing while <see cref="Capture"/> is off.</summary>
-    internal static Counters Active { get; private set; } = new();
-
-    /// <summary>Gets or sets whether statistics are actively collected this frame.</summary>
-    public bool Capture { get; set; }
-
-    // Counting is temporarily suspended for passes that should not contribute to stats (shadow and depth prepass).
-    private bool suspended;
-    private bool Counting => Capture && !suspended;
-
     private enum LightGroup
     {
         Omni,
@@ -32,21 +33,28 @@ public class Counters
 
     private static readonly string[] LightGroupNames = ["omni", "spot", "barn", "rect", "directional"];
 
-    // Per-frame counters
-    private int drawCalls;
-    private int meshletDispatches;
-    private int materialChanges;
-    private int shadowMapsRendered;
-    private int particleSystemsRendered;
-    private int particleDrawCalls;
+    // Declared after LightGroupNames so the instance created here sees it initialized (static initializers run in textual order).
+    /// <summary>Counters for the frame currently being rendered. Always non-null; collects nothing while <see cref="Capture"/> is off.</summary>
+    internal static Counters Active { get; private set; } = new();
+
+    /// <summary>Gets or sets whether statistics are actively collected this frame.</summary>
+    public bool Capture { get; set; }
+
+    // Counting is suspended (nested) around passes that should not contribute to stats: shadows, depth prepass, picking.
+    private int suspendDepth;
+    private bool Counting => Capture && suspendDepth == 0;
+
+    // Per-frame scalar counters, indexed by Counter.
+    private readonly int[] counts = new int[Enum.GetValues<Counter>().Length];
     private readonly int[] lightsInView = new int[LightGroupNames.Length];
     private readonly int[] staticLightsInView = new int[LightGroupNames.Length];
     private readonly HashSet<SceneNode> drawnNodes = [];
 
-    // GPU primitive queries measure the triangles actually rendered (including GPU-culled indirect
-    // draws and particle effects). Results are read back with one frame of latency.
-    private readonly List<int> primitiveQueries = [];
-    private int primitiveQueriesUsed;
+    // A single GPU primitives-generated query wraps the whole frame, so the triangle count includes GPU-culled
+    // indirect draws and particles. Two query objects are ping-ponged so the previous frame's result can be read
+    // back without blocking (one frame of latency).
+    private readonly int[] triangleQueries = [0, 0];
+    private int triangleQueryWrite;
     private long trianglesRendered;
 
     // Cached scene totals, recomputed once per second
@@ -59,11 +67,22 @@ public class Counters
     private readonly int[] totalStaticLights = new int[LightGroupNames.Length];
     private long lastTotalsUpdate;
 
-    /// <summary>Suspends stat collection for the following draws until <see cref="ResumeCounting"/> is called. Used to exclude shadow and depth prepass draws.</summary>
-    internal void SuspendCounting() => suspended = true;
+    /// <summary>Suspends stat collection for the following draws until <see cref="ResumeCounting"/> is called. Nestable.</summary>
+    internal void SuspendCounting() => suspendDepth++;
 
     /// <summary>Resumes stat collection suspended by <see cref="SuspendCounting"/>.</summary>
-    internal void ResumeCounting() => suspended = false;
+    internal void ResumeCounting() => suspendDepth--;
+
+    /// <summary>Increments a scalar counter.</summary>
+    internal void Count(Counter counter, int amount = 1)
+    {
+        if (!Counting)
+        {
+            return;
+        }
+
+        counts[(int)counter] += amount;
+    }
 
     /// <summary>Counts a direct GL draw call for the given node.</summary>
     internal void CountDrawCall(SceneNode node)
@@ -73,11 +92,11 @@ public class Counters
             return;
         }
 
-        drawCalls++;
+        counts[(int)Counter.DrawCalls]++;
         drawnNodes.Add(node);
     }
 
-    /// <summary>Counts an indirect multi-draw submission of an aggregate's meshlets. The meshlet count is as submitted, before GPU culling; triangles are measured by the surrounding primitive query instead.</summary>
+    /// <summary>Counts an indirect multi-draw submission of an aggregate's meshlets. The meshlet count is as submitted, before GPU culling; triangles are measured by the frame primitive query instead.</summary>
     internal void CountIndirectDraw(SceneAggregate aggregate)
     {
         if (!Counting)
@@ -85,39 +104,8 @@ public class Counters
             return;
         }
 
-        meshletDispatches += aggregate.IndirectDrawCount;
+        counts[(int)Counter.MeshletDispatches] += aggregate.IndirectDrawCount;
         drawnNodes.Add(aggregate);
-    }
-
-    /// <summary>
-    /// Begins a GL primitives-generated query so triangles rasterized by the following draws are
-    /// measured on the GPU. Must be paired with <see cref="EndPrimitiveQuery"/>, and queries must not nest.
-    /// </summary>
-    internal void BeginPrimitiveQuery()
-    {
-        if (!Counting)
-        {
-            return;
-        }
-
-        if (primitiveQueriesUsed == primitiveQueries.Count)
-        {
-            primitiveQueries.Add(GL.GenQuery());
-        }
-
-        GL.BeginQuery(QueryTarget.PrimitivesGenerated, primitiveQueries[primitiveQueriesUsed]);
-        primitiveQueriesUsed++;
-    }
-
-    /// <summary>Ends the primitives-generated query started by <see cref="BeginPrimitiveQuery"/>.</summary>
-    internal void EndPrimitiveQuery()
-    {
-        if (!Counting)
-        {
-            return;
-        }
-
-        GL.EndQuery(QueryTarget.PrimitivesGenerated);
     }
 
     /// <summary>Counts a node that renders itself outside of the mesh batcher (physics shapes, sprites, etc).</summary>
@@ -129,28 +117,6 @@ public class Counters
         }
 
         drawnNodes.Add(node);
-    }
-
-    /// <summary>Counts a material state change in the mesh batcher.</summary>
-    internal void CountMaterialChange()
-    {
-        if (!Counting)
-        {
-            return;
-        }
-
-        materialChanges++;
-    }
-
-    /// <summary>Counts one rendered shadow map (sun pass or one barn light face).</summary>
-    internal void CountShadowMap()
-    {
-        if (!Counting)
-        {
-            return;
-        }
-
-        shadowMapsRendered++;
     }
 
     /// <summary>Counts a light that passed frustum culling this frame.</summary>
@@ -169,28 +135,6 @@ public class Counters
         {
             staticLightsInView[(int)GetLightGroup(light)]++;
         }
-    }
-
-    /// <summary>Counts one particle system that rendered this frame.</summary>
-    internal void CountParticleSystem()
-    {
-        if (!Counting)
-        {
-            return;
-        }
-
-        particleSystemsRendered++;
-    }
-
-    /// <summary>Counts a GL draw call issued by a particle renderer.</summary>
-    internal void CountParticleDraw()
-    {
-        if (!Counting)
-        {
-            return;
-        }
-
-        particleDrawCalls++;
     }
 
     private static LightGroup GetLightGroup(SceneLight light) => light.Entity switch
@@ -351,15 +295,15 @@ public class Counters
         AddLine("Render Stats", new Color32(255, 200, 0));
 
         AddLine($"Triangles:        rendered {trianglesRendered:N0} of {totalTriangles:N0}", valueColor);
-        AddLine($"Scene objects:    drawn {drawnNodes.Count:N0} of {totalSceneObjects:N0} scene objects in {drawCalls:N0} draw calls and {meshletDispatches:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
-        AddLine($"Materials:        {materialChanges:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
+        AddLine($"Scene objects:    drawn {drawnNodes.Count:N0} of {totalSceneObjects:N0} scene objects in {counts[(int)Counter.DrawCalls]:N0} draw calls and {counts[(int)Counter.MeshletDispatches]:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
+        AddLine($"Materials:        {counts[(int)Counter.MaterialChanges]:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
         AddLine($"Dynamic Lights:   in view {FormatLightCounts(lightsInView, totalLights)} out of total {FormatLightCounts(totalLights, totalLights)}", valueColor);
         AddLine($"Static Lights:    in view {FormatLightCounts(staticLightsInView, totalStaticLights)} out of total {FormatLightCounts(totalStaticLights, totalStaticLights)}", valueColor);
-        AddLine($"Shadow maps:      {shadowMapsRendered:N0}", valueColor);
-        AddLine($"Particle Systems: {particleSystemsRendered:N0} particle systems rendered in {particleDrawCalls:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
+        AddLine($"Shadow maps:      {counts[(int)Counter.ShadowMaps]:N0}", valueColor);
+        AddLine($"Particle Systems: {counts[(int)Counter.ParticleSystems]:N0} particle systems rendered in {counts[(int)Counter.ParticleDraws]:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
     }
 
-    /// <summary>Resets per-frame counters and makes these counters the active collection target.</summary>
+    /// <summary>Resets per-frame counters, reads back the previous frame's triangle count, and begins this frame's triangle query.</summary>
     public void MarkFrameBegin()
     {
         Active = this;
@@ -369,27 +313,38 @@ public class Counters
             return;
         }
 
-        suspended = false;
-
-        // Collect the primitive query results submitted last frame
-        trianglesRendered = 0;
-        for (var i = 0; i < primitiveQueriesUsed; i++)
-        {
-            GL.GetQueryObject(primitiveQueries[i], GetQueryObjectParam.QueryResult, out long result);
-            trianglesRendered += result;
-        }
-
-        primitiveQueriesUsed = 0;
-
-        drawCalls = 0;
-        meshletDispatches = 0;
-        materialChanges = 0;
-        shadowMapsRendered = 0;
-        particleSystemsRendered = 0;
-        particleDrawCalls = 0;
+        suspendDepth = 0;
+        Array.Clear(counts);
         Array.Clear(lightsInView);
         Array.Clear(staticLightsInView);
         drawnNodes.Clear();
+
+        // Read back the query that ended last frame without blocking; it has had a full frame to complete.
+        if (triangleQueries[triangleQueryWrite] != 0)
+        {
+            GL.GetQueryObject(triangleQueries[triangleQueryWrite], GetQueryObjectParam.QueryResultNoWait, out long result);
+            trianglesRendered = result;
+        }
+
+        // Begin this frame's query on the other buffer.
+        triangleQueryWrite = 1 - triangleQueryWrite;
+        if (triangleQueries[triangleQueryWrite] == 0)
+        {
+            triangleQueries[triangleQueryWrite] = GL.GenQuery();
+        }
+
+        GL.BeginQuery(QueryTarget.PrimitivesGenerated, triangleQueries[triangleQueryWrite]);
+    }
+
+    /// <summary>Ends this frame's triangle query.</summary>
+    public void MarkFrameEnd()
+    {
+        if (!Capture)
+        {
+            return;
+        }
+
+        GL.EndQuery(QueryTarget.PrimitivesGenerated);
     }
 
     /// <summary>
@@ -397,12 +352,13 @@ public class Counters
     /// </summary>
     public void Dispose()
     {
-        foreach (var query in primitiveQueries)
+        for (var i = 0; i < triangleQueries.Length; i++)
         {
-            GL.DeleteQuery(query);
+            if (triangleQueries[i] != 0)
+            {
+                GL.DeleteQuery(triangleQueries[i]);
+                triangleQueries[i] = 0;
+            }
         }
-
-        primitiveQueries.Clear();
-        primitiveQueriesUsed = 0;
     }
 }

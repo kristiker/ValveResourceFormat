@@ -1263,11 +1263,16 @@ namespace ValveResourceFormat.Renderer
         {
             renderContext.RenderPass = RenderPass.DepthOnly;
 
+            // Shadow draws do not contribute to render stats.
+            Counters.Active.SuspendCounting();
+
             foreach (var (program, calls) in drawCalls)
             {
                 renderContext.ReplacementShader = depthOnlyShaders[(int)program];
                 MeshBatchRenderer.Render(calls, renderContext);
             }
+
+            Counters.Active.ResumeCounting();
         }
 
         /// <summary>
@@ -1293,12 +1298,17 @@ namespace ValveResourceFormat.Renderer
                 {
                     GL.ColorMask(false, false, false, false);
 
+                    // The depth prepass redraws opaque geometry for depth only; exclude it from render stats.
+                    Counters.Active.SuspendCounting();
+
                     renderContext.RenderPass = RenderPass.DepthOnly;
                     foreach (var (program, calls) in depthOnlyDraws)
                     {
                         renderContext.ReplacementShader = depthOnlyShaders[(int)program];
                         MeshBatchRenderer.Render(calls, renderContext);
                     }
+
+                    Counters.Active.ResumeCounting();
 
                     GL.ColorMask(true, true, true, true);
                 }

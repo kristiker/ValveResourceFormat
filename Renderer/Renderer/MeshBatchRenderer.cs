@@ -157,23 +157,6 @@ namespace ValveResourceFormat.Renderer
 
             var counters = Counters.Active;
 
-            // Shadow and depth prepass draws are excluded from render stats
-            var depthOnly = context.RenderPass == RenderPass.DepthOnly;
-            if (depthOnly)
-            {
-                counters.SuspendCounting();
-            }
-
-            // Rendered triangles are measured on the GPU with a primitives-generated query around each
-            // batch. The CPU cannot count them itself: indirect draws are culled GPU-side, and custom
-            // nodes issue their own draws internally.
-            var gpuTriangleQuery = requests.Count > 0;
-
-            if (gpuTriangleQuery)
-            {
-                counters.BeginPrimitiveQuery();
-            }
-
             foreach (var request in requests)
             {
                 if (request.Call == null)
@@ -195,7 +178,7 @@ namespace ValveResourceFormat.Renderer
 
                 if (material != requestMaterial)
                 {
-                    counters.CountMaterialChange();
+                    counters.Count(Counter.MaterialChanges);
 
                     if (context.ReplacementShader?.IgnoreMaterialData != true)
                     {
@@ -279,16 +262,6 @@ namespace ValveResourceFormat.Renderer
                 }
 
                 Draw(shader!, ref uniforms, ref config, new(request.Mesh, request.Call, request.Node));
-            }
-
-            if (gpuTriangleQuery)
-            {
-                counters.EndPrimitiveQuery();
-            }
-
-            if (depthOnly)
-            {
-                counters.ResumeCounting();
             }
 
             if (vao > -1)

@@ -517,6 +517,7 @@ namespace GUI.Types.GLViewers
             }
 
             GL.EndQuery(QueryTarget.TimeElapsed);
+            Renderer.Counters.MarkFrameEnd();
 
             if (Paused)
             {
