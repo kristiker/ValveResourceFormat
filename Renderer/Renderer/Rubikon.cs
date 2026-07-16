@@ -748,8 +748,6 @@ public class Rubikon
         //Needs to exist from the start, as it gets updated while running through the axis.
         var hitNormal = Vector3.Zero;
 
-        var hasHit = true;
-
         ReadOnlySpan<Vector3> triangle = [v0, v1, v2];
 
         float enter = float.NegativeInfinity, exit = float.PositiveInfinity;
@@ -759,7 +757,7 @@ public class Rubikon
             Vector3 axisVector;
             if (axis == 0)
             {
-                axisVector = Vector3.Normalize(Vector3.Cross(v1 - v0, v2 - v0));
+                axisVector = Vector3.Cross(v1 - v0, v2 - v0);
             }
             else if (axis > 0 && axis < 10)
             {
@@ -810,6 +808,19 @@ public class Rubikon
                 max = MathF.Max(max, projection + boxExtent);
             }
 
+            // The axis is (near) perpendicular to the sweep, so the box's projection onto it does
+            // not change over the trace and the divisions below would be by ~0. The axis
+            // either separates for the whole sweep, or never separates and constrains nothing.
+            if (cosTheta <= Epsilon)
+            {
+                if (min > 0f || max < 0f)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
             //avoids division early
             if (min > tracedDistanceAlongAxis)
                 return;
@@ -852,7 +863,7 @@ public class Rubikon
 
         var hitPoint = trace.Origin + trace.Direction * hitDistance;
 
-        if (hasHit && hitDistance < closestHit.Distance)
+        if (hitDistance < closestHit.Distance)
         {
             closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
         }
