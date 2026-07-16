@@ -55,12 +55,45 @@ public class Counters
     // Fraction (0-1) of the barn shadow atlas texture occupied by binned faces this frame.
     private float barnShadowAtlasUsage;
 
-    // A single GPU primitives-generated query wraps the whole frame, so the triangle count includes GPU-culled
-    // indirect draws and particles. Two query objects are ping-ponged so the previous frame's result can be read
-    // back without blocking (one frame of latency).
-    private readonly int[] triangleQueries = [0, 0];
-    private int triangleQueryWrite;
+    /// <summary>GPU primitives-generated queries for one in-flight frame, one segment per unsuspended span of draws.</summary>
+    private sealed class TriangleQueryFrame
+    {
+        /// <summary>Query objects, grown on demand and reused once the frame slot comes back around.</summary>
+        public List<int> Segments { get; } = [];
+
+        /// <summary>Segments actually issued this frame; entries beyond it are pooled but idle.</summary>
+        public int SegmentsUsed { get; set; }
+
+        /// <summary>Whether the segments hold a result the GPU has not been drained of yet.</summary>
+        public bool Pending { get; set; }
+    }
+
+    // GPU primitives-generated queries measure the triangle count, so it includes GPU-culled indirect draws and
+    // particles that the CPU cannot count. A query cannot be paused, so instead of one query per frame it is split
+    // into segments: SuspendCounting ends the current segment and ResumeCounting starts a new one, which keeps the
+    // GPU count in agreement with the CPU-side counters through shadows, the depth prepass and picking. The frame's
+    // triangle count is the sum of its segments.
+    //
+    // Frames are drained oldest-first: the CPU runs ahead of the GPU, so a result is typically not available for a
+    // few frames after the query ended, and the displayed count lags by however many frames the GPU is behind.
+    private const int TriangleFrameCount = 4;
+    private readonly TriangleQueryFrame[] triangleFrames = CreateTriangleFrames();
+    private int triangleFrameWrite;
+    private bool triangleFrameActive;
+    private bool triangleSegmentActive;
     private long trianglesRendered;
+
+    private static TriangleQueryFrame[] CreateTriangleFrames()
+    {
+        var frames = new TriangleQueryFrame[TriangleFrameCount];
+
+        for (var i = 0; i < frames.Length; i++)
+        {
+            frames[i] = new TriangleQueryFrame();
+        }
+
+        return frames;
+    }
 
     // Cached scene totals, recomputed once per second
     private long totalTriangles;
@@ -73,10 +106,58 @@ public class Counters
     private long lastTotalsUpdate;
 
     /// <summary>Suspends stat collection for the following draws until <see cref="ResumeCounting"/> is called. Nestable.</summary>
-    internal void SuspendCounting() => suspendDepth++;
+    internal void SuspendCounting()
+    {
+        if (suspendDepth == 0)
+        {
+            EndTriangleSegment();
+        }
+
+        suspendDepth++;
+    }
 
     /// <summary>Resumes stat collection suspended by <see cref="SuspendCounting"/>.</summary>
-    internal void ResumeCounting() => suspendDepth--;
+    internal void ResumeCounting()
+    {
+        suspendDepth--;
+
+        if (suspendDepth == 0)
+        {
+            BeginTriangleSegment();
+        }
+    }
+
+    /// <summary>Starts a primitive query covering the draws that follow, unless the frame is not being counted.</summary>
+    private void BeginTriangleSegment()
+    {
+        if (!triangleFrameActive || triangleSegmentActive)
+        {
+            return;
+        }
+
+        var frame = triangleFrames[triangleFrameWrite];
+
+        if (frame.SegmentsUsed == frame.Segments.Count)
+        {
+            frame.Segments.Add(GL.GenQuery());
+        }
+
+        GL.BeginQuery(QueryTarget.PrimitivesGenerated, frame.Segments[frame.SegmentsUsed]);
+        triangleSegmentActive = true;
+    }
+
+    /// <summary>Ends the primitive query opened by <see cref="BeginTriangleSegment"/>, banking its result for the frame.</summary>
+    private void EndTriangleSegment()
+    {
+        if (!triangleSegmentActive)
+        {
+            return;
+        }
+
+        GL.EndQuery(QueryTarget.PrimitivesGenerated);
+        triangleSegmentActive = false;
+        triangleFrames[triangleFrameWrite].SegmentsUsed++;
+    }
 
     /// <summary>Increments a scalar counter.</summary>
     internal void Count(Counter counter, int amount = 1)
@@ -322,38 +403,74 @@ public class Counters
         Array.Clear(staticLightsInView);
         barnShadowAtlasUsage = 0;
 
-        // Read back the query that ended last frame without blocking. If the GPU hasn't finished it yet, keep the
-        // previous value rather than stomping it to zero (QueryResultNoWait leaves the out param unmodified when not ready).
-        var lastQuery = triangleQueries[triangleQueryWrite];
-        if (lastQuery != 0)
+        // Drain finished frames oldest-first, keeping the newest result that has landed. The slot about to be
+        // written is the oldest, having been issued TriangleFrameCount frames ago.
+        for (var i = 0; i < TriangleFrameCount; i++)
         {
-            GL.GetQueryObject(lastQuery, GetQueryObjectParam.QueryResultAvailable, out long available);
-            if (available != 0)
+            var frame = triangleFrames[(triangleFrameWrite + i) % TriangleFrameCount];
+
+            if (!frame.Pending)
             {
-                GL.GetQueryObject(lastQuery, GetQueryObjectParam.QueryResult, out long result);
-                trianglesRendered = result;
+                continue;
             }
+
+            // Segments complete in submission order, so the last one standing in for the whole frame is enough.
+            var lastSegment = frame.Segments[frame.SegmentsUsed - 1];
+            GL.GetQueryObject(lastSegment, GetQueryObjectParam.QueryResultAvailable, out long available);
+
+            if (available == 0)
+            {
+                break; // nothing newer is ready either
+            }
+
+            trianglesRendered = SumTriangleSegments(frame);
         }
 
-        // Begin this frame's query on the other buffer.
-        triangleQueryWrite = 1 - triangleQueryWrite;
-        if (triangleQueries[triangleQueryWrite] == 0)
+        var writeFrame = triangleFrames[triangleFrameWrite];
+
+        if (writeFrame.Pending)
         {
-            triangleQueries[triangleQueryWrite] = GL.GenQuery();
+            // The whole ring is in flight, so the GPU is more than TriangleFrameCount frames behind. Block on the
+            // oldest result rather than reusing its query objects and silently dropping it.
+            trianglesRendered = SumTriangleSegments(writeFrame);
         }
 
-        GL.BeginQuery(QueryTarget.PrimitivesGenerated, triangleQueries[triangleQueryWrite]);
+        writeFrame.SegmentsUsed = 0;
+        triangleFrameActive = true;
+        BeginTriangleSegment();
+    }
+
+    /// <summary>Reads and totals a frame's segment results, blocking until the GPU has finished them.</summary>
+    private static long SumTriangleSegments(TriangleQueryFrame frame)
+    {
+        var total = 0L;
+
+        for (var i = 0; i < frame.SegmentsUsed; i++)
+        {
+            GL.GetQueryObject(frame.Segments[i], GetQueryObjectParam.QueryResult, out long result);
+            total += result;
+        }
+
+        frame.Pending = false;
+
+        return total;
     }
 
     /// <summary>Ends this frame's triangle query.</summary>
     public void MarkFrameEnd()
     {
-        if (!Capture)
+        // Keyed off the query actually having begun rather than Capture, which may have been toggled mid-frame.
+        if (!triangleFrameActive)
         {
             return;
         }
 
-        GL.EndQuery(QueryTarget.PrimitivesGenerated);
+        EndTriangleSegment();
+
+        var frame = triangleFrames[triangleFrameWrite];
+        frame.Pending = frame.SegmentsUsed > 0;
+        triangleFrameActive = false;
+        triangleFrameWrite = (triangleFrameWrite + 1) % TriangleFrameCount;
     }
 
     /// <summary>
@@ -361,13 +478,16 @@ public class Counters
     /// </summary>
     public void Dispose()
     {
-        for (var i = 0; i < triangleQueries.Length; i++)
+        foreach (var frame in triangleFrames)
         {
-            if (triangleQueries[i] != 0)
+            foreach (var segment in frame.Segments)
             {
-                GL.DeleteQuery(triangleQueries[i]);
-                triangleQueries[i] = 0;
+                GL.DeleteQuery(segment);
             }
+
+            frame.Segments.Clear();
+            frame.SegmentsUsed = 0;
+            frame.Pending = false;
         }
     }
 }
