@@ -125,7 +125,7 @@ namespace GUI.Types.GLViewers
                     }
                 }
 
-                perfDisplayComboBox = UiControl.AddSelection("Perf Stats", (_, i) => perfDisplay = (PerfDisplay)i);
+                perfDisplayComboBox = UiControl.AddSelection("Debug Performance", (_, i) => perfDisplay = (PerfDisplay)i);
                 perfDisplayComboBox.Items.AddRange([nameof(PerfDisplay.Off), nameof(PerfDisplay.Stats), nameof(PerfDisplay.Timings)]);
                 perfDisplayComboBox.SelectedIndex = (int)perfDisplay;
             }
@@ -437,9 +437,8 @@ namespace GUI.Types.GLViewers
             Debug.Assert(SelectedNodeRenderer != null);
 
             Renderer.Counters.Capture = perfDisplay == PerfDisplay.Stats;
-            Renderer.Timings.Capture = perfDisplay == PerfDisplay.Timings;
+            Renderer.Counters.Timings.Capture = perfDisplay == PerfDisplay.Timings;
 
-            Renderer.Timings.MarkFrameBegin();
             Renderer.Counters.MarkFrameBegin();
             GL.BeginQuery(QueryTarget.TimeElapsed, frametimeQuery1);
 
@@ -517,7 +516,6 @@ namespace GUI.Types.GLViewers
             }
 
             GL.EndQuery(QueryTarget.TimeElapsed);
-            Renderer.Counters.MarkFrameEnd();
 
             if (Paused)
             {
@@ -612,13 +610,13 @@ namespace GUI.Types.GLViewers
             }
             else if (perfDisplay == PerfDisplay.Timings)
             {
-                Renderer.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
+                Renderer.Counters.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
             }
 
             TextRenderer.Render(Renderer.Camera, Renderer.ResolvedSceneDepth);
             Picker?.TriggerEventIfAny();
 
-            Renderer.Timings.MarkFrameEnd();
+            Renderer.Counters.MarkFrameEnd();
         }
 
         protected void AddBaseGridControl()

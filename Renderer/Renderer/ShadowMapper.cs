@@ -327,7 +327,7 @@ public class ShadowMapper
                     });
 
                     // Each submitted face is a separate GPU shadow render; an omni light contributes up to 6.
-                    Counters.Active.Count(Counter.ShadowFacesSubmitted);
+                    Counters.Active.Count(Counter.ShadowFaceSubmitted);
                     usedTexels += (long)region.Width * region.Height;
                 }
                 else

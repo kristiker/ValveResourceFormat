@@ -1,23 +1,25 @@
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Renderer.SceneEnvironment;
 using ValveResourceFormat.Renderer.SceneNodes;
+using QueryId = System.Int32;
 
 namespace ValveResourceFormat.Renderer;
 
 /// <summary>Scalar per-frame counters incremented via <see cref="Counters.Count"/>.</summary>
 internal enum Counter
 {
-    SceneObjectsInView,
-    DrawCalls,
-    MeshletDispatches,
-    MaterialChanges,
-    DirectionalShadowMaps,
-    BarnShadowMaps,
-    ShadowFacesSubmitted,
-    ParticleSystems,
-    ParticleDraws,
+    SceneObjectInView,
+    DrawCall,
+    MeshletDispatch,
+    MaterialChange,
+    DirectionalShadowMap,
+    BarnShadowMap,
+    ShadowFaceSubmitted,
+    ParticleSystem,
+    ParticleDraw,
 }
 
 /// <summary>
@@ -43,9 +45,34 @@ public class Counters
     /// <summary>Gets or sets whether statistics are actively collected this frame.</summary>
     public bool Capture { get; set; }
 
+    /// <summary>Gets the CPU and GPU timings for the same frame. Captured independently of <see cref="Capture"/>.</summary>
+    public Timings Timings { get; } = new();
+
+    // Stands in for the frame markers Timings no longer does itself: debug groups outside a marked frame are ignored.
+    private bool timingFrame;
+
     // Counting is suspended (nested) around passes that should not contribute to stats: shadows, depth prepass, picking.
     private int suspendDepth;
-    private bool Counting => Capture && suspendDepth == 0;
+    private bool Counting => Capture && suspendDepth == 0 && !IsNotOwningThread;
+
+    // Ownership is claimed per frame by whichever thread marks it, because the render loop thread is torn down and
+    // recreated as viewers come and go, and the GL context moves with it. Anything reaching Active from another thread
+    // (the thumbnail GL thread renders with its own context and never marks a frame) then no-ops, rather than racing
+    // the collectors and issuing this frame's queries on the wrong context.
+    //
+    // The lock is not mutual exclusion, painting is already serialized. It publishes a frame's writes to the next
+    // painting thread: marking the end releases, marking the next begin acquires, and that edge carries across the
+    // handoff everything the previous thread did. Timings is marked inside the same scope, so one edge covers both.
+    private readonly Lock threadLock = new();
+    private int owningThreadId;
+
+    /// <summary>Initializes a new <see cref="Counters"/> instance owned by the current thread until a frame is marked.</summary>
+    public Counters()
+    {
+        owningThreadId = Environment.CurrentManagedThreadId;
+    }
+
+    private bool IsNotOwningThread => Environment.CurrentManagedThreadId != owningThreadId;
 
     // Per-frame scalar counters, indexed by Counter.
     private readonly int[] counts = new int[Enum.GetValues<Counter>().Length];
@@ -108,20 +135,26 @@ public class Counters
     /// <summary>Suspends stat collection for the following draws until <see cref="ResumeCounting"/> is called. Nestable.</summary>
     internal void SuspendCounting()
     {
-        if (suspendDepth == 0)
+        if (IsNotOwningThread)
+        {
+            return;
+        }
+
+        if (suspendDepth++ == 0)
         {
             EndTriangleSegment();
         }
-
-        suspendDepth++;
     }
 
     /// <summary>Resumes stat collection suspended by <see cref="SuspendCounting"/>.</summary>
     internal void ResumeCounting()
     {
-        suspendDepth--;
+        if (IsNotOwningThread)
+        {
+            return;
+        }
 
-        if (suspendDepth == 0)
+        if (--suspendDepth == 0)
         {
             BeginTriangleSegment();
         }
@@ -189,7 +222,7 @@ public class Counters
             return;
         }
 
-        counts[(int)Counter.DrawCalls]++;
+        counts[(int)Counter.DrawCall]++;
     }
 
     /// <summary>Counts an indirect multi-draw submission of an aggregate's meshlets. The meshlet count is as submitted, before GPU culling; triangles are measured by the frame primitive query instead.</summary>
@@ -200,7 +233,7 @@ public class Counters
             return;
         }
 
-        counts[(int)Counter.MeshletDispatches] += aggregate.IndirectDrawCount;
+        counts[(int)Counter.MeshletDispatch] += aggregate.IndirectDrawCount;
     }
 
     /// <summary>Counts a light that passed frustum culling this frame.</summary>
@@ -379,18 +412,25 @@ public class Counters
         AddLine("Render Stats", new Color32(255, 200, 0));
 
         AddLine($"Triangles:        rendered {trianglesRendered:N0} of {totalTriangles:N0}", valueColor);
-        AddLine($"Scene objects:    drawn {counts[(int)Counter.SceneObjectsInView]:N0} of {totalSceneObjects:N0} scene objects in {counts[(int)Counter.DrawCalls]:N0} draw calls and {counts[(int)Counter.MeshletDispatches]:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
-        AddLine($"Materials:        {counts[(int)Counter.MaterialChanges]:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
+        AddLine($"Scene objects:    drawn {counts[(int)Counter.SceneObjectInView]:N0} of {totalSceneObjects:N0} scene objects in {counts[(int)Counter.DrawCall]:N0} draw calls and {counts[(int)Counter.MeshletDispatch]:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
+        AddLine($"Materials:        {counts[(int)Counter.MaterialChange]:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
         AddLine($"Dynamic Lights:   in view {FormatLightCounts(lightsInView, totalLights)} out of total {FormatLightCounts(totalLights, totalLights)}", valueColor);
         AddLine($"Static Lights:    in view {FormatLightCounts(staticLightsInView, totalStaticLights)} out of total {FormatLightCounts(totalStaticLights, totalStaticLights)}", valueColor);
-        AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMaps]:N0} directional, {counts[(int)Counter.BarnShadowMaps]:N0} barn, {counts[(int)Counter.ShadowFacesSubmitted]:N0} faces binned, {barnShadowAtlasUsage:0%} atlas utilization", valueColor);
-        AddLine($"Particle Systems: {counts[(int)Counter.ParticleSystems]:N0} particle systems rendered in {counts[(int)Counter.ParticleDraws]:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
+        AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMap]:N0} directional, {counts[(int)Counter.BarnShadowMap]:N0} barn, {counts[(int)Counter.ShadowFaceSubmitted]:N0} faces binned, {barnShadowAtlasUsage:0%} atlas utilization", valueColor);
+        AddLine($"Particle Systems: {counts[(int)Counter.ParticleSystem]:N0} particle systems rendered in {counts[(int)Counter.ParticleDraw]:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
     }
 
-    /// <summary>Resets per-frame counters, reads back the previous frame's triangle count, and begins this frame's triangle query.</summary>
+    /// <summary>Resets per-frame counters, reads back the previous frame's results.</summary>
     public void MarkFrameBegin()
     {
+        // Claimed unconditionally and held for the rest of the method, so that one edge publishes both collectors.
+        using var _ = threadLock.EnterScope();
+        owningThreadId = Environment.CurrentManagedThreadId;
+
         Active = this;
+
+        Timings.MarkFrameBegin();
+        timingFrame = Timings.Capture;
 
         if (!Capture)
         {
@@ -456,21 +496,50 @@ public class Counters
         return total;
     }
 
-    /// <summary>Ends this frame's triangle query.</summary>
+    /// <summary>Ends this frame's counters and timings.</summary>
     public void MarkFrameEnd()
     {
+        using var _ = threadLock.EnterScope();
+
         // Keyed off the query actually having begun rather than Capture, which may have been toggled mid-frame.
-        if (!triangleFrameActive)
+        if (triangleFrameActive)
+        {
+            EndTriangleSegment();
+
+            var frame = triangleFrames[triangleFrameWrite];
+            frame.Pending = frame.SegmentsUsed > 0;
+            triangleFrameActive = false;
+            triangleFrameWrite = (triangleFrameWrite + 1) % TriangleFrameCount;
+        }
+
+        // Timed up to here, so that text rendering is still measured.
+        timingFrame = false;
+        Timings.MarkFrameEnd();
+    }
+
+    /// <summary>
+    /// Begins a timing query for a debug group. Returns 0 when this frame is not being timed, or when called off the
+    /// owning thread, which is how the thumbnail renderer's debug groups stay out of the painting thread's timings.
+    /// </summary>
+    internal QueryId BeginTimingQuery(string name)
+    {
+        if (!timingFrame || IsNotOwningThread)
+        {
+            return 0;
+        }
+
+        return Timings.BeginQuery(name);
+    }
+
+    /// <summary>Ends a timing query opened by <see cref="BeginTimingQuery"/>.</summary>
+    internal void EndTimingQuery(QueryId id)
+    {
+        if (!timingFrame || IsNotOwningThread)
         {
             return;
         }
 
-        EndTriangleSegment();
-
-        var frame = triangleFrames[triangleFrameWrite];
-        frame.Pending = frame.SegmentsUsed > 0;
-        triangleFrameActive = false;
-        triangleFrameWrite = (triangleFrameWrite + 1) % TriangleFrameCount;
+        Timings.EndQuery(id);
     }
 
     /// <summary>
@@ -478,6 +547,8 @@ public class Counters
     /// </summary>
     public void Dispose()
     {
+        Timings.Dispose();
+
         foreach (var frame in triangleFrames)
         {
             foreach (var segment in frame.Segments)

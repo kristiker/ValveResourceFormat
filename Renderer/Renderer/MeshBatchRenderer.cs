@@ -166,7 +166,7 @@ namespace ValveResourceFormat.Renderer
                         material?.PostRender();
 
                         // Custom nodes render themselves and may issue several draws internally; count them as one draw call.
-                        counters.Count(Counter.DrawCalls);
+                        counters.Count(Counter.DrawCall);
                         request.Node.Render(context);
 
                         shader = null;
@@ -181,7 +181,7 @@ namespace ValveResourceFormat.Renderer
 
                 if (material != requestMaterial)
                 {
-                    counters.Count(Counter.MaterialChanges);
+                    counters.Count(Counter.MaterialChange);
 
                     if (context.ReplacementShader?.IgnoreMaterialData != true)
                     {
