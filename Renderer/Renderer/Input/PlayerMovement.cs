@@ -369,17 +369,49 @@ public class PlayerMovement
         }
 
         // Trace down to find ground (trace extra distance to catch steep slopes)
-        var traceStart = position;
-        var traceEnd = position + new Vector3(0, 0, -StepSize);
+        var trace = TraceBBox(position, position + new Vector3(0, 0, -StepSize), aabb);
 
-        var trace = TraceBBox(traceStart, traceEnd, aabb);
-
-        // If we hit ground, snap down to it
-        if (trace.Hit && trace.HitNormal.Z > 0.7f)
+        if (IsWalkableGroundHit(trace))
         {
-            var groundZ = trace.HitPosition.Z + SurfaceEpsilon / trace.HitNormal.Z;
-            position = new Vector3(position.X, position.Y, groundZ);
+            // Ground-following only ever snaps down, so it must never lift the player
+            SnapToGround(ref position, trace, snapDownOnly: true);
         }
+    }
+
+    /// <summary>
+    /// Whether a trace landed on a surface flat enough to stand on.
+    /// </summary>
+    private static bool IsWalkableGroundHit(Rubikon.TraceResult trace)
+        => trace.Hit && trace.HitNormal.Z > WalkableSlope;
+
+    /// <summary>
+    /// Snaps the position's Z onto the ground found by <paramref name="trace"/>, keeping a
+    /// SurfaceEpsilon perpendicular gap. XY is preserved so slopes do not induce sliding.
+    /// </summary>
+    /// <param name="snapDownOnly">
+    /// When set, the snap may only lower the player. Use it for pure ground-following, which must
+    /// never lift; leave it clear where the snap also has to push the hull out of a shallow
+    /// penetration up onto the surface.
+    /// </param>
+    private static void SnapToGround(ref Vector3 position, Rubikon.TraceResult trace, bool snapDownOnly)
+    {
+        // A zero-distance hit means the hull already overlapped geometry at the trace start, so
+        // HitPosition is just traceStart echoed back and says nothing about where the ground is.
+        // Snapping to it would add SurfaceEpsilon to our own position every tick and climb
+        // indefinitely. Source guards the same way: StayOnGround requires fraction > 0 && !startsolid.
+        if (trace.IsMinimalDistance)
+        {
+            return;
+        }
+
+        var groundZ = trace.HitPosition.Z + SurfaceEpsilon / trace.HitNormal.Z;
+
+        if (snapDownOnly)
+        {
+            groundZ = MathF.Min(position.Z, groundZ);
+        }
+
+        position = new Vector3(position.X, position.Y, groundZ);
     }
 
     /// <summary>
@@ -398,21 +430,13 @@ public class PlayerMovement
         // Trace down from current position to check for ground
         // Use a small distance (2 units) to check if we're on or very close to ground
         // This distance should be enough to detect ground contact in Source engine scale
-        var traceStart = position;
-        var traceEnd = position + new Vector3(0, 0, -2f);
+        var result = TraceBBox(position, position + new Vector3(0, 0, -2f), aabb);
 
-        var result = TraceBBox(traceStart, traceEnd, aabb);
+        OnGround = IsWalkableGroundHit(result) && Velocity.Z < 140.0f;
 
-        if (result.Hit && result.HitNormal.Z > WalkableSlope && Velocity.Z < 140.0f)
+        if (OnGround)
         {
-            OnGround = true;
-            // Snap to ground vertically only, preserve XY position to prevent sliding on slopes
-            var groundZ = result.HitPosition.Z + SurfaceEpsilon / result.HitNormal.Z;
-            position = new Vector3(position.X, position.Y, groundZ);
-        }
-        else
-        {
-            OnGround = false;
+            SnapToGround(ref position, result, snapDownOnly: false);
         }
     }
 
