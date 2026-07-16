@@ -9,10 +9,13 @@ namespace ValveResourceFormat.Renderer;
 /// <summary>Scalar per-frame counters incremented via <see cref="Counters.Count"/>.</summary>
 internal enum Counter
 {
+    SceneObjectsInView,
     DrawCalls,
     MeshletDispatches,
     MaterialChanges,
-    ShadowMaps,
+    DirectionalShadowMaps,
+    BarnShadowMaps,
+    ShadowFacesSubmitted,
     ParticleSystems,
     ParticleDraws,
 }
@@ -48,7 +51,9 @@ public class Counters
     private readonly int[] counts = new int[Enum.GetValues<Counter>().Length];
     private readonly int[] lightsInView = new int[LightGroupNames.Length];
     private readonly int[] staticLightsInView = new int[LightGroupNames.Length];
-    private readonly HashSet<SceneNode> drawnNodes = [];
+
+    // Fraction (0-1) of the barn shadow atlas texture occupied by binned faces this frame.
+    private float barnShadowAtlasUsage;
 
     // A single GPU primitives-generated query wraps the whole frame, so the triangle count includes GPU-culled
     // indirect draws and particles. Two query objects are ping-ponged so the previous frame's result can be read
@@ -84,6 +89,17 @@ public class Counters
         counts[(int)counter] += amount;
     }
 
+    /// <summary>Records the fraction (0-1) of the barn shadow atlas occupied by binned faces this frame.</summary>
+    internal void SetBarnShadowAtlasUsage(float fraction)
+    {
+        if (!Counting)
+        {
+            return;
+        }
+
+        barnShadowAtlasUsage = fraction;
+    }
+
     /// <summary>Counts a direct GL draw call for the given node.</summary>
     internal void CountDrawCall(SceneNode node)
     {
@@ -93,7 +109,6 @@ public class Counters
         }
 
         counts[(int)Counter.DrawCalls]++;
-        drawnNodes.Add(node);
     }
 
     /// <summary>Counts an indirect multi-draw submission of an aggregate's meshlets. The meshlet count is as submitted, before GPU culling; triangles are measured by the frame primitive query instead.</summary>
@@ -105,18 +120,6 @@ public class Counters
         }
 
         counts[(int)Counter.MeshletDispatches] += aggregate.IndirectDrawCount;
-        drawnNodes.Add(aggregate);
-    }
-
-    /// <summary>Counts a node that renders itself outside of the mesh batcher (physics shapes, sprites, etc).</summary>
-    internal void CountCustomNode(SceneNode node)
-    {
-        if (!Counting || node is ParticleSceneNode)
-        {
-            return; // particles are counted separately as particle systems
-        }
-
-        drawnNodes.Add(node);
     }
 
     /// <summary>Counts a light that passed frustum culling this frame.</summary>
@@ -295,11 +298,11 @@ public class Counters
         AddLine("Render Stats", new Color32(255, 200, 0));
 
         AddLine($"Triangles:        rendered {trianglesRendered:N0} of {totalTriangles:N0}", valueColor);
-        AddLine($"Scene objects:    drawn {drawnNodes.Count:N0} of {totalSceneObjects:N0} scene objects in {counts[(int)Counter.DrawCalls]:N0} draw calls and {counts[(int)Counter.MeshletDispatches]:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
+        AddLine($"Scene objects:    drawn {counts[(int)Counter.SceneObjectsInView]:N0} of {totalSceneObjects:N0} scene objects in {counts[(int)Counter.DrawCalls]:N0} draw calls and {counts[(int)Counter.MeshletDispatches]:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
         AddLine($"Materials:        {counts[(int)Counter.MaterialChanges]:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
         AddLine($"Dynamic Lights:   in view {FormatLightCounts(lightsInView, totalLights)} out of total {FormatLightCounts(totalLights, totalLights)}", valueColor);
         AddLine($"Static Lights:    in view {FormatLightCounts(staticLightsInView, totalStaticLights)} out of total {FormatLightCounts(totalStaticLights, totalStaticLights)}", valueColor);
-        AddLine($"Shadow maps:      {counts[(int)Counter.ShadowMaps]:N0}", valueColor);
+        AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMaps]:N0} directional, {counts[(int)Counter.BarnShadowMaps]:N0} barn, {counts[(int)Counter.ShadowFacesSubmitted]:N0} faces binned, {barnShadowAtlasUsage:0%} atlas utilization", valueColor);
         AddLine($"Particle Systems: {counts[(int)Counter.ParticleSystems]:N0} particle systems rendered in {counts[(int)Counter.ParticleDraws]:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
     }
 
@@ -317,13 +320,19 @@ public class Counters
         Array.Clear(counts);
         Array.Clear(lightsInView);
         Array.Clear(staticLightsInView);
-        drawnNodes.Clear();
+        barnShadowAtlasUsage = 0;
 
-        // Read back the query that ended last frame without blocking; it has had a full frame to complete.
-        if (triangleQueries[triangleQueryWrite] != 0)
+        // Read back the query that ended last frame without blocking. If the GPU hasn't finished it yet, keep the
+        // previous value rather than stomping it to zero (QueryResultNoWait leaves the out param unmodified when not ready).
+        var lastQuery = triangleQueries[triangleQueryWrite];
+        if (lastQuery != 0)
         {
-            GL.GetQueryObject(triangleQueries[triangleQueryWrite], GetQueryObjectParam.QueryResultNoWait, out long result);
-            trianglesRendered = result;
+            GL.GetQueryObject(lastQuery, GetQueryObjectParam.QueryResultAvailable, out long available);
+            if (available != 0)
+            {
+                GL.GetQueryObject(lastQuery, GetQueryObjectParam.QueryResult, out long result);
+                trianglesRendered = result;
+            }
         }
 
         // Begin this frame's query on the other buffer.

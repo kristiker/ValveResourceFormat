@@ -619,7 +619,7 @@ public class Renderer
 
         using (new GLDebugGroup("Direct Light Shadows"))
         {
-            Counters.Active.Count(Counter.ShadowMaps);
+            Counters.Active.Count(Counter.DirectionalShadowMaps);
             Scene.RenderOpaqueShadows(renderContext, depthOnlyShaders, Scene.CulledShadowDrawCalls);
         }
     }
@@ -673,7 +673,7 @@ public class Renderer
                 continue;
             }
 
-            Counters.Active.Count(Counter.ShadowMaps);
+            Counters.Active.Count(Counter.BarnShadowMaps);
 
             GL.Viewport(region.X, region.Y, region.Width, region.Height);
             GL.Scissor(region.X, region.Y, region.Width, region.Height);

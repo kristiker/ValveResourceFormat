@@ -164,8 +164,11 @@ namespace ValveResourceFormat.Renderer
                     if (context.RenderPass is RenderPass.Opaque or RenderPass.Translucent or RenderPass.Outline)
                     {
                         material?.PostRender();
-                        counters.CountCustomNode(request.Node);
+
+                        // Custom nodes render themselves and may issue several draws internally; count them as one draw call.
+                        counters.Count(Counter.DrawCalls);
                         request.Node.Render(context);
+
                         shader = null;
                         material = null;
                         vao = -1;

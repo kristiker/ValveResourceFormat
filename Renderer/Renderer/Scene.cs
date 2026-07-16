@@ -799,6 +799,8 @@ namespace ValveResourceFormat.Renderer
             var frustum = cullFrustum ??= camera.ViewFrustum;
             var cullResults = GetFrustumCullResults(frustum);
 
+            Counters.Active.Count(Counter.SceneObjectsInView, cullResults.Count);
+
             // Collect mesh calls
             foreach (var node in cullResults)
             {
