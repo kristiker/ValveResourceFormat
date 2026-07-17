@@ -540,7 +540,13 @@ public class PlayerMovement
         // Fraction of the original move not yet consumed; gates whether stepping is still worthwhile
         var remainingFraction = 1.0f;
 
+        // Velocity at entry; if clipping ever turns the velocity against it, we are ping-ponging
+        // in a corner and should stop dead instead (Source TryPlayerMove does the same)
+        var entryVelocity = Velocity;
+
+        // Planes hit without making progress; movement must be clipped to parallel all of them
         Span<Vector3> planes = stackalloc Vector3[MaxBumps];
+        var planeCount = 0;
 
         for (var bump = 0; bump < MaxBumps && remainingFraction > 0; bump++)
         {
@@ -561,8 +567,6 @@ public class PlayerMovement
                 }
             }
 
-            planes[bump] = result.HitNormal;
-
             // Advance to the hit point, pulled back so the perpendicular gap to the surface is SurfaceEpsilon
             var pullback = PullbackDistance(remainingDelta / remainingDistance, result.HitNormal, result.Distance);
             var fraction = (result.Distance - pullback) / remainingDistance;
@@ -570,17 +574,20 @@ public class PlayerMovement
             position += remainingDelta * fraction;
             remainingFraction *= 1f - fraction;
 
-            // Clip velocity and the remaining move against what we hit
-            var velocity = Velocity;
-
-            //TODO: Temporary fix. We should rework the bump system in general to match the game better.
-            if (bump == 2 && Vector3.Dot(planes[0], planes[1]) <= 0)
+            if (fraction > 0)
             {
-                ClipToCrease(ref remainingDelta, ref velocity, planes[0], planes[1]);
+                // Made progress, so the accumulated planes no longer box us in
+                planeCount = 0;
             }
-            else
+
+            planes[planeCount++] = result.HitNormal;
+
+            if (!ClipToPlanes(planes[..planeCount], ref remainingDelta, out var velocity)
+                || Vector3.Dot(velocity, entryVelocity) <= 0)
             {
-                ClipVelocity(ref remainingDelta, ref velocity, result.HitNormal, OnGround);
+                // Trapped by three or more planes, or clipping reversed the move
+                Velocity = Vector3.Zero;
+                break;
             }
 
             Velocity = velocity;
@@ -596,6 +603,53 @@ public class PlayerMovement
         }
 
         return position;
+    }
+
+    /// <summary>
+    /// Clips the movement so it parallels every accumulated plane, as in Source's TryPlayerMove:
+    /// prefer a single-plane clip that does not push into any other plane; against exactly two
+    /// planes, slide along their crease. Returns false when no direction satisfies all planes
+    /// (three or more planes trap the movement).
+    /// </summary>
+    private bool ClipToPlanes(ReadOnlySpan<Vector3> planes, ref Vector3 delta, out Vector3 velocity)
+    {
+        // Try clipping against each plane alone, accepting the first result that does not
+        // move into any of the other planes
+        for (var i = 0; i < planes.Length; i++)
+        {
+            var candidateVelocity = Velocity;
+            var candidateDelta = delta;
+            ClipVelocity(ref candidateDelta, ref candidateVelocity, planes[i], OnGround);
+
+            var valid = true;
+            for (var j = 0; j < planes.Length; j++)
+            {
+                if (j != i && Vector3.Dot(candidateVelocity, planes[j]) < 0)
+                {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if (valid)
+            {
+                delta = candidateDelta;
+                velocity = candidateVelocity;
+                return true;
+            }
+        }
+
+        // No single-plane clip satisfies all planes; two planes form a crease we can slide along
+        if (planes.Length == 2)
+        {
+            velocity = Velocity;
+            ClipToCrease(ref delta, ref velocity, planes[0], planes[1]);
+            return true;
+        }
+
+        velocity = Vector3.Zero;
+        delta = Vector3.Zero;
+        return false;
     }
 
     /// <summary>
