@@ -606,6 +606,12 @@ public class PlayerMovement
             position += remainingDelta * fraction;
             remainingFraction *= 1f - fraction;
 
+            // Consume the traveled portion of the move budget. Without this, the clip below only
+            // redirects remainingDelta and its full length carries into the next bump, letting a
+            // slide travel farther than the tick's move (Source scales time_left the same way:
+            // time_left -= time_left * trace.fraction).
+            remainingDelta *= 1f - fraction;
+
             if (fraction > 0)
             {
                 // Made progress, so the accumulated planes no longer box us in
@@ -734,14 +740,22 @@ public class PlayerMovement
         var downEnd = steppedSlidePosition + new Vector3(0, 0, -(StepSize + GroundProbeDistance));
         var downTrace = TraceBBox(steppedSlidePosition, downEnd, halfExtents);
 
-        // The stepped branch must settle on standable ground.
+        // Beveled obstructions: when an obstacle has a chamfered edge, a short per-tick move can
+        // leave the hull above the bevel face, so the landing reports an unwalkable normal even
+        // though the obstacle is low enough to step over (Source has the same flaw; maps hide it
+        // with square clip brushes). Accept such landings only when the stepped slide cleared the
+        // whole move at step height: a tall unwalkable slope (e.g. a surf ramp) obstructs the
+        // slide at step height too, so this cannot be used to ratchet up ramps.
+        var steppedSlideCleared = Vector3.DistanceSquared(steppedSlidePosition, steppedStart + delta) < SurfaceEpsilon * SurfaceEpsilon;
+
+        // The stepped branch must settle on standable ground (or a transitional bevel, see above).
         // A zero-distance landing means the hull is already embedded at the stepped position
         // (e.g. wedged in a floor-ceiling gap, where the up-step was blocked at zero height):
         // HitPosition is just the input echoed back and carries no ground information.
         // The down tolerance keeps a low ceiling from turning a "step" into a ledge drop.
         var landingInvalid = !downTrace.Hit
             || downTrace.IsMinimalDistance
-            || downTrace.HitNormal.Z < WalkableSlope
+            || (downTrace.HitNormal.Z < WalkableSlope && !steppedSlideCleared)
             || downTrace.HitPosition.Z - start.Z < -StepDownTolerance;
 
         if (landingInvalid)
