@@ -401,7 +401,7 @@ public class Rubikon
                 var v1 = hull.VertexPositions[edge1.Origin];
                 var v2 = hull.VertexPositions[edge2.Origin];
 
-                AABBTraceTriangle13AxisSatOptimized(trace, v0, v1, v2, ref closestHit);
+                AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
 
                 if (closestHit.IsMinimalDistance)
                 {
@@ -645,7 +645,7 @@ public class Rubikon
                 var v1 = mesh.VertexPositions[triangle.Y];
                 var v2 = mesh.VertexPositions[triangle.Z];
 
-                AABBTraceTriangle13AxisSatOptimized(trace, v0, v1, v2, ref closestHit);
+                AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
 
                 if (closestHit.IsMinimalDistance)
                 {
@@ -655,128 +655,8 @@ public class Rubikon
         }
     }
 
+
     private static void AABBTraceTriangle13AxisSat(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
-    {
-        // Already overlapping this triangle at the start position - nothing can be closer,
-        // so report start-solid and let the callers early-exit
-        if (trace.DetectStartSolid && TriangleOverlapsBox(trace.Origin, trace.HalfExtents, v0, v1, v2))
-        {
-            var startNormal = Vector3.Cross(v1 - v0, v2 - v0);
-            var startNormalLength = startNormal.Length();
-            startNormal = startNormalLength > Epsilon ? startNormal / startNormalLength : Vector3.UnitZ;
-
-            if (Vector3.Dot(startNormal, trace.Direction) > 0)
-            {
-                startNormal = -startNormal;
-            }
-
-            closestHit = new TraceResult(true, trace.Origin, startNormal, 0f, -1) { StartSolid = true };
-            return;
-        }
-
-        var hitNormal = Vector3.Zero;
-
-        ReadOnlySpan<Vector3> triangle = [v0, v1, v2];
-
-        float enter = float.NegativeInfinity, exit = float.PositiveInfinity;
-
-        for (int axis = 0; axis < 13; axis++)
-        {
-            Vector3 axisVector;
-            if (axis == 0)
-            {
-                axisVector = Vector3.Normalize(Vector3.Cross(v1 - v0, v2 - v0));
-            }
-            else if (axis > 0 && axis < 10)
-            {
-                var localAxisIndex = axis - 1;
-
-                var triangleEdgeIndex = localAxisIndex / 3;
-                var boxAxisIndex = localAxisIndex % 3;
-
-                Vector3 edge = triangle[(triangleEdgeIndex + 1) % 3] - triangle[triangleEdgeIndex];
-
-                axisVector = edge;
-                axisVector[boxAxisIndex] = 0;
-                axisVector[(boxAxisIndex + 1) % 3] = -edge[(boxAxisIndex + 2) % 3];
-                axisVector[(boxAxisIndex + 2) % 3] = edge[(boxAxisIndex + 1) % 3];
-
-                if (Math.Abs(axisVector[(boxAxisIndex + 1) % 3]) < Epsilon && Math.Abs(axisVector[(boxAxisIndex + 2) % 3]) < Epsilon)
-                {
-                    continue;
-                }
-            }
-            else
-            {
-                var localAxisIndex = axis - 10;
-                axisVector = Vector3.Zero;
-                axisVector[localAxisIndex] = 1;
-            }
-
-            axisVector = Vector3.Normalize(axisVector);
-            axisVector = Vector3.Dot(trace.Direction, axisVector) > 0 ? axisVector : -axisVector;
-
-            //project the triangle onto the axis
-
-            var boxExtent = Vector3.Dot(Vector3.Abs(axisVector), trace.HalfExtents);
-
-            // cosTheta >= 0 because axisVector was flipped toward the ray above.
-            // The sweep advances the box projection by cosTheta * Length over the trace.
-            var cosTheta = Vector3.Dot(trace.Direction, axisVector);
-
-            float minProj = float.PositiveInfinity, maxProj = float.NegativeInfinity;
-            for (var vertexIdx = 0; vertexIdx < 3; vertexIdx++)
-            {
-                var projection = Vector3.Dot(triangle[vertexIdx] - trace.Origin, axisVector);
-                minProj = MathF.Min(minProj, projection);
-                maxProj = MathF.Max(maxProj, projection);
-            }
-
-            float min, max;
-            if (cosTheta > Epsilon)
-            {
-                var denom = cosTheta * trace.Length;
-                min = (minProj - boxExtent) / denom;
-                max = (maxProj + boxExtent) / denom;
-            }
-            else
-            {
-                // Axis is (near) perpendicular to the sweep: the box's projection onto it
-                // does not change over the trace. If the triangle's projection lies outside
-                // the box slab [-boxExtent, boxExtent], this is a permanent separating axis.
-                if (maxProj < -boxExtent || minProj > boxExtent)
-                {
-                    return;
-                }
-
-                // Otherwise this axis never separates and imposes no constraint on the sweep.
-                min = float.NegativeInfinity;
-                max = float.PositiveInfinity;
-            }
-
-            if (min > enter)
-            {
-                hitNormal = -axisVector;
-                enter = min;
-            }
-            exit = MathF.Min(exit, max);
-
-            if (enter > exit || exit <= 0)
-                return;
-        }
-        if (enter > 1.0f)
-            return;
-
-        var hitDistance = Math.Max(enter * trace.Length, 0);
-        var hitPoint = trace.Origin + trace.Direction * hitDistance;
-
-        if (hitDistance < closestHit.Distance)
-        {
-            closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
-        }
-    }
-
-    private static void AABBTraceTriangle13AxisSatOptimized(AABBTraceContext trace, Vector3 v0, Vector3 v1, Vector3 v2, ref TraceResult closestHit)
     {
         //Needs to exist from the start, as it gets updated while running through the axis.
         var hitNormal = Vector3.Zero;
@@ -900,71 +780,6 @@ public class Rubikon
         {
             closestHit = new TraceResult(true, hitPoint, hitNormal, hitDistance, -1);
         }
-    }
-
-    /// <summary>
-    /// Triangle vs. axis-aligned box overlap using the 13-axis separating axis test
-    /// (Akenine-Möller): 3 box face axes, the triangle plane, and 9 edge cross products.
-    /// </summary>
-    private static bool TriangleOverlapsBox(Vector3 center, Vector3 halfExtents, Vector3 v0, Vector3 v1, Vector3 v2)
-    {
-        // Translate so the box is centered at the origin
-        v0 -= center;
-        v1 -= center;
-        v2 -= center;
-
-        // Box face axes: the triangle's bounds must overlap the box extents
-        var triMin = Vector3.Min(v0, Vector3.Min(v1, v2));
-        var triMax = Vector3.Max(v0, Vector3.Max(v1, v2));
-
-        if (triMin.X > halfExtents.X || triMax.X < -halfExtents.X
-            || triMin.Y > halfExtents.Y || triMax.Y < -halfExtents.Y
-            || triMin.Z > halfExtents.Z || triMax.Z < -halfExtents.Z)
-        {
-            return false;
-        }
-
-        // Triangle plane: the box must straddle the triangle's plane
-        var normal = Vector3.Cross(v1 - v0, v2 - v0);
-        var planeDistance = Vector3.Dot(normal, v0);
-        var planeRadius = Vector3.Dot(Vector3.Abs(normal), halfExtents);
-
-        if (Math.Abs(planeDistance) > planeRadius)
-        {
-            return false;
-        }
-
-        // Cross products of each triangle edge with each box axis
-        Span<Vector3> edges = [v1 - v0, v2 - v1, v0 - v2];
-
-        foreach (var edge in edges)
-        {
-            for (var axisIndex = 0; axisIndex < 3; axisIndex++)
-            {
-                var axis = axisIndex switch
-                {
-                    0 => new Vector3(0, -edge.Z, edge.Y),
-                    1 => new Vector3(edge.Z, 0, -edge.X),
-                    _ => new Vector3(-edge.Y, edge.X, 0)
-                };
-
-                var p0 = Vector3.Dot(v0, axis);
-                var p1 = Vector3.Dot(v1, axis);
-                var p2 = Vector3.Dot(v2, axis);
-
-                var projMin = MathF.Min(p0, MathF.Min(p1, p2));
-                var projMax = MathF.Max(p0, MathF.Max(p1, p2));
-
-                var radius = Vector3.Dot(Vector3.Abs(axis), halfExtents);
-
-                if (projMin > radius || projMax < -radius)
-                {
-                    return false;
-                }
-            }
-        }
-
-        return true;
     }
 
     private Node[] BuildHullBVH()
