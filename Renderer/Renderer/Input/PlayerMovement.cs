@@ -41,7 +41,7 @@ public class PlayerMovement
     private const float BunnyjumpMaxSpeedFactor = 1.1f;   // Only allow bunny jumping up to 1.1x max speed
 
     // Collision constants
-    private const float SurfaceEpsilon = 0.03125f;        // Minimum distance from surfaces (1/32 unit) to prevent getting stuck
+    private const float SurfaceEpsilon = 0.03125f;        // Keep-away margin (1/32 unit) applied inside TraceBBox; hits come back already backed off this far from surfaces
     private const float StepSize = 18f;                   // Maximum height of steps/obstacles player can climb
     private const float GroundProbeDistance = 2f;         // How far below the hull to look for ground contact
     private const float StepDownTolerance = 2f;           // A step may end at most this far below where it started
@@ -78,6 +78,11 @@ public class PlayerMovement
     public bool WasOnGroundLastFrame { get; private set; }
 
     private bool RequestedJump;
+
+    // Last tick-end position where the hull did not overlap geometry; used to recover
+    // from stuck states instead of letting the player remain embedded
+    private Vector3 LastValidPosition;
+    private bool HasValidPosition;
 
     private bool HoldingCtrl => Input.Holding(TrackedKeys.Control);
     private bool HoldingShift => Input.Holding(TrackedKeys.Shift);
@@ -139,6 +144,7 @@ public class PlayerMovement
         TracePosition = camera.Location - Vector3.UnitZ * ViewHeightStanding + new Vector3(0, 0, StandingHullHalfExtents.Z);
         TracePositionPrevious = TracePosition;
         Velocity = Vector3.Zero;
+        HasValidPosition = false; // Do not restore positions from before the reset
     }
 
     /// <summary>
@@ -298,6 +304,33 @@ public class PlayerMovement
             ApplyHalfGravity(deltaTime);
             CheckVelocity(ref position); // FinishGravity calls CheckVelocity in Source
         }
+
+        CheckStuck(ref position, playerHull);
+    }
+
+    /// <summary>
+    /// Stuck prevention, like Source's CheckStuck: float error, blind clamps, and hull resizes
+    /// can all leave the hull embedded in geometry despite trace-validated movement. Rather than
+    /// closing every hole individually, remember each tick-end position that is clear and
+    /// restore it the moment a tick ends inside something.
+    /// </summary>
+    private void CheckStuck(ref Vector3 position, Vector3 halfExtents)
+    {
+        if (Physics == null)
+        {
+            return;
+        }
+
+        if (!IsStuck(position, halfExtents))
+        {
+            LastValidPosition = position;
+            HasValidPosition = true;
+        }
+        else if (HasValidPosition)
+        {
+            position = LastValidPosition;
+            Velocity = Vector3.Zero;
+        }
     }
 
     /// <summary>
@@ -417,16 +450,18 @@ public class PlayerMovement
     /// </param>
     private static void SnapToGround(ref Vector3 position, Rubikon.TraceResult trace, bool snapDownOnly)
     {
-        // A zero-distance hit means the hull already overlapped geometry at the trace start, so
-        // HitPosition is just traceStart echoed back and says nothing about where the ground is.
-        // Snapping to it would add SurfaceEpsilon to our own position every tick and climb
-        // indefinitely. Source guards the same way: StayOnGround requires fraction > 0 && !startsolid.
+        // A zero-distance hit means we are already at (or within the keep-away margin of) the
+        // surface, so HitPosition is just traceStart echoed back and carries no ground
+        // information - snapping to it would climb indefinitely. Being in margin contact also
+        // means there is nothing to snap. Source guards the same way: StayOnGround requires
+        // fraction > 0 && !startsolid.
         if (trace.IsMinimalDistance)
         {
             return;
         }
 
-        var groundZ = trace.HitPosition.Z + SurfaceEpsilon / trace.HitNormal.Z;
+        // The trace's keep-away margin already leaves HitPosition clear of the surface
+        var groundZ = trace.HitPosition.Z;
 
         if (snapDownOnly)
         {
@@ -477,10 +512,11 @@ public class PlayerMovement
             return true; // Not stuck
         }
 
+        // No downward candidate: unstucking below the geometry we are wedged in
+        // would leave the player falling forever
         Span<Vector3> directions = stackalloc[]
         {
             Vector3.UnitZ,        // Up
-            -Vector3.UnitZ,       // Down
             Vector3.UnitX,        // Right
             -Vector3.UnitX,       // Left
             Vector3.UnitY,        // Forward
@@ -567,9 +603,8 @@ public class PlayerMovement
                 }
             }
 
-            // Advance to the hit point, pulled back so the perpendicular gap to the surface is SurfaceEpsilon
-            var pullback = PullbackDistance(remainingDelta / remainingDistance, result.HitNormal, result.Distance);
-            var fraction = (result.Distance - pullback) / remainingDistance;
+            // Advance to the hit point (the trace already backs hits off by the keep-away margin)
+            var fraction = result.Distance / remainingDistance;
 
             position += remainingDelta * fraction;
             remainingFraction *= 1f - fraction;
@@ -671,27 +706,14 @@ public class PlayerMovement
     {
         Debug.Assert(Physics != null);
 
-        // Step 1: Move up by step height
+        // Step 1: Move up by step height, using whatever height we can achieve (even if blocked)
         var stepUpEnd = start + new Vector3(0, 0, StepSize);
         var upTrace = TraceBBox(start, stepUpEnd, halfExtents);
-
-        // Use whatever height we can achieve (even if blocked)
-        var steppedUpPosition = stepUpEnd;
-        if (upTrace.Hit)
-        {
-            var upPullback = PullbackDistance(Vector3.UnitZ, upTrace.HitNormal, upTrace.Distance);
-            steppedUpPosition = upTrace.HitPosition - new Vector3(0, 0, upPullback);
-        }
+        var steppedUpPosition = upTrace.Hit ? upTrace.HitPosition : stepUpEnd;
 
         // Step 2: Move forward from the stepped-up position
         var forwardTrace = TraceBBox(steppedUpPosition, steppedUpPosition + delta, halfExtents);
-        var forwardPosition = steppedUpPosition + delta;
-        if (forwardTrace.Hit)
-        {
-            var moveDirection = Vector3.Normalize(delta);
-            var forwardPullback = PullbackDistance(moveDirection, forwardTrace.HitNormal, forwardTrace.Distance);
-            forwardPosition = forwardTrace.HitPosition - moveDirection * forwardPullback;
-        }
+        var forwardPosition = forwardTrace.Hit ? forwardTrace.HitPosition : steppedUpPosition + delta;
 
         // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
         var downEnd = forwardPosition + new Vector3(0, 0, -(StepSize + GroundProbeDistance));
@@ -708,9 +730,8 @@ public class PlayerMovement
             return (start, false);
         }
 
+        // The trace's keep-away margin already leaves the landing position clear of the surface
         var finalPosition = downTrace.HitPosition;
-        // Offset final position vertically to maintain surface epsilon. We don't want to offset along the normal, as we can't verify that that won't put you into a surface.
-        finalPosition.Z += SurfaceEpsilon / downTrace.HitNormal.Z;
 
         // Validate the step
         var stepHeight = finalPosition.Z - start.Z;
@@ -722,18 +743,6 @@ public class PlayerMovement
         }
 
         return (finalPosition, true);
-    }
-
-    /// <summary>
-    /// How far to back off along the move direction so the perpendicular gap to the hit surface
-    /// is SurfaceEpsilon. Clamped to [0, maxDistance] so a grazing or back-facing hit gets a
-    /// bounded pullback (never unbounded, or NaN via infinity * 0) instead of eating the whole move.
-    /// </summary>
-    private static float PullbackDistance(Vector3 moveDirection, Vector3 hitNormal, float maxDistance)
-    {
-        var approachDot = Vector3.Dot(-moveDirection, hitNormal);
-        var pullback = MathF.Max(SurfaceEpsilon / approachDot, 0f);
-        return MathF.Min(pullback, MathF.Max(maxDistance, 0f));
     }
 
     /// <summary>
@@ -1000,6 +1009,25 @@ public class PlayerMovement
     private Rubikon.TraceResult TraceBBox(Vector3 from, Vector3 to, Vector3 halfExtents, bool detectStartSolid = false)
     {
         Debug.Assert(Physics != null, "Physics world must be initialized");
-        return Physics.TraceAABB(from, to, halfExtents, "player", detectStartSolid);
+
+        var result = Physics.TraceAABB(from, to, halfExtents, "player", detectStartSolid);
+
+        // Keep-away margin: back the hit off along the sweep so the perpendicular gap to the
+        // surface is SurfaceEpsilon. Centralized here so every caller can use HitPosition
+        // directly and no per-call-site epsilon math can go wrong. A grazing (or back-facing)
+        // hit gets a bounded pullback via the clamp to the traveled distance, never an
+        // unbounded (or, via infinity * 0, NaN) offset.
+        if (result.Hit && !result.StartSolid)
+        {
+            var direction = Vector3.Normalize(to - from);
+            var approach = Vector3.Dot(-direction, result.HitNormal);
+            var backoff = MathF.Max(SurfaceEpsilon / approach, 0f);
+            backoff = MathF.Min(backoff, result.Distance);
+
+            result.Distance -= backoff;
+            result.HitPosition -= direction * backoff;
+        }
+
+        return result;
     }
 }
