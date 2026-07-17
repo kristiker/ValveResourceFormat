@@ -118,11 +118,11 @@ namespace GUI.Types.GLViewers
                     {
                         UiControl.AddCheckBox("Show Vis Debug", showVisDebug, v => showVisDebug = v);
                     }
+                }
 
-                    if (Scene.PhysicsWorld != null)
-                    {
-                        UiControl.AddCheckBox("Debug Physics Traces", showPhysicsTraces, v => showPhysicsTraces = v);
-                    }
+                if (Scene.PhysicsWorld != null)
+                {
+                    UiControl.AddCheckBox("Debug Physics Traces", showPhysicsTraces, v => showPhysicsTraces = v);
                 }
 
                 UiControl.AddCheckBox("Show Render Timings", Renderer.Timings.Capture, (v) => Renderer.Timings.Capture = v);
