@@ -33,6 +33,8 @@ namespace GUI.Types.GLViewers
         private bool showStaticOctree;
         private bool showDynamicOctree;
         private bool showVisDebug;
+        private bool showPhysicsTraces;
+        private PhysicsTraceDebugRenderer? physicsTraceRenderer;
 
         private readonly List<RenderModes.RenderMode> renderModes = new(RenderModes.Items.Count);
         private int renderModeCurrentIndex;
@@ -70,6 +72,9 @@ namespace GUI.Types.GLViewers
         public override void Dispose()
         {
             base.Dispose();
+
+            physicsTraceRenderer?.Delete();
+            physicsTraceRenderer = null;
 
             Renderer?.Dispose();
 
@@ -112,6 +117,11 @@ namespace GUI.Types.GLViewers
                     if (Scene.VoxelVisibility != null)
                     {
                         UiControl.AddCheckBox("Show Vis Debug", showVisDebug, v => showVisDebug = v);
+                    }
+
+                    if (Scene.PhysicsWorld != null)
+                    {
+                        UiControl.AddCheckBox("Debug Physics Traces", showPhysicsTraces, v => showPhysicsTraces = v);
                     }
                 }
 
@@ -487,6 +497,12 @@ namespace GUI.Types.GLViewers
                 if (Scene.OcclusionDebugEnabled && Scene.OcclusionDebug != null)
                 {
                     Scene.OcclusionDebug.Render();
+                }
+
+                if (showPhysicsTraces && Scene.PhysicsWorld != null)
+                {
+                    physicsTraceRenderer ??= new PhysicsTraceDebugRenderer(Scene.RendererContext);
+                    physicsTraceRenderer.Render(Scene.PhysicsWorld, Input, Renderer.Camera);
                 }
 
                 if (ShowBaseGrid && baseGrid != null)
