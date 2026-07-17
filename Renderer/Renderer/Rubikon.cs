@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes;
 using ValveResourceFormat.Serialization.KeyValues;
@@ -56,6 +57,15 @@ public class Rubikon
     /// <param name="physicsData">Source physics aggregate containing shapes and collision attributes.</param>
     public Rubikon(PhysAggregateData physicsData)
     {
+        if (physicsData.Parts.Length == 0)
+        {
+            Meshes = [];
+            Hulls = [];
+            HullIndices = [];
+            HullTree = [];
+            return;
+        }
+
         var worldMeshes = physicsData.Parts[0].Shape.Meshes
             .ToArray();
 
@@ -68,11 +78,7 @@ public class Rubikon
             var triangles = mesh.Shape.GetTriangles();
             var physicsTree = mesh.Shape.ParseNodes();
 
-            var collisionAttributes = physicsData.CollisionAttributes[mesh.CollisionAttributeIndex];
-            var collisionGroup = collisionAttributes.GetStringProperty("m_CollisionGroupString");
-
-            var interactAs = collisionAttributes.GetArray<string>("m_InteractAsStrings");
-            var interactExclude = collisionAttributes.GetArray<string>("m_InteractExcludeStrings");
+            var (interactAs, interactExclude) = GetInteractStrings(physicsData.CollisionAttributes[mesh.CollisionAttributeIndex]);
 
             Meshes[meshIndex++] = new PhysicsMeshData(interactAs, interactExclude, [.. vertexPositions], [.. triangles], [.. physicsTree]);
         }
@@ -90,9 +96,7 @@ public class Rubikon
             var faceEdgeIndices = hull.GetFaces();
             var planes = hull.GetPlanes();
 
-            var collisionAttributes = physicsData.CollisionAttributes[hullDesc.CollisionAttributeIndex];
-            var interactAs = collisionAttributes.GetArray<string>("m_InteractAsStrings");
-            var interactExclude = collisionAttributes.GetArray<string>("m_InteractExcludeStrings");
+            var (interactAs, interactExclude) = GetInteractStrings(physicsData.CollisionAttributes[hullDesc.CollisionAttributeIndex]);
 
             Hulls[hullIndex++] = new PhysicsHullData(
                 interactAs, interactExclude,
@@ -107,6 +111,20 @@ public class Rubikon
         // Build BVH for hulls
         HullIndices = [.. Enumerable.Range(0, Hulls.Length)];
         HullTree = BuildHullBVH();
+    }
+
+    /// <summary>
+    /// Older assets carry their tags in m_PhysicsTagStrings instead of m_InteractAsStrings,
+    /// and GetArray returns null for absent keys, so both interact arrays need a fallback.
+    /// </summary>
+    private static (string[] InteractAs, string[] InteractExclude) GetInteractStrings(KVObject collisionAttributes)
+    {
+        var interactAs = collisionAttributes.GetArray<string>("m_InteractAsStrings")
+            ?? collisionAttributes.GetArray<string>("m_PhysicsTagStrings")
+            ?? [];
+        var interactExclude = collisionAttributes.GetArray<string>("m_InteractExcludeStrings") ?? [];
+
+        return (interactAs, interactExclude);
     }
 
     /// <summary>
@@ -143,11 +161,15 @@ public class Rubikon
             return false;
         }
 
-        /// <summary>Updates this result if <paramref name="other"/> is closer, and returns <see langword="true"/> if the new hit is within the minimal-distance threshold.</summary>
+        /// <summary>
+        /// Whether shape scanning can stop at this result: the hit is as close as it can get,
+        /// and if the trace is probing for start-solid, only an actual overlap qualifies -
+        /// an exact-touch zero-distance hit must not mask an embedded shape tested later.
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool MinimizeWith_EarlyExit(TraceResult other)
+        public readonly bool StopsScanning(bool detectStartSolid)
         {
-            return MinimizeWith(other) && IsMinimalDistance;
+            return IsMinimalDistance && (!detectStartSolid || StartSolid);
         }
     }
 
@@ -215,6 +237,12 @@ public class Rubikon
 
         foreach (var hull in Hulls)
         {
+            // Invisible clip geometry should not block picking, matching the mesh filter above
+            if (ContainsString(hull.InteractAs, "playerclip"))
+            {
+                continue;
+            }
+
             RayIntersectsWithHull(ray, hull, ref closestHit);
         }
 
@@ -224,27 +252,24 @@ public class Rubikon
     /// <summary>Precomputed sweep data for an axis-aligned box trace.</summary>
     public readonly struct AABBTraceContext
     {
-        /// <summary>Gets the start position of the sweep.</summary>
-        public Vector3 Origin { get; }
-
-        /// <summary>Gets the end position of the sweep.</summary>
-        public Vector3 End { get; }
-
-        /// <summary>Gets the normalized sweep direction.</summary>
-        public Vector3 Direction { get; }
+        /// <summary>Gets the sweep center line as a precomputed ray.</summary>
+        public RayTraceContext Ray { get; }
 
         /// <summary>Gets the half-extents of the swept AABB.</summary>
         public Vector3 HalfExtents { get; }
 
-        /// <summary>Gets the total sweep length.</summary>
-        public float Length { get; }
-
-        /// <summary>Gets the sweep center line as a precomputed ray.</summary>
-        public RayTraceContext Ray { get; }
-
         /// <summary>Gets a value indicating whether triangles are tested for overlap at the
         /// start position (reported as <see cref="TraceResult.StartSolid"/>).</summary>
         public bool DetectStartSolid { get; }
+
+        /// <summary>Gets the start position of the sweep.</summary>
+        public Vector3 Origin => Ray.Origin;
+
+        /// <summary>Gets the normalized sweep direction.</summary>
+        public Vector3 Direction => Ray.Direction;
+
+        /// <summary>Gets the total sweep length.</summary>
+        public float Length => Ray.Length;
 
         /// <summary>Initializes a new AABB trace context from start/end positions and box half-extents.</summary>
         /// <param name="start">Sweep start position.</param>
@@ -253,12 +278,8 @@ public class Rubikon
         /// <param name="detectStartSolid">Whether to test triangles for overlap at the start position.</param>
         public AABBTraceContext(Vector3 start, Vector3 end, Vector3 halfExtents, bool detectStartSolid = false)
         {
-            Origin = start;
-            End = end;
             Ray = new RayTraceContext(start, end);
-            Direction = Ray.Direction;
             HalfExtents = halfExtents;
-            Length = Ray.Length;
             DetectStartSolid = detectStartSolid;
         }
     }
@@ -300,7 +321,7 @@ public class Rubikon
             }
 
             AABBTraceMesh(trace, mesh, ref closestHit);
-            if (closestHit.IsMinimalDistance)
+            if (closestHit.StopsScanning(trace.DetectStartSolid))
             {
                 break;
             }
@@ -416,7 +437,7 @@ public class Rubikon
 
                 AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
 
-                if (closestHit.IsMinimalDistance)
+                if (closestHit.StopsScanning(trace.DetectStartSolid))
                 {
                     return;
                 }
@@ -479,7 +500,7 @@ public class Rubikon
 
                 AABBTraceHull(trace, hull, ref closestHit);
 
-                if (closestHit.IsMinimalDistance)
+                if (closestHit.StopsScanning(trace.DetectStartSolid))
                 {
                     return;
                 }
@@ -660,7 +681,7 @@ public class Rubikon
 
                 AABBTraceTriangle13AxisSat(trace, v0, v1, v2, ref closestHit);
 
-                if (closestHit.IsMinimalDistance)
+                if (closestHit.StopsScanning(trace.DetectStartSolid))
                 {
                     return;
                 }
@@ -684,8 +705,15 @@ public class Rubikon
             if (axis == 0)
             {
                 axisVector = Vector3.Cross(v1 - v0, v2 - v0);
+
+                // Degenerate (zero-area) triangle: there is no surface to hit, and normalizing
+                // the zero cross product would poison the interval tests with NaN
+                if (axisVector.LengthSquared() < Epsilon * Epsilon)
+                {
+                    return;
+                }
             }
-            else if (axis > 0 && axis < 10)
+            else if (axis < 10)
             {
                 var localAxisIndex = axis - 1;
 

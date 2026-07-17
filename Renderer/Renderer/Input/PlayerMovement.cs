@@ -1,6 +1,3 @@
-
-using System.Diagnostics;
-
 namespace ValveResourceFormat.Renderer.Input;
 
 /// <summary>
@@ -18,7 +15,7 @@ public class PlayerMovement
     private const float FrictionValue = 5.2f;             // sv_friction
     private const float StopSpeedValue = 80f;             // sv_stopspeed
     private const float AccelerateValue = 5.5f;           // sv_accelerate
-    private const float AirAccelerateValue = 150f;         // sv_airaccelerate
+    private const float AirAccelerateValue = 150f;        // sv_airaccelerate (engine default is 12; raised to allow surfing)
     //While sv_maxspeed is 320 in GO, the actual max speed is set by CS_PLAYER_SPEED_RUN, which is 260.
     private const float MaxSpeedValue = 260f;             // sv_maxspeed
     private const float JumpImpulseValue = 301.993377f;   // sv_jump_impulse = sqrt(2*800*57)
@@ -89,6 +86,13 @@ public class PlayerMovement
 
     private UserInput Input { get; }
     private Rubikon? Physics => Input.PhysicsWorld;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether traces also collide with an infinite ground
+    /// plane at Z=0 in addition to the physics world. Enabled by the model viewer, where
+    /// the model's collision shapes don't cover the whole walkable area.
+    /// </summary>
+    public bool UseGroundPlaneFallback { get; set; }
 
     /// <summary>
     /// Linear value from 0 to 1 representing how much the player is crouched.  0 = standing, 1 = fully crouched.
@@ -666,7 +670,19 @@ public class PlayerMovement
     /// </summary>
     private static void ClipToCrease(ref Vector3 delta, ref Vector3 velocity, Vector3 plane1, Vector3 plane2)
     {
-        var crease = Vector3.Normalize(Vector3.Cross(plane1, plane2));
+        var crease = Vector3.Cross(plane1, plane2);
+        var creaseLengthSquared = crease.LengthSquared();
+
+        // Near-parallel planes have no crease direction to slide along; stop dead
+        // instead of normalizing a (near-)zero vector into NaN velocity
+        if (creaseLengthSquared < 1e-12f)
+        {
+            velocity = Vector3.Zero;
+            delta = Vector3.Zero;
+            return;
+        }
+
+        crease /= MathF.Sqrt(creaseLengthSquared);
         velocity = Vector3.Dot(crease, velocity) * crease;
         delta = Vector3.Dot(crease, delta) * crease;
     }
@@ -1013,6 +1029,13 @@ public class PlayerMovement
         var result = Physics != null
             ? Physics.TraceAABB(from, to, halfExtents, "player", detectStartSolid)
             : TraceInfiniteGroundPlane(from, to, halfExtents, detectStartSolid);
+
+        // The model viewer keeps its virtual floor even with a physics world loaded,
+        // so walking off the model's collision shapes doesn't drop the player into the void
+        if (Physics != null && UseGroundPlaneFallback)
+        {
+            result.MinimizeWith(TraceInfiniteGroundPlane(from, to, halfExtents, detectStartSolid));
+        }
 
         // Keep-away margin: back the hit off along the sweep so the perpendicular gap to the
         // surface is SurfaceEpsilon. Centralized here so every caller can use HitPosition

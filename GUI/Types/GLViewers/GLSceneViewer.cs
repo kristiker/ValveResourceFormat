@@ -71,12 +71,13 @@ namespace GUI.Types.GLViewers
 
         public override void Dispose()
         {
-            base.Dispose();
-
+            // Delete GL resources before the base disposes the GL context
             physicsTraceRenderer?.Delete();
             physicsTraceRenderer = null;
 
             Renderer?.Dispose();
+
+            base.Dispose();
 
             if (renderModeComboBox != null)
             {

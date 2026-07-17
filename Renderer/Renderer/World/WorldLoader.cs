@@ -349,7 +349,10 @@ namespace ValveResourceFormat.Renderer.World
                     scene.Add(physSceneNode, true);
                 }
 
-                scene.PhysicsWorld = new Rubikon(phys);
+                if (phys.Parts.Length > 0)
+                {
+                    scene.PhysicsWorld = new Rubikon(phys);
+                }
             }
         }
 
