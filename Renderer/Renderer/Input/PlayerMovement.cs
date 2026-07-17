@@ -198,15 +198,6 @@ public class PlayerMovement
         BlendedEyeHeight = ViewHeightStanding + (ViewHeightDucked - ViewHeightStanding) * CrouchBlend;
         EyePosition = Position + Vector3.UnitZ * BlendedEyeHeight;
         camera.Location = EyePosition;
-
-        // Draw player AABB for debugging
-        /*
-        if (Physics?.SelectedNodeRenderer != null)
-        {
-            var worldAABB = playerHull.Translate(groundPos);
-            var color = OnGround ? new Color32(0f, 1f, 0f, 1f) : new Color32(1f, 1f, 0f, 1f); // Green when grounded, yellow in air
-            //ShapeSceneNode.AddBox(Physics.SelectedNodeRenderer.Vertices, worldAABB, color);
-        }*/
     }
 
     /// <summary>

@@ -205,7 +205,7 @@ public class Rubikon
 
         foreach (var mesh in Meshes)
         {
-            if (mesh.InteractAs.Length > 0 && !mesh.InteractAs.Contains("passbullets"))
+            if (mesh.InteractAs.Length > 0 && !ContainsString(mesh.InteractAs, "passbullets"))
             {
                 continue;
             }
@@ -325,14 +325,27 @@ public class Rubikon
             return false;
         }
 
-        if (interactExclude.Contains("player"))
+        if (ContainsString(interactExclude, "player"))
         {
             return true;
         }
 
         return interactAs.Length > 0
-            && !interactAs.Contains("playerclip")
-            && !interactAs.Contains("passbullets");
+            && !ContainsString(interactAs, "playerclip")
+            && !ContainsString(interactAs, "passbullets");
+    }
+
+    private static bool ContainsString(string[] values, string value)
+    {
+        foreach (var entry in values)
+        {
+            if (entry == value)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void RayIntersectsWithHull(RayTraceContext ray, PhysicsHullData hull, ref TraceResult closestHit)
