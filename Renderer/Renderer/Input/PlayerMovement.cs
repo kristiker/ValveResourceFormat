@@ -283,8 +283,11 @@ public class PlayerMovement
         // Check velocity for NaN/bounds
         CheckVelocity(ref position);
 
-        // Update position based on velocity - use lerped hull for collision
-        position = TryPlayerMove(position, Velocity * deltaTime, playerHull);
+        // Update position based on velocity - use lerped hull for collision.
+        // Ground movement gets step support; in the air there is nothing to step off.
+        position = OnGround
+            ? StepMove(position, Velocity * deltaTime, playerHull)
+            : TryPlayerMove(position, Velocity * deltaTime, playerHull);
 
         // StayOnGround - keep player stuck to ground when going down slopes/stairs
         if (OnGround)
@@ -573,7 +576,7 @@ public class PlayerMovement
         var remainingDelta = delta;
         var remainingDistance = delta.Length();
 
-        // Fraction of the original move not yet consumed; gates whether stepping is still worthwhile
+        // Fraction of the original move not yet consumed; the loop ends once it is all used up
         var remainingFraction = 1.0f;
 
         // Velocity at entry; if clipping ever turns the velocity against it, we are ping-ponging
@@ -591,16 +594,6 @@ public class PlayerMovement
             if (!result.Hit)
             {
                 return position + remainingDelta;
-            }
-
-            // While on the ground with most of the move still ahead, try stepping over the obstacle
-            if (OnGround && remainingFraction > 0.5f && result.Distance < remainingDistance)
-            {
-                var (steppedPosition, stepped) = TryStepMove(position, delta, halfExtents);
-                if (stepped && (steppedPosition - position).Length() + SurfaceEpsilon > remainingDistance)
-                {
-                    return steppedPosition;
-                }
             }
 
             // Advance to the hit point (the trace already backs hits off by the keep-away margin)
@@ -700,49 +693,76 @@ public class PlayerMovement
     }
 
     /// <summary>
-    /// Attempt to step up and over an obstacle (even tiny ones)
+    /// Ground move with step support, like Source's StepMove: run the slide normally and again
+    /// from a stepped-up position, then keep whichever branch traveled farther laterally.
     /// </summary>
-    private (Vector3 StepPos, bool Stepped) TryStepMove(Vector3 start, Vector3 delta, Vector3 halfExtents)
+    private Vector3 StepMove(Vector3 start, Vector3 delta, Vector3 halfExtents)
     {
-        Debug.Assert(Physics != null);
+        if (Physics == null)
+        {
+            return TryPlayerMove(start, delta, halfExtents);
+        }
 
-        // Step 1: Move up by step height, using whatever height we can achieve (even if blocked)
+        var entryVelocity = Velocity;
+
+        // Consult the step whenever the direct path is obstructed at all. Source checks the
+        // first trace the same way; testing the slide's net displacement instead misses grazing
+        // hits that end within epsilon of the destination while still clipping the velocity,
+        // which reads as sliding along low angled blocks instead of stepping onto them.
+        if (!TraceBBox(start, start + delta, halfExtents).Hit)
+        {
+            return start + delta;
+        }
+
+        // Branch 1: plain slide along the ground
+        var downPosition = TryPlayerMove(start, delta, halfExtents);
+        var downVelocity = Velocity;
+
+        // Branch 2: step up as far as headroom allows, slide at that height, then settle back down
+        Velocity = entryVelocity;
+
         var stepUpEnd = start + new Vector3(0, 0, StepSize);
         var upTrace = TraceBBox(start, stepUpEnd, halfExtents);
-        var steppedUpPosition = upTrace.Hit ? upTrace.HitPosition : stepUpEnd;
+        var steppedStart = upTrace.Hit ? upTrace.HitPosition : stepUpEnd;
 
-        // Step 2: Move forward from the stepped-up position
-        var forwardTrace = TraceBBox(steppedUpPosition, steppedUpPosition + delta, halfExtents);
-        var forwardPosition = forwardTrace.Hit ? forwardTrace.HitPosition : steppedUpPosition + delta;
+        var steppedSlidePosition = TryPlayerMove(steppedStart, delta, halfExtents);
 
-        // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
-        var downEnd = forwardPosition + new Vector3(0, 0, -(StepSize + GroundProbeDistance));
-        var downTrace = TraceBBox(forwardPosition, downEnd, halfExtents);
+        var downEnd = steppedSlidePosition + new Vector3(0, 0, -(StepSize + GroundProbeDistance));
+        var downTrace = TraceBBox(steppedSlidePosition, downEnd, halfExtents);
 
-        // Reject non-walkable landing surfaces (also guards the normal-based offset
-        // below against horizontal normals from edge contacts).
+        // The stepped branch must settle on standable ground.
         // A zero-distance landing means the hull is already embedded at the stepped position
         // (e.g. wedged in a floor-ceiling gap, where the up-step was blocked at zero height):
-        // HitPosition is just the input echoed back, and accepting it would lift the player by
-        // SurfaceEpsilon every tick. A genuine step always descends a real distance.
-        if (!downTrace.Hit || downTrace.IsMinimalDistance || downTrace.HitNormal.Z < WalkableSlope)
+        // HitPosition is just the input echoed back and carries no ground information.
+        // The down tolerance keeps a low ceiling from turning a "step" into a ledge drop.
+        var landingInvalid = !downTrace.Hit
+            || downTrace.IsMinimalDistance
+            || downTrace.HitNormal.Z < WalkableSlope
+            || downTrace.HitPosition.Z - start.Z < -StepDownTolerance;
+
+        if (landingInvalid)
         {
-            return (start, false);
+            Velocity = downVelocity;
+            return downPosition;
         }
 
-        // The trace's keep-away margin already leaves the landing position clear of the surface
-        var finalPosition = downTrace.HitPosition;
+        var steppedPosition = downTrace.HitPosition;
 
-        // Validate the step
-        var stepHeight = finalPosition.Z - start.Z;
+        // Keep whichever branch went farther laterally - vertical gain is not progress toward
+        // where the player is steering (Source compares fLateralDist the same way)
+        var downLateral = new Vector2(downPosition.X - start.X, downPosition.Y - start.Y).LengthSquared();
+        var steppedLateral = new Vector2(steppedPosition.X - start.X, steppedPosition.Y - start.Y).LengthSquared();
 
-        // Accept steps that are reasonable (not too high, not falling off edge)
-        if (stepHeight < -StepDownTolerance || stepHeight > StepSize)
+        if (downLateral > steppedLateral)
         {
-            return (start, false);
+            Velocity = downVelocity;
+            return downPosition;
         }
 
-        return (finalPosition, true);
+        // The stepped branch keeps its own horizontal velocity, but the vertical velocity comes
+        // from the ground branch so stepping does not manufacture upward speed (as in Source)
+        Velocity = new Vector3(Velocity.X, Velocity.Y, downVelocity.Z);
+        return steppedPosition;
     }
 
     /// <summary>
