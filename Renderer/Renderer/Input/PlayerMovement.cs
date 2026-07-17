@@ -107,7 +107,11 @@ public class PlayerMovement
     private float DuckSpeedModifierSmooth => float.Lerp(1f, DuckSpeedModifier, CrouchBlend);
     private Vector3 SnappedHullHalfExtents => HoldingCtrl ? DuckedHullHalfExtents : StandingHullHalfExtents;
 
-    private Vector3 HullHalfExtents => new(
+    /// <summary>
+    /// Gets the current collision hull half-extents, with height blended between the standing
+    /// and ducked hulls by <see cref="CrouchBlend"/>.
+    /// </summary>
+    public Vector3 HullHalfExtents => new(
         StandingHullHalfExtents.X,
         StandingHullHalfExtents.Y,
         float.Lerp(StandingHullHalfExtents.Z, DuckedHullHalfExtents.Z, CrouchBlend));
