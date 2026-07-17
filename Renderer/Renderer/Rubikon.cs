@@ -31,6 +31,8 @@ public class Rubikon
     /// Convex hull collision data with vertices, edges, and planes.
     /// </summary>
     public record PhysicsHullData(
+        string[] InteractAs,
+        string[] InteractExclude,
         Vector3 Min,
         Vector3 Max,
         Vector3[] VertexPositions,
@@ -88,8 +90,12 @@ public class Rubikon
             var faceEdgeIndices = hull.GetFaces();
             var planes = hull.GetPlanes();
 
+            var collisionAttributes = physicsData.CollisionAttributes[hullDesc.CollisionAttributeIndex];
+            var interactAs = collisionAttributes.GetArray<string>("m_InteractAsStrings");
+            var interactExclude = collisionAttributes.GetArray<string>("m_InteractExcludeStrings");
 
             Hulls[hullIndex++] = new PhysicsHullData(
+                interactAs, interactExclude,
                 hull.Min, hull.Max,
                 [.. vertexPositions],
                 [.. halfEdges],
@@ -288,20 +294,9 @@ public class Rubikon
         // Check against all meshes
         foreach (var mesh in Meshes)
         {
-            // player collision rules
-            if (collisionName == "player")
+            if (SkipsCollision(collisionName, mesh.InteractAs, mesh.InteractExclude))
             {
-                if (mesh.InteractExclude.Contains("player"))
-                {
-                    continue;
-                }
-
-                if (mesh.InteractAs.Length > 0
-                    && !mesh.InteractAs.Contains("playerclip")
-                    && !mesh.InteractAs.Contains("passbullets"))
-                {
-                    continue;
-                }
+                continue;
             }
 
             AABBTraceMesh(trace, mesh, ref closestHit);
@@ -313,10 +308,31 @@ public class Rubikon
 
         if (HullTree.Length > 0)
         {
-            AABBTraceHullBVH(trace, ref closestHit);
+            AABBTraceHullBVH(trace, collisionName, ref closestHit);
         }
 
         return closestHit;
+    }
+
+    /// <summary>
+    /// Player collision rules: player traces never collide with shapes that exclude the player,
+    /// and only collide with default geometry, player clips, and passbullets shapes.
+    /// </summary>
+    private static bool SkipsCollision(string collisionName, string[] interactAs, string[] interactExclude)
+    {
+        if (collisionName != "player")
+        {
+            return false;
+        }
+
+        if (interactExclude.Contains("player"))
+        {
+            return true;
+        }
+
+        return interactAs.Length > 0
+            && !interactAs.Contains("playerclip")
+            && !interactAs.Contains("passbullets");
     }
 
     private static void RayIntersectsWithHull(RayTraceContext ray, PhysicsHullData hull, ref TraceResult closestHit)
@@ -398,7 +414,7 @@ public class Rubikon
         }
     }
 
-    private void AABBTraceHullBVH(AABBTraceContext trace, ref TraceResult closestHit)
+    private void AABBTraceHullBVH(AABBTraceContext trace, string collisionName, ref TraceResult closestHit)
     {
         Span<(Node Node, int Index)> stack = stackalloc (Node Node, int Index)[STACK_SIZE];
         var stackCount = 0;
@@ -442,6 +458,12 @@ public class Rubikon
             {
                 var hullIndex = HullIndices[i];
                 var hull = Hulls[hullIndex];
+
+                if (SkipsCollision(collisionName, hull.InteractAs, hull.InteractExclude))
+                {
+                    continue;
+                }
+
                 AABBTraceHull(trace, hull, ref closestHit);
 
                 if (closestHit.IsMinimalDistance)
