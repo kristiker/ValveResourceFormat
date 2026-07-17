@@ -698,8 +698,12 @@ public class PlayerMovement
         var downTrace = TraceBBox(forwardPosition, downEnd, halfExtents);
 
         // Reject non-walkable landing surfaces (also guards the normal-based offset
-        // below against horizontal normals from edge contacts)
-        if (!downTrace.Hit || downTrace.HitNormal.Z < WalkableSlope)
+        // below against horizontal normals from edge contacts).
+        // A zero-distance landing means the hull is already embedded at the stepped position
+        // (e.g. wedged in a floor-ceiling gap, where the up-step was blocked at zero height):
+        // HitPosition is just the input echoed back, and accepting it would lift the player by
+        // SurfaceEpsilon every tick. A genuine step always descends a real distance.
+        if (!downTrace.Hit || downTrace.IsMinimalDistance || downTrace.HitNormal.Z < WalkableSlope)
         {
             return (start, false);
         }
