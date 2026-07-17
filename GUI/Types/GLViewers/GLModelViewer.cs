@@ -241,6 +241,11 @@ namespace GUI.Types.GLViewers
 
             if (phys != null)
             {
+                if (phys.Parts.Length > 0)
+                {
+                    Scene.PhysicsWorld = new Rubikon(phys);
+                }
+
                 var physSceneNodes = PhysSceneNode.CreatePhysSceneNodes(Scene, phys, null).ToList();
 
                 // Physics are not shown by default unless the model has no meshes
