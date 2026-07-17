@@ -1,4 +1,3 @@
-using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Renderer.Input;
 using ValveResourceFormat.Renderer.SceneNodes;
 
@@ -8,33 +7,18 @@ namespace ValveResourceFormat.Renderer
     /// Debug visualization for physics traces: draws the player collision hull while player
     /// movement is active, and sweeps a small box from the camera to show where it lands.
     /// </summary>
-    public class PhysicsTraceDebugRenderer
+    public class PhysicsTraceDebugRenderer : LineDebugRenderer
     {
         private const float CameraTraceRange = 10000f;
         private static readonly Vector3 CameraTraceHalfExtents = new(8f, 8f, 8f);
 
-        private readonly Shader shader;
-        private readonly int vaoHandle;
-        private readonly int vboHandle;
-        private int vertexCount;
         private readonly List<SimpleVertex> vertices = new(64);
 
         /// <summary>Initializes the renderer and creates GPU resources.</summary>
         /// <param name="rendererContext">Renderer context for loading shaders.</param>
         public PhysicsTraceDebugRenderer(RendererContext rendererContext)
+            : base(rendererContext, nameof(PhysicsTraceDebugRenderer))
         {
-            shader = rendererContext.ShaderLoader.LoadShader("vrf.default");
-
-            GL.CreateVertexArrays(1, out vaoHandle);
-            GL.CreateBuffers(1, out vboHandle);
-            GL.VertexArrayVertexBuffer(vaoHandle, 0, vboHandle, 0, SimpleVertex.SizeInBytes);
-            SimpleVertex.BindDefaultShaderLayout(vaoHandle, shader.Program);
-
-#if DEBUG
-            var vaoLabel = nameof(PhysicsTraceDebugRenderer);
-            GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, vaoHandle, vaoLabel.Length, vaoLabel);
-            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vboHandle, vaoLabel.Length, vaoLabel);
-#endif
         }
 
         /// <summary>Rebuilds and renders the debug geometry for the current frame.</summary>
@@ -44,25 +28,7 @@ namespace ValveResourceFormat.Renderer
         public void Render(Rubikon physics, UserInput input, Camera camera)
         {
             Rebuild(physics, input, camera);
-
-            if (vertexCount == 0)
-            {
-                return;
-            }
-
-            GL.Enable(EnableCap.Blend);
-            GL.DepthMask(false);
-            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-
-            shader.Use();
-            shader.SetUniform3x4("transform", Matrix4x4.Identity);
-
-            GL.BindVertexArray(vaoHandle);
-            GL.DrawArrays(PrimitiveType.Lines, 0, vertexCount);
-            GL.UseProgram(0);
-            GL.BindVertexArray(0);
-            GL.DepthMask(true);
-            GL.Disable(EnableCap.Blend);
+            RenderLines();
         }
 
         private void Rebuild(Rubikon physics, UserInput input, Camera camera)
@@ -100,15 +66,7 @@ namespace ValveResourceFormat.Renderer
                 ShapeSceneNode.AddLine(vertices, end, end + trace.HitNormal * 16f, new Color32(0.25f, 1f, 1f, 1f));
             }
 
-            vertexCount = vertices.Count;
-            GL.NamedBufferData(vboHandle, vertexCount * SimpleVertex.SizeInBytes, ListAccessors<SimpleVertex>.GetBackingArray(vertices), BufferUsageHint.DynamicDraw);
-        }
-
-        /// <summary>Deletes the GPU vertex and vertex array objects.</summary>
-        public void Delete()
-        {
-            GL.DeleteBuffer(vboHandle);
-            GL.DeleteVertexArray(vaoHandle);
+            Upload(vertices);
         }
     }
 }
