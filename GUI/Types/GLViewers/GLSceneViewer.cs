@@ -120,12 +120,12 @@ namespace GUI.Types.GLViewers
                     }
                 }
 
+                UiControl.AddCheckBox("Show Render Timings", Renderer.Timings.Capture, (v) => Renderer.Timings.Capture = v);
+
                 if (Scene.PhysicsWorld != null)
                 {
                     UiControl.AddCheckBox("Debug Physics Traces", showPhysicsTraces, v => showPhysicsTraces = v);
                 }
-
-                UiControl.AddCheckBox("Show Render Timings", Renderer.Timings.Capture, (v) => Renderer.Timings.Capture = v);
             }
 
             base.AddUiControls();
@@ -348,7 +348,8 @@ namespace GUI.Types.GLViewers
             base.OnUpdate(frameTime);
 
             Input.EnableMouseLook = true;
-            if (loadedDefaultLighting && (CurrentlyPressedKeys & TrackedKeys.Control) != 0)
+
+            if (loadedDefaultLighting && Input.NoClip && (CurrentlyPressedKeys & TrackedKeys.Control) != 0)
             {
                 var delta = new Vector2(LastMouseDelta.Y, LastMouseDelta.X);
 
