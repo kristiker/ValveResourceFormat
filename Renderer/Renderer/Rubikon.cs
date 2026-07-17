@@ -265,6 +265,16 @@ public class Rubikon
     /// <param name="detectStartSolid">Whether to also test for overlap at the start position (see <see cref="TraceResult.StartSolid"/>).</param>
     /// <returns>The closest <see cref="TraceResult"/>, or an empty result if nothing was hit.</returns>
     public TraceResult TraceAABB(Vector3 from, Vector3 to, AABB aabb, string collisionName, bool detectStartSolid = false)
+        => TraceAABB(from, to, aabb.Size * 0.5f, collisionName, detectStartSolid);
+
+    /// <summary>Sweeps a box given by its half-extents from <paramref name="from"/> to <paramref name="to"/> and returns the closest hit.</summary>
+    /// <param name="from">Sweep start position (center of the box).</param>
+    /// <param name="to">Sweep end position.</param>
+    /// <param name="halfExtents">Half-extents of the swept box.</param>
+    /// <param name="collisionName">Collision interaction name used to filter shapes.</param>
+    /// <param name="detectStartSolid">Whether to report overlaps at the start position as start-solid hits.</param>
+    /// <returns>The closest <see cref="TraceResult"/>, or an empty result if nothing was hit.</returns>
+    public TraceResult TraceAABB(Vector3 from, Vector3 to, Vector3 halfExtents, string collisionName, bool detectStartSolid = false)
     {
         TraceResult closestHit = new();
 
@@ -273,7 +283,6 @@ public class Rubikon
             return closestHit;
         }
 
-        var halfExtents = aabb.Size * 0.5f;
         var trace = new AABBTraceContext(from, to, halfExtents, detectStartSolid);
 
         // Check against all meshes
