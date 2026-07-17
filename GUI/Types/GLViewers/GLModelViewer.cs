@@ -245,9 +245,12 @@ namespace GUI.Types.GLViewers
                 {
                     Scene.PhysicsWorld = new Rubikon(phys);
 
-                    // Model collision shapes don't cover the whole walkable area,
-                    // keep the virtual floor the model viewer always had
-                    Input.PlayerMovement.UseGroundPlaneFallback = true;
+                    // Model collision shapes don't cover the whole walkable area, so keep the
+                    // virtual floor the model viewer always had - unless this is a map's
+                    // world physics opened directly, which brings its own walkable floor
+                    // (and may have real geometry below Z=0 the plane would block)
+                    var isWorldPhysics = GuiContext.FileName.EndsWith("world_physics.vphys_c", StringComparison.OrdinalIgnoreCase);
+                    Input.PlayerMovement.UseGroundPlaneFallback = !isWorldPhysics;
                 }
 
                 var physSceneNodes = PhysSceneNode.CreatePhysSceneNodes(Scene, phys, null).ToList();
