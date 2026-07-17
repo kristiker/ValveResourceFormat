@@ -8,12 +8,10 @@ namespace ValveResourceFormat.Renderer.Input;
 /// </summary>
 public class PlayerMovement
 {
-    // Player collision hull
-    // Standing hull: 32x32x64 (16 units radius, 64 units tall - about 5'4" at 1 unit = 1 inch)
-    // Ducked hull: 32x32x48 (16 units radius, 48 units tall - 4 feet crouched)
-    // Note: Hull is centered horizontally but extends from feet (Z=0) upward
-    private static readonly AABB PlayerHullStanding = new(new Vector3(-16, -16, 0), new Vector3(16, 16, 72));
-    private static readonly AABB PlayerHullDucked = new(new Vector3(-16, -16, 0), new Vector3(16, 16, 48));
+    // Player collision hull, stored as half-extents around the hull center (TracePosition).
+    // Standing hull: 32x32x72, ducked hull: 32x32x48.
+    private static readonly Vector3 StandingHullHalfExtents = new(16, 16, 36);
+    private static readonly Vector3 DuckedHullHalfExtents = new(16, 16, 24);
 
     // Movement constants from Source engine (movevars_shared.cpp)
     private const float GravityValue = 800f;              // sv_gravity
@@ -36,8 +34,8 @@ public class PlayerMovement
     private const float WalkSpeedGraceMargin = 25f;       // Walk cap only applies when near walk speed, allowing natural deceleration
 
     private const float ViewHeightOffset = 8f;
-    private static readonly float ViewHeightStanding = PlayerHullStanding.Size.Z - ViewHeightOffset;
-    private static readonly float ViewHeightDucked = PlayerHullDucked.Size.Z - ViewHeightOffset;
+    private static readonly float ViewHeightStanding = StandingHullHalfExtents.Z * 2f - ViewHeightOffset;
+    private static readonly float ViewHeightDucked = DuckedHullHalfExtents.Z * 2f - ViewHeightOffset;
 
     // Bunnyhopping prevention (CS:GO)
     private const float BunnyjumpMaxSpeedFactor = 1.1f;   // Only allow bunny jumping up to 1.1x max speed
@@ -67,7 +65,7 @@ public class PlayerMovement
     /// <summary>
     /// Gets the current player position at feet level (where the AABB touches the ground).
     /// </summary>
-    public Vector3 Position => TracePositionSmooth - new Vector3(0, 0, Hull.Size.Z / 2); // Convert from AABB center to feet position
+    public Vector3 Position => TracePositionSmooth - new Vector3(0, 0, HullHalfExtents.Z); // Convert from hull center to feet position
 
     /// <summary>
     /// Gets a value indicating whether the player is currently on the ground.
@@ -102,19 +100,12 @@ public class PlayerMovement
     public Vector3 EyePosition { get; private set; }
 
     private float DuckSpeedModifierSmooth => float.Lerp(1f, DuckSpeedModifier, CrouchBlend);
-    private AABB SnappedHull => HoldingCtrl ? PlayerHullDucked : PlayerHullStanding;
+    private Vector3 SnappedHullHalfExtents => HoldingCtrl ? DuckedHullHalfExtents : StandingHullHalfExtents;
 
-    private AABB Hull
-    {
-        get
-        {
-            var standingHeight = PlayerHullStanding.Size.Z;
-            var duckedHeight = PlayerHullDucked.Size.Z;
-            var lerpedHeight = standingHeight + (duckedHeight - standingHeight) * CrouchBlend;
-            var lerpedHull = new AABB(new Vector3(-16, -16, 0), new Vector3(16, 16, lerpedHeight));
-            return lerpedHull;
-        }
-    }
+    private Vector3 HullHalfExtents => new(
+        StandingHullHalfExtents.X,
+        StandingHullHalfExtents.Y,
+        float.Lerp(StandingHullHalfExtents.Z, DuckedHullHalfExtents.Z, CrouchBlend));
 
     private const float SurfaceFriction = 1.0f;
     private const float WalkableSlope = 0.7f; // ~45 degrees
@@ -145,7 +136,7 @@ public class PlayerMovement
     /// </summary>
     public void ResetPosition(Camera camera)
     {
-        TracePosition = camera.Location - Vector3.UnitZ * ViewHeightStanding + new Vector3(0, 0, PlayerHullStanding.Size.Z / 2);
+        TracePosition = camera.Location - Vector3.UnitZ * ViewHeightStanding + new Vector3(0, 0, StandingHullHalfExtents.Z);
         TracePositionPrevious = TracePosition;
         Velocity = Vector3.Zero;
     }
@@ -160,7 +151,7 @@ public class PlayerMovement
         if (Initialize)
         {
             ResetPosition(camera);
-            TryUnstuck(ref TracePosition, SnappedHull);
+            TryUnstuck(ref TracePosition, SnappedHullHalfExtents);
             Velocity = input.Velocity;
             Initialize = false;
         }
@@ -221,7 +212,7 @@ public class PlayerMovement
 
         BlendDuckedHull(deltaTime, ref position, isDucking);
 
-        var playerHull = Hull;
+        var playerHull = HullHalfExtents;
 
         WasOnGroundLastFrame = OnGround;
 
@@ -326,7 +317,7 @@ public class PlayerMovement
         Velocity = new Vector3(Velocity.X, Velocity.Y, 0);
     }
 
-    static readonly float crouchHeightDifference = PlayerHullStanding.Size.Z - PlayerHullDucked.Size.Z;
+    static readonly float crouchHeightDifference = (StandingHullHalfExtents.Z - DuckedHullHalfExtents.Z) * 2f;
 
     private void BlendDuckedHull(float deltaTime, ref Vector3 position, bool isDucking)
     {
@@ -382,7 +373,7 @@ public class PlayerMovement
     private bool UncrouchBlocked(Vector3 position, bool feetAnchored)
     {
         var growth = new Vector3(0, 0, feetAnchored ? crouchHeightDifference : -crouchHeightDifference);
-        return TraceBBox(position, position + growth, PlayerHullDucked).Hit;
+        return TraceBBox(position, position + growth, DuckedHullHalfExtents).Hit;
     }
 
     /// <summary>
@@ -390,7 +381,7 @@ public class PlayerMovement
     /// Prevents player from becoming airborne and losing friction
     /// Ported from gamemovement.cpp StayOnGround()
     /// </summary>
-    private void StayOnGround(ref Vector3 position, AABB aabb)
+    private void StayOnGround(ref Vector3 position, Vector3 halfExtents)
     {
         if (Physics == null)
         {
@@ -398,7 +389,7 @@ public class PlayerMovement
         }
 
         // Trace down to find ground (trace extra distance to catch steep slopes)
-        var trace = TraceBBox(position, position + new Vector3(0, 0, -StepSize), aabb);
+        var trace = TraceBBox(position, position + new Vector3(0, 0, -StepSize), halfExtents);
 
         if (IsWalkableGroundHit(trace))
         {
@@ -449,7 +440,7 @@ public class PlayerMovement
     /// Check if player is on ground using swept AABB trace
     /// Traces down based on current downward velocity to detect ground contact
     /// </summary>
-    private void CategorizePosition(ref Vector3 position, AABB aabb)
+    private void CategorizePosition(ref Vector3 position, Vector3 halfExtents)
     {
         if (Physics == null)
         {
@@ -459,7 +450,7 @@ public class PlayerMovement
         }
 
         // Trace down from current position to check if we're on or very close to ground
-        var result = TraceBBox(position, position + new Vector3(0, 0, -GroundProbeDistance), aabb);
+        var result = TraceBBox(position, position + new Vector3(0, 0, -GroundProbeDistance), halfExtents);
 
         OnGround = IsWalkableGroundHit(result) && Velocity.Z < NonJumpVelocity;
 
@@ -474,14 +465,14 @@ public class PlayerMovement
     /// Uses the trace's start-solid overlap test to detect being stuck and to
     /// validate candidate positions directly.
     /// </summary>
-    private bool TryUnstuck(ref Vector3 position, AABB aabb)
+    private bool TryUnstuck(ref Vector3 position, Vector3 halfExtents)
     {
         if (Physics == null)
         {
             return false;
         }
 
-        if (!IsStuck(position, aabb))
+        if (!IsStuck(position, halfExtents))
         {
             return true; // Not stuck
         }
@@ -507,7 +498,7 @@ public class PlayerMovement
             {
                 var testPos = position + dir * distance;
 
-                if (!IsStuck(testPos, aabb))
+                if (!IsStuck(testPos, halfExtents))
                 {
                     // Found a valid position
                     position = testPos;
@@ -523,17 +514,17 @@ public class PlayerMovement
     /// <summary>
     /// Check whether the hull overlaps solid geometry at the given position.
     /// </summary>
-    private bool IsStuck(Vector3 position, AABB aabb)
+    private bool IsStuck(Vector3 position, Vector3 halfExtents)
     {
         // Start-solid is evaluated at the start position; the probe direction is irrelevant
-        var probe = TraceBBox(position, position + new Vector3(0, 0, -0.1f), aabb, detectStartSolid: true);
+        var probe = TraceBBox(position, position + new Vector3(0, 0, -0.1f), halfExtents, detectStartSolid: true);
         return probe.StartSolid;
     }
 
     /// <summary>
     /// Perform swept AABB collision detection for player movement with multi-bounce sliding
     /// </summary>
-    private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, AABB aabb)
+    private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, Vector3 halfExtents)
     {
         if (Physics == null || delta.LengthSquared() < 1e-6f)
         {
@@ -553,7 +544,7 @@ public class PlayerMovement
 
         for (var bump = 0; bump < MaxBumps && remainingFraction > 0; bump++)
         {
-            var result = TraceBBox(position, position + remainingDelta, aabb);
+            var result = TraceBBox(position, position + remainingDelta, halfExtents);
 
             if (!result.Hit)
             {
@@ -564,7 +555,7 @@ public class PlayerMovement
                 var obstacle = result.Distance < remainingDistance;
                 if (obstacle)
                 {
-                    var (newPos, stepped) = TryStepMove(position, delta, aabb);
+                    var (newPos, stepped) = TryStepMove(position, delta, halfExtents);
                     if (stepped && (newPos - position).Length() + SurfaceEpsilon > remainingDistance)
                     {
                         return newPos;
@@ -615,13 +606,13 @@ public class PlayerMovement
     /// <summary>
     /// Attempt to step up and over an obstacle (even tiny ones)
     /// </summary>
-    private (Vector3 StepPos, bool Stepped) TryStepMove(Vector3 start, Vector3 delta, AABB aabb)
+    private (Vector3 StepPos, bool Stepped) TryStepMove(Vector3 start, Vector3 delta, Vector3 halfExtents)
     {
         Debug.Assert(Physics != null);
 
         // Step 1: Move up by step height
         var stepUpEnd = start + new Vector3(0, 0, StepSize);
-        var upTrace = TraceBBox(start, stepUpEnd, aabb);
+        var upTrace = TraceBBox(start, stepUpEnd, halfExtents);
 
         // Use whatever height we can achieve (even if blocked)
         var steppedUpPosition = stepUpEnd;
@@ -632,7 +623,7 @@ public class PlayerMovement
         }
 
         // Step 2: Move forward from the stepped-up position
-        var forwardTrace = TraceBBox(steppedUpPosition, steppedUpPosition + delta, aabb);
+        var forwardTrace = TraceBBox(steppedUpPosition, steppedUpPosition + delta, halfExtents);
         var forwardPosition = steppedUpPosition + delta;
         if (forwardTrace.Hit)
         {
@@ -643,7 +634,7 @@ public class PlayerMovement
 
         // Step 3: Move down to find the ground (trace extra distance to ensure we find it)
         var downEnd = forwardPosition + new Vector3(0, 0, -(StepSize + GroundProbeDistance));
-        var downTrace = TraceBBox(forwardPosition, downEnd, aabb);
+        var downTrace = TraceBBox(forwardPosition, downEnd, halfExtents);
 
         // Reject non-walkable landing surfaces (also guards the normal-based offset
         // below against horizontal normals from edge contacts)
@@ -941,9 +932,9 @@ public class PlayerMovement
         position = Vector3.Clamp(position, movementBounds.Min, movementBounds.Max);
     }
 
-    private Rubikon.TraceResult TraceBBox(Vector3 from, Vector3 to, AABB aabb, bool detectStartSolid = false)
+    private Rubikon.TraceResult TraceBBox(Vector3 from, Vector3 to, Vector3 halfExtents, bool detectStartSolid = false)
     {
         Debug.Assert(Physics != null, "Physics world must be initialized");
-        return Physics.TraceAABB(from, to, aabb, "player", detectStartSolid);
+        return Physics.TraceAABB(from, to, halfExtents, "player", detectStartSolid);
     }
 }
