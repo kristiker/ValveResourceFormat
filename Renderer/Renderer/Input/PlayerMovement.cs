@@ -533,11 +533,11 @@ public class PlayerMovement
 
         const int MaxBumps = 6;
 
-        // Try step climbing immediately if on ground and moving horizontally
-
         var position = start;
         var remainingDelta = delta;
         var remainingDistance = delta.Length();
+
+        // Fraction of the original move not yet consumed; gates whether stepping is still worthwhile
         var remainingFraction = 1.0f;
 
         Span<Vector3> planes = stackalloc Vector3[MaxBumps];
@@ -550,57 +550,64 @@ public class PlayerMovement
             {
                 return position + remainingDelta;
             }
-            else if (OnGround && remainingFraction > 0.5f)
+
+            // While on the ground with most of the move still ahead, try stepping over the obstacle
+            if (OnGround && remainingFraction > 0.5f && result.Distance < remainingDistance)
             {
-                var obstacle = result.Distance < remainingDistance;
-                if (obstacle)
+                var (steppedPosition, stepped) = TryStepMove(position, delta, halfExtents);
+                if (stepped && (steppedPosition - position).Length() + SurfaceEpsilon > remainingDistance)
                 {
-                    var (newPos, stepped) = TryStepMove(position, delta, halfExtents);
-                    if (stepped && (newPos - position).Length() + SurfaceEpsilon > remainingDistance)
-                    {
-                        return newPos;
-                    }
+                    return steppedPosition;
                 }
             }
+
             planes[bump] = result.HitNormal;
 
-            // Move to hit point, pulled back so the perpendicular gap to the surface is SurfaceEpsilon
+            // Advance to the hit point, pulled back so the perpendicular gap to the surface is SurfaceEpsilon
             var pullback = PullbackDistance(remainingDelta / remainingDistance, result.HitNormal, result.Distance);
-            var adjustedDistance = result.Distance - pullback;
-
-            var fraction = adjustedDistance / remainingDistance;
+            var fraction = (result.Distance - pullback) / remainingDistance;
 
             position += remainingDelta * fraction;
-            remainingFraction -= fraction * remainingFraction;
+            remainingFraction *= 1f - fraction;
 
-            // Clip velocity based on surface type
-            var vel = Velocity;
+            // Clip velocity and the remaining move against what we hit
+            var velocity = Velocity;
 
             //TODO: Temporary fix. We should rework the bump system in general to match the game better.
             if (bump == 2 && Vector3.Dot(planes[0], planes[1]) <= 0)
             {
-                var cross = Vector3.Normalize(Vector3.Cross(planes[0], planes[1]));
-                vel = Vector3.Dot(cross, vel) * cross;
-                remainingDelta = Vector3.Dot(cross, remainingDelta) * cross;
+                ClipToCrease(ref remainingDelta, ref velocity, planes[0], planes[1]);
             }
             else
             {
-                ClipVelocity(ref remainingDelta, ref vel, result.HitNormal, OnGround);
+                ClipVelocity(ref remainingDelta, ref velocity, result.HitNormal, OnGround);
             }
 
-            Velocity = vel;
+            Velocity = velocity;
 
             CheckVelocity(ref position);
 
             remainingDistance = remainingDelta.Length();
             if (remainingDistance <= SurfaceEpsilon)
             {
-                // We're stuck
+                // Too little movement left to matter
                 break;
             }
         }
 
         return position;
+    }
+
+    /// <summary>
+    /// Constrains movement to the crease line between two planes (their cross product),
+    /// killing all velocity perpendicular to it. Used when the player is wedged into
+    /// a corner formed by two opposing planes.
+    /// </summary>
+    private static void ClipToCrease(ref Vector3 delta, ref Vector3 velocity, Vector3 plane1, Vector3 plane2)
+    {
+        var crease = Vector3.Normalize(Vector3.Cross(plane1, plane2));
+        velocity = Vector3.Dot(crease, velocity) * crease;
+        delta = Vector3.Dot(crease, delta) * crease;
     }
 
     /// <summary>
