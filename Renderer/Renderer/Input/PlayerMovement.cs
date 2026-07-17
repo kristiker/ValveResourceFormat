@@ -323,11 +323,6 @@ public class PlayerMovement
     /// </summary>
     private void CheckStuck(ref Vector3 position, Vector3 halfExtents)
     {
-        if (Physics == null)
-        {
-            return;
-        }
-
         if (!IsStuck(position, halfExtents))
         {
             LastValidPosition = position;
@@ -376,7 +371,7 @@ public class PlayerMovement
         if (crouchDelta != 0f)
         {
             // uncrouching
-            if (crouchDelta < 0f && Physics != null)
+            if (crouchDelta < 0f)
             {
                 // The hull expands away from the anchored end, so that is the direction that needs
                 // to be clear. This used to always check upward, so an airborne uncrouch grew the
@@ -423,11 +418,6 @@ public class PlayerMovement
     /// </summary>
     private void StayOnGround(ref Vector3 position, Vector3 halfExtents)
     {
-        if (Physics == null)
-        {
-            return;
-        }
-
         // Trace down to find ground (trace extra distance to catch steep slopes)
         var trace = TraceBBox(position, position + new Vector3(0, 0, -StepSize), halfExtents);
 
@@ -484,13 +474,6 @@ public class PlayerMovement
     /// </summary>
     private void CategorizePosition(ref Vector3 position, Vector3 halfExtents)
     {
-        if (Physics == null)
-        {
-            // Fallback: simple ground plane at Z=0
-            OnGround = position.Z <= 0.1f;
-            return;
-        }
-
         // Trace down from current position to check if we're on or very close to ground
         var result = TraceBBox(position, position + new Vector3(0, 0, -GroundProbeDistance), halfExtents);
 
@@ -509,11 +492,6 @@ public class PlayerMovement
     /// </summary>
     private bool TryUnstuck(ref Vector3 position, Vector3 halfExtents)
     {
-        if (Physics == null)
-        {
-            return false;
-        }
-
         if (!IsStuck(position, halfExtents))
         {
             return true; // Not stuck
@@ -569,7 +547,7 @@ public class PlayerMovement
     /// </summary>
     private Vector3 TryPlayerMove(Vector3 start, Vector3 delta, Vector3 halfExtents)
     {
-        if (Physics == null || delta.LengthSquared() < 1e-6f)
+        if (delta.LengthSquared() < 1e-6f)
         {
             return start + delta;
         }
@@ -708,11 +686,6 @@ public class PlayerMovement
     /// </summary>
     private Vector3 StepMove(Vector3 start, Vector3 delta, Vector3 halfExtents)
     {
-        if (Physics == null)
-        {
-            return TryPlayerMove(start, delta, halfExtents);
-        }
-
         var entryVelocity = Velocity;
 
         // Consult the step whenever the direct path is obstructed at all. Source checks the
@@ -1046,9 +1019,9 @@ public class PlayerMovement
 
     private Rubikon.TraceResult TraceBBox(Vector3 from, Vector3 to, Vector3 halfExtents, bool detectStartSolid = false)
     {
-        Debug.Assert(Physics != null, "Physics world must be initialized");
-
-        var result = Physics.TraceAABB(from, to, halfExtents, "player", detectStartSolid);
+        var result = Physics != null
+            ? Physics.TraceAABB(from, to, halfExtents, "player", detectStartSolid)
+            : TraceInfiniteGroundPlane(from, to, halfExtents, detectStartSolid);
 
         // Keep-away margin: back the hit off along the sweep so the perpendicular gap to the
         // surface is SurfaceEpsilon. Centralized here so every caller can use HitPosition
@@ -1067,5 +1040,40 @@ public class PlayerMovement
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Fallback collision when no physics world is loaded: an infinite ground plane at Z=0.
+    /// Mirrors <see cref="Rubikon.TraceAABB(Vector3, Vector3, Vector3, string, bool)"/> semantics
+    /// (zero-distance hits when starting in contact, start-solid on overlap) so the rest of the
+    /// movement code works unchanged against it.
+    /// </summary>
+    private static Rubikon.TraceResult TraceInfiniteGroundPlane(Vector3 from, Vector3 to, Vector3 halfExtents, bool detectStartSolid)
+    {
+        var bottomStart = from.Z - halfExtents.Z;
+
+        // Already overlapping the plane at the start: the trace cannot move, like a real
+        // start-solid hit it echoes the start position back at zero distance
+        if (bottomStart < 0f)
+        {
+            return new Rubikon.TraceResult(true, from, Vector3.UnitZ, 0f, -1) { StartSolid = detectStartSolid };
+        }
+
+        var descent = from.Z - to.Z; // positive when the sweep moves down
+
+        if (descent <= 0f)
+        {
+            return new Rubikon.TraceResult(); // moving up or level while above the plane - no hit
+        }
+
+        var fraction = bottomStart / descent;
+
+        if (fraction > 1f)
+        {
+            return new Rubikon.TraceResult(); // the sweep ends before reaching the plane
+        }
+
+        var hitPosition = Vector3.Lerp(from, to, fraction);
+        return new Rubikon.TraceResult(true, hitPosition, Vector3.UnitZ, Vector3.Distance(from, hitPosition), -1);
     }
 }
