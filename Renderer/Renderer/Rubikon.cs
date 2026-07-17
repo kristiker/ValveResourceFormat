@@ -296,7 +296,9 @@ public class Rubikon
                     continue;
                 }
 
-                if (mesh.InteractAs.Length > 0 && !mesh.InteractAs.Contains("playerclip"))
+                if (mesh.InteractAs.Length > 0
+                    && !mesh.InteractAs.Contains("playerclip")
+                    && !mesh.InteractAs.Contains("passbullets"))
                 {
                     continue;
                 }
