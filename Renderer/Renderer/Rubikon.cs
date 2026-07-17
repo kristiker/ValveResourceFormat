@@ -10,12 +10,17 @@ using static ValveResourceFormat.ResourceTypes.RubikonPhysics.Shapes.Mesh;
 namespace ValveResourceFormat.Renderer;
 
 /// <summary>
-/// Ray tracing against Rubikon physics collision shapes including meshes and hulls.
+/// Ray tracing against Rubikon physics collision shapes including meshes, hulls, spheres and capsules.
 /// </summary>
 public class Rubikon
 {
     private const int STACK_SIZE = 64;
     private const float Epsilon = 1e-6f;
+
+    // Swept box vs sphere/capsule traces advance conservatively until the shapes
+    // are within this contact distance (well below the movement code's 1/32 margin)
+    private const float ContactDistanceEpsilon = 0.001f;
+    private const int MaxConservativeAdvanceIterations = 64;
 
     /// <summary>
     /// Triangle mesh collision data for ray tracing.
@@ -42,11 +47,38 @@ public class Rubikon
         Hull.Plane[] Planes
     );
 
+    /// <summary>
+    /// Sphere collision data.
+    /// </summary>
+    public record PhysicsSphereData(
+        string[] InteractAs,
+        string[] InteractExclude,
+        Vector3 Center,
+        float Radius
+    );
+
+    /// <summary>
+    /// Capsule collision data: a segment between two center points with a radius.
+    /// </summary>
+    public record PhysicsCapsuleData(
+        string[] InteractAs,
+        string[] InteractExclude,
+        Vector3 Center0,
+        Vector3 Center1,
+        float Radius
+    );
+
     /// <summary>Gets the triangle mesh collision shapes available for tracing.</summary>
     public PhysicsMeshData[] Meshes { get; }
 
     /// <summary>Gets the convex hull collision shapes available for tracing.</summary>
     public PhysicsHullData[] Hulls { get; }
+
+    /// <summary>Gets the sphere collision shapes available for tracing.</summary>
+    public PhysicsSphereData[] Spheres { get; }
+
+    /// <summary>Gets the capsule collision shapes available for tracing.</summary>
+    public PhysicsCapsuleData[] Capsules { get; }
 
     /// <summary>Gets the BVH acceleration structure built over <see cref="Hulls"/>.</summary>
     public Node[] HullTree { get; }
@@ -61,6 +93,8 @@ public class Rubikon
         {
             Meshes = [];
             Hulls = [];
+            Spheres = [];
+            Capsules = [];
             HullIndices = [];
             HullTree = [];
             return;
@@ -107,6 +141,33 @@ public class Rubikon
                 [.. planes]
             );
         }
+
+        var sphereDescriptors = physicsData.Parts[0].Shape.Spheres;
+        Spheres = new PhysicsSphereData[sphereDescriptors.Length];
+        var sphereIndex = 0;
+        foreach (var sphereDesc in sphereDescriptors)
+        {
+            var (interactAs, interactExclude) = GetInteractStrings(physicsData.CollisionAttributes[sphereDesc.CollisionAttributeIndex]);
+
+            Spheres[sphereIndex++] = new PhysicsSphereData(interactAs, interactExclude, sphereDesc.Shape.Center, sphereDesc.Shape.Radius);
+        }
+
+        var capsuleDescriptors = physicsData.Parts[0].Shape.Capsules;
+        var capsules = new List<PhysicsCapsuleData>(capsuleDescriptors.Length);
+        foreach (var capsuleDesc in capsuleDescriptors)
+        {
+            var centers = capsuleDesc.Shape.Center;
+            if (centers.Length < 2)
+            {
+                continue;
+            }
+
+            var (interactAs, interactExclude) = GetInteractStrings(physicsData.CollisionAttributes[capsuleDesc.CollisionAttributeIndex]);
+
+            capsules.Add(new PhysicsCapsuleData(interactAs, interactExclude, centers[0], centers[1], capsuleDesc.Shape.Radius));
+        }
+
+        Capsules = [.. capsules];
 
         // Build BVH for hulls
         HullIndices = [.. Enumerable.Range(0, Hulls.Length)];
@@ -246,6 +307,26 @@ public class Rubikon
             RayIntersectsWithHull(ray, hull, ref closestHit);
         }
 
+        foreach (var sphere in Spheres)
+        {
+            if (ContainsString(sphere.InteractAs, "playerclip"))
+            {
+                continue;
+            }
+
+            RayIntersectsSphere(ray, sphere, ref closestHit);
+        }
+
+        foreach (var capsule in Capsules)
+        {
+            if (ContainsString(capsule.InteractAs, "playerclip"))
+            {
+                continue;
+            }
+
+            RayIntersectsCapsule(ray, capsule, ref closestHit);
+        }
+
         return closestHit;
     }
 
@@ -330,6 +411,34 @@ public class Rubikon
         if (HullTree.Length > 0)
         {
             AABBTraceHullBVH(trace, collisionName, ref closestHit);
+        }
+
+        foreach (var sphere in Spheres)
+        {
+            if (SkipsCollision(collisionName, sphere.InteractAs, sphere.InteractExclude))
+            {
+                continue;
+            }
+
+            AABBTraceSphere(trace, sphere, ref closestHit);
+            if (closestHit.StopsScanning(trace.DetectStartSolid))
+            {
+                return closestHit;
+            }
+        }
+
+        foreach (var capsule in Capsules)
+        {
+            if (SkipsCollision(collisionName, capsule.InteractAs, capsule.InteractExclude))
+            {
+                continue;
+            }
+
+            AABBTraceCapsule(trace, capsule, ref closestHit);
+            if (closestHit.StopsScanning(trace.DetectStartSolid))
+            {
+                return closestHit;
+            }
         }
 
         return closestHit;
@@ -563,6 +672,257 @@ public class Rubikon
                     closestHit = new(true, ray.Origin + ray.Direction * intersection.Distance, intersection.Normal, intersection.Distance, i);
                 }
             }
+        }
+    }
+
+    private static void RayIntersectsSphere(RayTraceContext ray, PhysicsSphereData sphere, ref TraceResult closestHit)
+    {
+        var m = ray.Origin - sphere.Center;
+        var b = Vector3.Dot(m, ray.Direction);
+        var c = m.LengthSquared() - sphere.Radius * sphere.Radius;
+
+        // Starts outside and points away
+        if (c > 0f && b > 0f)
+        {
+            return;
+        }
+
+        var discriminant = b * b - c;
+        if (discriminant < 0f)
+        {
+            return;
+        }
+
+        var distance = -b - MathF.Sqrt(discriminant);
+
+        // Starts inside (negative near root) counts as a miss, like the hull ray trace
+        if (distance < 0f || distance > ray.Length || distance >= closestHit.Distance)
+        {
+            return;
+        }
+
+        var hitPoint = ray.Origin + ray.Direction * distance;
+        var normal = (hitPoint - sphere.Center) / MathF.Max(sphere.Radius, Epsilon);
+        closestHit = new TraceResult(true, hitPoint, normal, distance, -1);
+    }
+
+    private static void RayIntersectsCapsule(RayTraceContext ray, PhysicsCapsuleData capsule, ref TraceResult closestHit)
+    {
+        var axis = capsule.Center1 - capsule.Center0;
+        var oa = ray.Origin - capsule.Center0;
+
+        var axisLengthSquared = Vector3.Dot(axis, axis);
+        var axisDotDirection = Vector3.Dot(axis, ray.Direction);
+        var axisDotOa = Vector3.Dot(axis, oa);
+
+        var distance = float.MaxValue;
+
+        // Cylindrical body: quadratic for the infinite cylinder, accepted only between the caps
+        var a = axisLengthSquared - axisDotDirection * axisDotDirection;
+        if (a > Epsilon)
+        {
+            var b = axisLengthSquared * Vector3.Dot(ray.Direction, oa) - axisDotOa * axisDotDirection;
+            var c = axisLengthSquared * (oa.LengthSquared() - capsule.Radius * capsule.Radius) - axisDotOa * axisDotOa;
+
+            var discriminant = b * b - a * c;
+            if (discriminant >= 0f)
+            {
+                var bodyDistance = (-b - MathF.Sqrt(discriminant)) / a;
+                var alongAxis = axisDotOa + bodyDistance * axisDotDirection;
+
+                if (bodyDistance >= 0f && alongAxis > 0f && alongAxis < axisLengthSquared)
+                {
+                    distance = bodyDistance;
+                }
+            }
+        }
+
+        // Spherical caps at both ends
+        Span<Vector3> caps = [capsule.Center0, capsule.Center1];
+        foreach (var capCenter in caps)
+        {
+            var m = ray.Origin - capCenter;
+            var capB = Vector3.Dot(m, ray.Direction);
+            var capC = m.LengthSquared() - capsule.Radius * capsule.Radius;
+
+            var capDiscriminant = capB * capB - capC;
+            if (capDiscriminant < 0f)
+            {
+                continue;
+            }
+
+            var capDistance = -capB - MathF.Sqrt(capDiscriminant);
+            if (capDistance >= 0f && capDistance < distance)
+            {
+                distance = capDistance;
+            }
+        }
+
+        if (distance > ray.Length || distance >= closestHit.Distance)
+        {
+            return;
+        }
+
+        var hitPoint = ray.Origin + ray.Direction * distance;
+
+        var along = Math.Clamp(Vector3.Dot(hitPoint - capsule.Center0, axis) / MathF.Max(axisLengthSquared, Epsilon), 0f, 1f);
+        var axisPoint = capsule.Center0 + axis * along;
+        var normal = (hitPoint - axisPoint) / MathF.Max(capsule.Radius, Epsilon);
+
+        closestHit = new TraceResult(true, hitPoint, normal, distance, -1);
+    }
+
+    /// <summary>
+    /// Signed distance from a point to an axis-aligned box (negative inside).
+    /// </summary>
+    private static float DistancePointToBox(Vector3 point, Vector3 boxCenter, Vector3 halfExtents)
+    {
+        var d = Vector3.Abs(point - boxCenter) - halfExtents;
+        var outside = Vector3.Max(d, Vector3.Zero).Length();
+        var inside = MathF.Min(MathF.Max(d.X, MathF.Max(d.Y, d.Z)), 0f);
+        return outside + inside;
+    }
+
+    /// <summary>
+    /// Distance from a segment to an axis-aligned box. The point-to-box distance is convex
+    /// along the segment, so a ternary search converges on the closest segment point.
+    /// </summary>
+    private static float DistanceSegmentToBox(Vector3 a, Vector3 b, Vector3 boxCenter, Vector3 halfExtents, out Vector3 closestOnSegment)
+    {
+        float lo = 0f, hi = 1f;
+
+        for (var i = 0; i < 24; i++)
+        {
+            var third = (hi - lo) / 3f;
+            var s1 = lo + third;
+            var s2 = hi - third;
+
+            var d1 = DistancePointToBox(Vector3.Lerp(a, b, s1), boxCenter, halfExtents);
+            var d2 = DistancePointToBox(Vector3.Lerp(a, b, s2), boxCenter, halfExtents);
+
+            if (d1 < d2)
+            {
+                hi = s2;
+            }
+            else
+            {
+                lo = s1;
+            }
+        }
+
+        closestOnSegment = Vector3.Lerp(a, b, (lo + hi) * 0.5f);
+        return DistancePointToBox(closestOnSegment, boxCenter, halfExtents);
+    }
+
+    private static void AABBTraceSphere(AABBTraceContext trace, PhysicsSphereData sphere, ref TraceResult closestHit)
+    {
+        var radius = new Vector3(sphere.Radius);
+        if (!RayIntersectsAABB(trace.Ray, sphere.Center - radius - trace.HalfExtents, sphere.Center + radius + trace.HalfExtents, out var entryDistance)
+            || entryDistance > closestHit.Distance)
+        {
+            return;
+        }
+
+        // Conservative advancement: the separation can shrink by at most the distance moved,
+        // so stepping by the current separation never tunnels through the shape
+        var alongSweep = MathF.Max(entryDistance, 0f);
+
+        for (var i = 0; i < MaxConservativeAdvanceIterations; i++)
+        {
+            var boxCenter = trace.Origin + trace.Direction * alongSweep;
+            var separation = DistancePointToBox(sphere.Center, boxCenter, trace.HalfExtents) - sphere.Radius;
+
+            if (separation > ContactDistanceEpsilon)
+            {
+                alongSweep += separation;
+                if (alongSweep > trace.Length)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            if (alongSweep >= closestHit.Distance)
+            {
+                return;
+            }
+
+            var closestOnBox = Vector3.Clamp(sphere.Center, boxCenter - trace.HalfExtents, boxCenter + trace.HalfExtents);
+            var normal = closestOnBox - sphere.Center;
+            var normalLength = normal.Length();
+            normal = normalLength > Epsilon ? normal / normalLength : -trace.Direction;
+
+            // Already overlapping at the start position
+            if (alongSweep == 0f && separation < 0f)
+            {
+                if (Vector3.Dot(normal, trace.Direction) > 0)
+                {
+                    normal = -normal;
+                }
+
+                closestHit = new TraceResult(true, trace.Origin, normal, 0f, -1) { StartSolid = trace.DetectStartSolid };
+                return;
+            }
+
+            closestHit = new TraceResult(true, boxCenter, normal, alongSweep, -1);
+            return;
+        }
+    }
+
+    private static void AABBTraceCapsule(AABBTraceContext trace, PhysicsCapsuleData capsule, ref TraceResult closestHit)
+    {
+        var radius = new Vector3(capsule.Radius);
+        var boundsMin = Vector3.Min(capsule.Center0, capsule.Center1) - radius - trace.HalfExtents;
+        var boundsMax = Vector3.Max(capsule.Center0, capsule.Center1) + radius + trace.HalfExtents;
+
+        if (!RayIntersectsAABB(trace.Ray, boundsMin, boundsMax, out var entryDistance) || entryDistance > closestHit.Distance)
+        {
+            return;
+        }
+
+        var alongSweep = MathF.Max(entryDistance, 0f);
+
+        for (var i = 0; i < MaxConservativeAdvanceIterations; i++)
+        {
+            var boxCenter = trace.Origin + trace.Direction * alongSweep;
+            var separation = DistanceSegmentToBox(capsule.Center0, capsule.Center1, boxCenter, trace.HalfExtents, out var axisPoint) - capsule.Radius;
+
+            if (separation > ContactDistanceEpsilon)
+            {
+                alongSweep += separation;
+                if (alongSweep > trace.Length)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            if (alongSweep >= closestHit.Distance)
+            {
+                return;
+            }
+
+            var closestOnBox = Vector3.Clamp(axisPoint, boxCenter - trace.HalfExtents, boxCenter + trace.HalfExtents);
+            var normal = closestOnBox - axisPoint;
+            var normalLength = normal.Length();
+            normal = normalLength > Epsilon ? normal / normalLength : -trace.Direction;
+
+            // Already overlapping at the start position
+            if (alongSweep == 0f && separation < 0f)
+            {
+                if (Vector3.Dot(normal, trace.Direction) > 0)
+                {
+                    normal = -normal;
+                }
+
+                closestHit = new TraceResult(true, trace.Origin, normal, 0f, -1) { StartSolid = trace.DetectStartSolid };
+                return;
+            }
+
+            closestHit = new TraceResult(true, boxCenter, normal, alongSweep, -1);
+            return;
         }
     }
 
