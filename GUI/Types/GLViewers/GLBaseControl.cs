@@ -729,6 +729,16 @@ internal abstract class GLBaseControl : IDisposable
         var message = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(pMessage, length);
         var error = $"[{severityStr} {sourceStr} {typeStr}] {message}";
 
+#if DEBUG
+        // Identify the draw that triggered driver performance warnings (e.g. fragment shader
+        // recompiles due to state change). Debug output is synchronous, so the current program
+        // and framebuffer are the ones of the offending draw.
+        if (type == DebugType.DebugTypePerformance)
+        {
+            error += $" ({DescribeObject(ObjectLabelIdentifier.Program, GL.GetInteger(GetPName.CurrentProgram))}, {DescribeObject(ObjectLabelIdentifier.Framebuffer, GL.GetInteger(GetPName.DrawFramebufferBinding))})";
+        }
+#endif
+
         switch (type)
         {
             case DebugType.DebugTypeError: Log.Error("OpenGL", error); break;
@@ -742,6 +752,21 @@ internal abstract class GLBaseControl : IDisposable
         }
 #endif
     }
+
+#if DEBUG
+    private static string DescribeObject(ObjectLabelIdentifier identifier, int name)
+    {
+        var kind = identifier == ObjectLabelIdentifier.Program ? "program" : "framebuffer";
+
+        if (name == 0)
+        {
+            return $"{kind} 0";
+        }
+
+        GL.GetObjectLabel(identifier, name, 256, out _, out string label);
+        return string.IsNullOrEmpty(label) ? $"{kind} {name}" : $"{kind} {name} '{label}'";
+    }
+#endif
 
     protected static readonly DebugProc OpenGLDebugMessageDelegate = OnDebugMessage;
 
