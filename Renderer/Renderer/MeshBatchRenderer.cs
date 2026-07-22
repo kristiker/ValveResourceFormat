@@ -252,15 +252,11 @@ namespace ValveResourceFormat.Renderer
                     material.Render(shader);
                 }
 
-                if (request.Call.VertexArrayObject == -1)
-                {
-                    request.Call.Material.Shader.EnsureLoaded();
-                    request.Call.UpdateVertexArrayObject();
-                }
+                var requestVao = request.Call.GetVertexArrayObject(shader!);
 
-                if (vao != request.Call.VertexArrayObject)
+                if (vao != requestVao)
                 {
-                    vao = request.Call.VertexArrayObject;
+                    vao = requestVao;
                     GL.BindVertexArray(vao);
                 }
 
