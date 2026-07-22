@@ -341,18 +341,59 @@ namespace GUI.Types.GLViewers
 
             PostSceneLoad();
 
-            if (GLNativeWindow != null)
-            {
-                // try to compile shaders?
-                Renderer.Camera.SetLocationPitchYaw(Vector3.UnitZ * 20_000f, -90, 0f);
-                Renderer.Camera.SetViewportSize(64, 64);
-                OnPaint(0f);
-                GLNativeWindow.Context.SwapBuffers();
-            }
-
             GuiContext.ClearCache();
             GuiContext.GLPostLoadAction?.Invoke(this);
             GuiContext.GLPostLoadAction = null;
+        }
+
+        /// <summary>
+        /// Draws the scene and shadows with culling disabled so the driver specializes every
+        /// (program, vertex layout, framebuffer) combination once.
+        /// </summary>
+        private void PrewarmDrawCalls()
+        {
+            Debug.Assert(MainFramebuffer != null);
+
+            Scene.SetupSceneShadows(Renderer.Camera, -1);
+            Renderer.RenderSceneShadows(new Scene.RenderContext
+            {
+                Camera = Renderer.Camera,
+                Framebuffer = MainFramebuffer,
+                Textures = Renderer.Textures,
+                Scene = Scene,
+            });
+
+            MainFramebuffer.Bind(FramebufferTarget.Framebuffer);
+            GL.Viewport(0, 0, MainFramebuffer.Width, MainFramebuffer.Height);
+            Scene.CollectSceneDrawCalls(Renderer.Camera, Frustum.CreateEmpty());
+            Renderer.DrawMainScene();
+
+            if (SkyboxScene != null)
+            {
+                SkyboxScene.CollectSceneDrawCalls(Renderer.Camera, Frustum.CreateEmpty());
+                SkyboxScene.SetSceneBuffers();
+
+                var skyboxContext = new Scene.RenderContext
+                {
+                    Camera = Renderer.Camera,
+                    Framebuffer = MainFramebuffer,
+                    Textures = Renderer.Textures,
+                    Scene = SkyboxScene,
+                };
+
+                SkyboxScene.RenderOpaqueLayer(skyboxContext);
+                SkyboxScene.RenderTranslucentLayer(skyboxContext);
+
+                Scene.SetSceneBuffers();
+            }
+
+            Renderer.Skybox2D?.Render();
+        }
+
+        protected override void OnFirstPaint()
+        {
+            base.OnFirstPaint();
+            PrewarmDrawCalls();
         }
 
         protected override void OnUpdate(float frameTime)
