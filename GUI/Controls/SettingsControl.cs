@@ -28,6 +28,7 @@ namespace GUI.Controls
 
             maxTextureSizeInput.Value = Settings.Config.MaxTextureSize;
             fovInput.Value = Settings.Config.FieldOfView;
+            viewmodelFovInput.Value = Settings.Config.ViewmodelFieldOfView;
             mouseSensitivitySlider.Value = (int)(Settings.Config.MouseSensitivity * 10f);
             mouseSensitivityValueLabel.Text = Settings.Config.MouseSensitivity.ToString("0.0");
             smoothCamCheckbox.Checked = Settings.Config.SmoothCameraEnabled;
@@ -173,6 +174,16 @@ namespace GUI.Controls
         {
             Settings.Config.FieldOfView = float.RadiansToDegrees(2f * MathF.Atan(3f / 4f));
             fovInput.Value = Settings.Config.FieldOfView;
+        }
+
+        private void OnViewmodelFovValueChanged(object sender, EventArgs e)
+        {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
+            Settings.Config.ViewmodelFieldOfView = (float)viewmodelFovInput.Value;
         }
 
         private void OnMouseSensitivitySliderValueChanged(object sender, EventArgs e)

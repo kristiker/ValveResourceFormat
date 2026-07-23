@@ -44,6 +44,11 @@ public class RendererContext : IDisposable
     public float FieldOfView { get; set; } = 60.0f;
 
     /// <summary>
+    /// First-person viewmodel field of view, in horizontal degrees at a 4:3 aspect ratio.
+    /// </summary>
+    public float ViewmodelFieldOfView { get; set; } = 68.0f;
+
+    /// <summary>
     /// Initializes a new renderer context.
     /// </summary>
     /// <param name="fileLoader">Game file loader for resource access.</param>

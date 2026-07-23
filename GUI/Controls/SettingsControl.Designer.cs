@@ -43,6 +43,8 @@ namespace GUI.Controls
             maxTextureSizeInput = new ThemedIntNumeric() { MaxValue = 10240, MinValue = 16 };
             fovInput = new ThemedFloatNumeric() { MaxValue = 170, MinValue = 1 };
             fovLabel = new System.Windows.Forms.Label();
+            viewmodelFovInput = new ThemedFloatNumeric() { MaxValue = 70, MinValue = 50 };
+            viewmodelFovLabel = new System.Windows.Forms.Label();
             mouseSensitivityLabel = new System.Windows.Forms.Label();
             mouseSensitivitySlider = new System.Windows.Forms.TrackBar();
             mouseSensitivityValueLabel = new System.Windows.Forms.Label();
@@ -214,7 +216,28 @@ namespace GUI.Controls
             fovLabel.Size = new System.Drawing.Size(87, 19);
             fovLabel.TabIndex = 4;
             fovLabel.Text = "Vertical FOV:";
-            // 
+            //
+            // viewmodelFovInput
+            //
+            viewmodelFovInput.Anchor = System.Windows.Forms.AnchorStyles.Left;
+            viewmodelFovInput.DecimalMax = 6;
+            viewmodelFovInput.Location = new System.Drawing.Point(170, 388);
+            viewmodelFovInput.Name = "viewmodelFovInput";
+            viewmodelFovInput.Size = new System.Drawing.Size(100, 25);
+            viewmodelFovInput.TabIndex = 14;
+            viewmodelFovInput.Value = 68;
+            viewmodelFovInput.ValueChanged += OnViewmodelFovValueChanged;
+            //
+            // viewmodelFovLabel
+            //
+            viewmodelFovLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
+            viewmodelFovLabel.AutoSize = true;
+            viewmodelFovLabel.Location = new System.Drawing.Point(15, 390);
+            viewmodelFovLabel.Name = "viewmodelFovLabel";
+            viewmodelFovLabel.Size = new System.Drawing.Size(160, 19);
+            viewmodelFovLabel.TabIndex = 15;
+            viewmodelFovLabel.Text = "Viewmodel FOV:";
+            //
             // antiAliasingLabel
             // 
             antiAliasingLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
@@ -296,6 +319,8 @@ namespace GUI.Controls
             groupBox2.BorderWidth = 2;
             groupBox2.Controls.Add(displayFpsCheckBox);
             groupBox2.Controls.Add(smoothCamCheckbox);
+            groupBox2.Controls.Add(viewmodelFovInput);
+            groupBox2.Controls.Add(viewmodelFovLabel);
             groupBox2.Controls.Add(setFovTo4by3Button);
             groupBox2.Controls.Add(vsyncCheckBox);
             groupBox2.Controls.Add(fovInput);
@@ -315,7 +340,7 @@ namespace GUI.Controls
             groupBox2.Location = new System.Drawing.Point(16, 261);
             groupBox2.Name = "groupBox2";
             groupBox2.Padding = new System.Windows.Forms.Padding(16, 18, 16, 18);
-            groupBox2.Size = new System.Drawing.Size(501, 336);
+            groupBox2.Size = new System.Drawing.Size(501, 436);
             groupBox2.TabIndex = 2;
             groupBox2.TabStop = false;
             groupBox2.Text = "Video settings";
@@ -552,6 +577,8 @@ namespace GUI.Controls
         private ThemedIntNumeric maxTextureSizeInput;
         private ThemedFloatNumeric fovInput;
         private System.Windows.Forms.Label fovLabel;
+        private ThemedFloatNumeric viewmodelFovInput;
+        private System.Windows.Forms.Label viewmodelFovLabel;
         private System.Windows.Forms.Label antiAliasingLabel;
         private System.Windows.Forms.CheckBox vsyncCheckBox;
         private System.Windows.Forms.CheckBox displayFpsCheckBox;

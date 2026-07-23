@@ -618,15 +618,15 @@ public class Renderer
     }
 
     /// <summary>
-    /// Computes the first-person viewmodel camera's vertical FOV from a fixed 68-degree horizontal-at-4:3
-    /// base (matching the classic Source engine "viewmodel_fov" default), scaled as the main camera's FOV
-    /// setting moves away from the 90-degree horizontal-at-4:3 reference (the same conversion used for
-    /// mouse sensitivity scaling in <see cref="Input.UserInput.Tick"/>).
+    /// Computes the first-person viewmodel camera's vertical FOV from <see cref="RendererContext.ViewmodelFieldOfView"/>
+    /// (a horizontal-at-4:3 base, matching the classic Source engine "viewmodel_fov" convention), scaled as the
+    /// main camera's FOV setting moves away from the 90-degree horizontal-at-4:3 reference (the same conversion
+    /// used for mouse sensitivity scaling in <see cref="Input.UserInput.Tick"/>).
     /// </summary>
     private float ComputeViewmodelFov()
     {
         var baselineVertical = 2f * MathF.Atan(3f / 4f);
-        var viewmodelBaseVertical = 2f * MathF.Atan(MathF.Tan(float.DegreesToRadians(68f) * 0.5f) / (4f / 3f));
+        var viewmodelBaseVertical = 2f * MathF.Atan(MathF.Tan(float.DegreesToRadians(RendererContext.ViewmodelFieldOfView) * 0.5f) / (4f / 3f));
         var fovRatio = float.DegreesToRadians(RendererContext.FieldOfView) / baselineVertical;
 
         return viewmodelBaseVertical * fovRatio;

@@ -10,7 +10,7 @@ namespace GUI.Utils
     /// </summary>
     static class Settings
     {
-        private const int SettingsFileCurrentVersion = 15;
+        private const int SettingsFileCurrentVersion = 16;
         private const int RecentFilesLimit = 20;
 
         /// <summary>
@@ -65,6 +65,8 @@ namespace GUI.Utils
             public int ShadowResolution { get; set; }
             /// <summary>Gets or sets the camera field of view in degrees.</summary>
             public float FieldOfView { get; set; }
+            /// <summary>Gets or sets the first-person viewmodel field of view, in horizontal degrees at a 4:3 aspect ratio.</summary>
+            public float ViewmodelFieldOfView { get; set; }
             /// <summary>Gets or sets the mouse look sensitivity.</summary>
             public float MouseSensitivity { get; set; }
             /// <summary>Gets or sets whether the viewport camera should have acceleration/deceleration when starting or stopping to move</summary>
@@ -218,6 +220,8 @@ namespace GUI.Utils
                 Config.FieldOfView = 170;
             }
 
+            Config.ViewmodelFieldOfView = Math.Clamp(Config.ViewmodelFieldOfView, 40, 80);
+
             Config.AntiAliasingSamples = Math.Clamp(Config.AntiAliasingSamples, 0, 64);
             Config.Volume = MathUtils.Saturate(Config.Volume);
             Config.TextViewerFontSize = Math.Clamp(Config.TextViewerFontSize, 8, 24);
@@ -277,6 +281,11 @@ namespace GUI.Utils
             if (currentVersion < 15) // version 15: added smooth camera setting
             {
                 Config.SmoothCameraEnabled = true;
+            }
+
+            if (currentVersion < 16) // version 16: added viewmodel field of view
+            {
+                Config.ViewmodelFieldOfView = 68;
             }
 
             if (currentVersion > 0 && currentVersion != SettingsFileCurrentVersion)
