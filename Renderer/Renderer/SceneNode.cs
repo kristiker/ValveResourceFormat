@@ -85,6 +85,12 @@ namespace ValveResourceFormat.Renderer
         /// </summary>
         public ObjectTypeFlags Flags { get; set; }
 
+        /// <summary>
+        /// Gets or sets whether this node's draw calls render in the dedicated first-person viewmodel
+        /// pass (own camera, own reserved near depth range) instead of the normal opaque/translucent passes.
+        /// </summary>
+        public bool RenderAsViewmodel { get; set; }
+
 #if DEBUG
         /// <summary>
         /// Gets a human-readable debug name including type, name, id, and position.

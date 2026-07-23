@@ -34,6 +34,12 @@ public class Renderer
     public Camera Camera { get; set; }
 
     /// <summary>
+    /// Secondary camera used to render the first-person viewmodel layer with its own FOV.
+    /// Synced to <see cref="Camera"/>'s position/orientation each frame; see <see cref="RenderScenesWithView"/>.
+    /// </summary>
+    public Camera ViewmodelCamera { get; }
+
+    /// <summary>
     /// Per-frame rendering statistics, including CPU/GPU profiling timings
     /// </summary>
     public PerfStats PerfStats { get; } = new();
@@ -147,6 +153,7 @@ public class Renderer
         RendererContext = rendererContext;
         Postprocess = new(rendererContext);
         Camera = new Camera(rendererContext);
+        ViewmodelCamera = new Camera(rendererContext);
         Scene = new Scene(rendererContext);
     }
 
@@ -473,7 +480,30 @@ public class Renderer
             GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
         }
 
-        GL.DepthRange(0.05, 1);
+        using (new GLDebugGroup("Viewmodel Pass"))
+        {
+            var mainCamera = renderContext.Camera;
+
+            ViewmodelCamera.CopyFrom(mainCamera);
+            ViewmodelCamera.FovOverride = ComputeViewmodelFov();
+            ViewmodelCamera.CreateProjectionMatrix();
+            ViewmodelCamera.RecalculateMatrices();
+
+            GL.DepthRange(0.95, 1.0);
+
+            ViewmodelCamera.SetViewConstants(ViewBuffer.Data);
+            Scene.SetFogConstants(ViewBuffer.Data);
+            ViewBuffer.BindBufferBase();
+            ViewBuffer.Update();
+            Scene.SetSceneBuffers();
+
+            renderContext.Camera = ViewmodelCamera;
+            renderContext.Scene = Scene;
+            Scene.RenderViewmodelLayer(renderContext);
+            renderContext.Camera = mainCamera;
+        }
+
+        GL.DepthRange(0.05, 0.95);
 
         UpdatePerViewGpuBuffers(Scene, renderContext.Camera, DeltaTime);
         Scene.SetSceneBuffers();
@@ -556,7 +586,7 @@ public class Renderer
             }
 
             renderContext.ReplacementShader?.SetUniform1("isSkybox", 0u);
-            GL.DepthRange(0.05, 1);
+            GL.DepthRange(0.05, 0.95);
         }
 
         using (new GLDebugGroup("Main Scene Translucent Render"))
@@ -585,6 +615,21 @@ public class Renderer
         {
             PerfStats.Active.ResumeTriangleCounter();
         }
+    }
+
+    /// <summary>
+    /// Computes the first-person viewmodel camera's vertical FOV from a fixed 68-degree horizontal-at-4:3
+    /// base (matching the classic Source engine "viewmodel_fov" default), scaled as the main camera's FOV
+    /// setting moves away from the 90-degree horizontal-at-4:3 reference (the same conversion used for
+    /// mouse sensitivity scaling in <see cref="Input.UserInput.Tick"/>).
+    /// </summary>
+    private float ComputeViewmodelFov()
+    {
+        var baselineVertical = 2f * MathF.Atan(3f / 4f);
+        var viewmodelBaseVertical = 2f * MathF.Atan(MathF.Tan(float.DegreesToRadians(68f) * 0.5f) / (4f / 3f));
+        var fovRatio = float.DegreesToRadians(RendererContext.FieldOfView) / baselineVertical;
+
+        return viewmodelBaseVertical * fovRatio;
     }
 
     /// <summary>

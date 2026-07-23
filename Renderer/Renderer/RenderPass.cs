@@ -19,6 +19,10 @@ namespace ValveResourceFormat.Renderer
         Water,
         /// <summary>Translucent (alpha-blended) pass.</summary>
         Translucent,
+        /// <summary>Opaque pass for first-person viewmodel geometry, rendered before the main scene with its own depth range.</summary>
+        Viewmodel,
+        /// <summary>Translucent pass for first-person viewmodel geometry.</summary>
+        ViewmodelTranslucent,
         /// <summary>Selection outline pass.</summary>
         Outline,
     }

@@ -43,6 +43,12 @@ namespace ValveResourceFormat.Renderer
         private RendererContext RendererContext;
 
         /// <summary>
+        /// When set, overrides the field of view read from <see cref="RendererContext"/> for this camera only.
+        /// Used by secondary cameras (e.g. the first-person viewmodel camera) that need an independent FOV.
+        /// </summary>
+        public float? FovOverride { get; set; }
+
+        /// <summary>
         /// Perspective projection matrix (reverse-Z, infinite far plane).
         /// </summary>
         public Matrix4x4 ProjectionMatrix { get; private set; }
@@ -150,8 +156,10 @@ namespace ValveResourceFormat.Renderer
             viewConstants.CameraUpDirWs = Up;
 
             // todo: these change per scene, move to the other buffer
+            // Main scene occupies [0.05, 0.95] of the depth range; sky reserves [0, 0.05) and the
+            // first-person viewmodel reserves (0.95, 1] -- see Renderer.RenderScenesWithView.
             viewConstants.ViewportMinZ = 0.05f;
-            viewConstants.ViewportMaxZ = 1.0f;
+            viewConstants.ViewportMaxZ = 0.95f;
         }
 
         /// <summary>
@@ -346,7 +354,7 @@ namespace ValveResourceFormat.Renderer
         /// <returns></returns>
         public float GetFOV()
         {
-            return float.DegreesToRadians(RendererContext.FieldOfView);
+            return FovOverride ?? float.DegreesToRadians(RendererContext.FieldOfView);
         }
     }
 }
