@@ -80,7 +80,7 @@ namespace GUI.Controls
             // 
             vsyncCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
             vsyncCheckBox.AutoSize = true;
-            vsyncCheckBox.Location = new System.Drawing.Point(15, 250);
+            vsyncCheckBox.Location = new System.Drawing.Point(15, 301);
             vsyncCheckBox.Name = "vsyncCheckBox";
             vsyncCheckBox.Size = new System.Drawing.Size(104, 23);
             vsyncCheckBox.TabIndex = 8;
@@ -145,7 +145,7 @@ namespace GUI.Controls
             // 
             maxTextureSizeLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
             maxTextureSizeLabel.AutoSize = true;
-            maxTextureSizeLabel.Location = new System.Drawing.Point(15, 134);
+            maxTextureSizeLabel.Location = new System.Drawing.Point(15, 185);
             maxTextureSizeLabel.Name = "maxTextureSizeLabel";
             maxTextureSizeLabel.Size = new System.Drawing.Size(111, 19);
             maxTextureSizeLabel.TabIndex = 0;
@@ -155,7 +155,7 @@ namespace GUI.Controls
             // 
             maxTextureSizeInput.Anchor = System.Windows.Forms.AnchorStyles.Left;
             maxTextureSizeInput.Increment = 64;
-            maxTextureSizeInput.Location = new System.Drawing.Point(170, 132);
+            maxTextureSizeInput.Location = new System.Drawing.Point(170, 183);
             maxTextureSizeInput.Name = "maxTextureSizeInput";
             maxTextureSizeInput.Size = new System.Drawing.Size(100, 25);
             maxTextureSizeInput.TabIndex = 5;
@@ -177,7 +177,7 @@ namespace GUI.Controls
             // 
             mouseSensitivityLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
             mouseSensitivityLabel.AutoSize = true;
-            mouseSensitivityLabel.Location = new System.Drawing.Point(15, 173);
+            mouseSensitivityLabel.Location = new System.Drawing.Point(15, 224);
             mouseSensitivityLabel.Name = "mouseSensitivityLabel";
             mouseSensitivityLabel.Size = new System.Drawing.Size(108, 19);
             mouseSensitivityLabel.TabIndex = 5;
@@ -186,7 +186,7 @@ namespace GUI.Controls
             // mouseSensitivitySlider
             // 
             mouseSensitivitySlider.Anchor = System.Windows.Forms.AnchorStyles.Left;
-            mouseSensitivitySlider.Location = new System.Drawing.Point(170, 170);
+            mouseSensitivitySlider.Location = new System.Drawing.Point(170, 221);
             mouseSensitivitySlider.Maximum = 80;
             mouseSensitivitySlider.Minimum = 0;
             mouseSensitivitySlider.SmallChange = 1;
@@ -201,7 +201,7 @@ namespace GUI.Controls
             // 
             mouseSensitivityValueLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
             mouseSensitivityValueLabel.AutoSize = true;
-            mouseSensitivityValueLabel.Location = new System.Drawing.Point(340, 176);
+            mouseSensitivityValueLabel.Location = new System.Drawing.Point(340, 227);
             mouseSensitivityValueLabel.Name = "mouseSensitivityValueLabel";
             mouseSensitivityValueLabel.Size = new System.Drawing.Size(24, 19);
             mouseSensitivityValueLabel.TabIndex = 8;
@@ -215,13 +215,13 @@ namespace GUI.Controls
             fovLabel.Name = "fovLabel";
             fovLabel.Size = new System.Drawing.Size(87, 19);
             fovLabel.TabIndex = 4;
-            fovLabel.Text = "Vertical FOV:";
+            fovLabel.Text = "Camera FOV:";
             //
             // viewmodelFovInput
             //
             viewmodelFovInput.Anchor = System.Windows.Forms.AnchorStyles.Left;
             viewmodelFovInput.DecimalMax = 6;
-            viewmodelFovInput.Location = new System.Drawing.Point(170, 388);
+            viewmodelFovInput.Location = new System.Drawing.Point(170, 132);
             viewmodelFovInput.Name = "viewmodelFovInput";
             viewmodelFovInput.Size = new System.Drawing.Size(100, 25);
             viewmodelFovInput.TabIndex = 14;
@@ -232,7 +232,7 @@ namespace GUI.Controls
             //
             viewmodelFovLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
             viewmodelFovLabel.AutoSize = true;
-            viewmodelFovLabel.Location = new System.Drawing.Point(15, 390);
+            viewmodelFovLabel.Location = new System.Drawing.Point(15, 134);
             viewmodelFovLabel.Name = "viewmodelFovLabel";
             viewmodelFovLabel.Size = new System.Drawing.Size(160, 19);
             viewmodelFovLabel.TabIndex = 15;
@@ -284,7 +284,7 @@ namespace GUI.Controls
             // 
             displayFpsCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
             displayFpsCheckBox.AutoSize = true;
-            displayFpsCheckBox.Location = new System.Drawing.Point(15, 282);
+            displayFpsCheckBox.Location = new System.Drawing.Point(15, 333);
             displayFpsCheckBox.Name = "displayFpsCheckBox";
             displayFpsCheckBox.Size = new System.Drawing.Size(98, 23);
             displayFpsCheckBox.TabIndex = 9;
@@ -340,7 +340,7 @@ namespace GUI.Controls
             groupBox2.Location = new System.Drawing.Point(16, 261);
             groupBox2.Name = "groupBox2";
             groupBox2.Padding = new System.Windows.Forms.Padding(16, 18, 16, 18);
-            groupBox2.Size = new System.Drawing.Size(501, 436);
+            groupBox2.Size = new System.Drawing.Size(501, 442);
             groupBox2.TabIndex = 2;
             groupBox2.TabStop = false;
             groupBox2.Text = "Video settings";
@@ -350,7 +350,7 @@ namespace GUI.Controls
             smoothCamCheckbox.AutoSize = true;
             smoothCamCheckbox.Checked = true;
             smoothCamCheckbox.CheckState = System.Windows.Forms.CheckState.Checked;
-            smoothCamCheckbox.Location = new System.Drawing.Point(15, 350);
+            smoothCamCheckbox.Location = new System.Drawing.Point(15, 401);
             smoothCamCheckbox.Name = "smoothCamCheckbox";
             smoothCamCheckbox.Size = new System.Drawing.Size(98, 23);
             smoothCamCheckbox.TabIndex = 13;
@@ -384,7 +384,7 @@ namespace GUI.Controls
             shadowQualityComboBox.ForeColor = System.Drawing.Color.White;
             shadowQualityComboBox.HeaderColor = System.Drawing.Color.FromArgb(51, 57, 74);
             shadowQualityComboBox.HighlightColor = System.Drawing.Color.FromArgb(99, 161, 255);
-            shadowQualityComboBox.Location = new System.Drawing.Point(170, 215);
+            shadowQualityComboBox.Location = new System.Drawing.Point(170, 266);
             shadowQualityComboBox.Name = "shadowQualityComboBox";
             shadowQualityComboBox.Size = new System.Drawing.Size(100, 26);
             shadowQualityComboBox.TabIndex = 12;
@@ -394,7 +394,7 @@ namespace GUI.Controls
             // 
             shadowResolutionLabel.Anchor = System.Windows.Forms.AnchorStyles.Left;
             shadowResolutionLabel.AutoSize = true;
-            shadowResolutionLabel.Location = new System.Drawing.Point(15, 217);
+            shadowResolutionLabel.Location = new System.Drawing.Point(15, 268);
             shadowResolutionLabel.Name = "shadowResolutionLabel";
             shadowResolutionLabel.Size = new System.Drawing.Size(125, 19);
             shadowResolutionLabel.TabIndex = 11;
