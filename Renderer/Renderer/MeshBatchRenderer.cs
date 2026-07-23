@@ -90,7 +90,7 @@ namespace ValveResourceFormat.Renderer
             {
                 requests.Sort(CompareRenderOrderThenPipeline);
             }
-            else if (context.RenderPass == RenderPass.Translucent)
+            else if (context.RenderPass is RenderPass.Translucent or RenderPass.ViewmodelTranslucent)
             {
                 requests.Sort(CompareCameraDistance);
             }
@@ -161,7 +161,8 @@ namespace ValveResourceFormat.Renderer
             {
                 if (request.Call == null)
                 {
-                    if (context.RenderPass is RenderPass.Opaque or RenderPass.Translucent or RenderPass.Outline)
+                    if (context.RenderPass is RenderPass.Opaque or RenderPass.Translucent or RenderPass.Outline
+                        or RenderPass.Viewmodel or RenderPass.ViewmodelTranslucent)
                     {
                         material?.PostRender();
 

@@ -903,8 +903,16 @@ namespace ValveResourceFormat.Renderer
                         Node = node,
                     };
 
-                    renderLists[RenderPass.Opaque].Add(customRender);
-                    renderLists[RenderPass.Translucent].Add(customRender);
+                    if (node.RenderAsViewmodel)
+                    {
+                        renderLists[RenderPass.Viewmodel].Add(customRender);
+                        renderLists[RenderPass.ViewmodelTranslucent].Add(customRender);
+                    }
+                    else
+                    {
+                        renderLists[RenderPass.Opaque].Add(customRender);
+                        renderLists[RenderPass.Translucent].Add(customRender);
+                    }
 
                     if (node.IsSelected)
                     {

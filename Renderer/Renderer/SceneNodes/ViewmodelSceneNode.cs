@@ -439,8 +439,9 @@ public class ViewmodelSceneNode : ModelSceneNode
         {
             viewmodel.muzzleFlashParticle = new ParticleSceneNode(scene, particleSystem)
             {
-                LayerName = WorldLayerName,
+                LayerName = ViewmodelLayerName,
                 Flags = ObjectTypeFlags.DisableVisCulling,
+                RenderAsViewmodel = true,
             };
             scene.Add(viewmodel.muzzleFlashParticle, true);
         }
