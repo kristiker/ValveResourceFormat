@@ -509,7 +509,7 @@ public class Renderer
             GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
         }
 
-        using (new GLDebugGroup("Viewmodel Pass"))
+        using (new GLDebugGroup("Viewmodel Opaque"))
         {
             var mainCamera = renderContext.Camera;
 
@@ -623,7 +623,7 @@ public class Renderer
             RenderTranslucentLayer(Scene, renderContext);
         }
 
-        using (new GLDebugGroup("Viewmodel Translucent Pass"))
+        using (new GLDebugGroup("Viewmodel Translucent"))
         {
             var mainCamera = renderContext.Camera;
 

@@ -236,10 +236,7 @@ public class ViewmodelSceneNode : ModelSceneNode
 
     internal const string WorldLayerName = "Internal - First Person Model";
 
-    /// <summary>
-    /// Layer for the arms/weapon proper (not legs), rendered in the dedicated viewmodel pass
-    /// (own camera FOV, own reserved near depth range) instead of as normal world geometry.
-    /// </summary>
+    /// <summary>Layer for the arms/weapon proper, excluding <see cref="Legs"/>; see <see cref="SceneNode.RenderAsViewmodel"/>.</summary>
     internal const string ViewmodelLayerName = "Internal - First Person Viewmodel";
     private const string BreathingClip = "animation/anims/world/shared/breathing.vnmclip";
     private const string LandedClip = "animation/anims/world/shared/jump_additive_land.vnmclip";

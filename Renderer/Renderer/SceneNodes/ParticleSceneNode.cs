@@ -408,7 +408,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <inheritdoc/>
         public override void Render(Scene.RenderContext context)
         {
-            if (context.RenderPass is not (RenderPass.Translucent or RenderPass.ViewmodelTranslucent) || context.ReplacementShader is not null)
+            if (context.RenderPass != RenderPass.Translucent || context.ReplacementShader is not null)
             {
                 return;
             }

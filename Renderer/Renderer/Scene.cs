@@ -713,12 +713,19 @@ namespace ValveResourceFormat.Renderer
             [RenderPass.StaticOverlay] = [],
             [RenderPass.Water] = [],
             [RenderPass.Translucent] = [],
-            [RenderPass.Viewmodel] = [],
-            [RenderPass.ViewmodelTranslucent] = [],
             [RenderPass.Outline] = [],
         };
 
-        private Dictionary<DepthOnlyProgram, List<MeshBatchRenderer.Request>> depthOnlyDraws { get; } = new()
+        /// <summary>
+        /// Draw calls for first-person layer geometry.
+        /// </summary>
+        private readonly Dictionary<RenderPass, List<MeshBatchRenderer.Request>> viewmodelRenderLists = new()
+        {
+            [RenderPass.Opaque] = [],
+            [RenderPass.Translucent] = [],
+        };
+
+        private DepthOnlyDrawBuckets depthOnlyDraws { get; } = new()
         {
             [DepthOnlyProgram.Static] = [],
             [DepthOnlyProgram.Animated] = [],
@@ -762,26 +769,18 @@ namespace ValveResourceFormat.Renderer
                 renderPass = RenderPass.Opaque;
             }
 
-            if (request.Node.RenderAsViewmodel)
-            {
-                if (renderPass == RenderPass.Opaque)
-                {
-                    renderPass = RenderPass.Viewmodel;
-                }
-                else if (renderPass == RenderPass.Translucent)
-                {
-                    renderPass = RenderPass.ViewmodelTranslucent;
-                }
-            }
+            var isViewmodelLayer = request.Node.RenderAsViewmodel && viewmodelRenderLists.ContainsKey(renderPass);
 
-            var queueList = renderLists[renderPass];
+            var queueList = isViewmodelLayer
+                ? viewmodelRenderLists[renderPass]
+                : renderLists[renderPass];
 
-            if (renderPass is RenderPass.Translucent or RenderPass.ViewmodelTranslucent)
+            if (renderPass == RenderPass.Translucent)
             {
                 WantsSceneColor |= request.Call.Material.Shader.ReservedTexturesUsed.Contains("g_tSceneColor");
                 WantsSceneDepth |= request.Call.Material.Shader.ReservedTexturesUsed.Contains("g_tSceneDepth");
 
-                if (request.Call.Material.IsCs2Water)
+                if (!isViewmodelLayer && request.Call.Material.IsCs2Water)
                 {
                     queueList = renderLists[RenderPass.Water];
                 }
@@ -798,6 +797,11 @@ namespace ValveResourceFormat.Renderer
         public void CollectSceneDrawCalls(Camera camera, Frustum? cullFrustum = null)
         {
             foreach (var bucket in renderLists.Values)
+            {
+                bucket.Clear();
+            }
+
+            foreach (var bucket in viewmodelRenderLists.Values)
             {
                 bucket.Clear();
             }
@@ -905,8 +909,8 @@ namespace ValveResourceFormat.Renderer
 
                     if (node.RenderAsViewmodel)
                     {
-                        renderLists[RenderPass.Viewmodel].Add(customRender);
-                        renderLists[RenderPass.ViewmodelTranslucent].Add(customRender);
+                        viewmodelRenderLists[RenderPass.Opaque].Add(customRender);
+                        viewmodelRenderLists[RenderPass.Translucent].Add(customRender);
                     }
                     else
                     {
@@ -1386,11 +1390,8 @@ namespace ValveResourceFormat.Renderer
         /// <param name="renderContext">The render context for this pass, expected to use the dedicated viewmodel camera and depth range.</param>
         public void RenderViewmodelOpaqueLayer(RenderContext renderContext)
         {
-            using (new GLDebugGroup("Viewmodel Render"))
-            {
-                renderContext.RenderPass = RenderPass.Viewmodel;
-                MeshBatchRenderer.Render(renderLists[RenderPass.Viewmodel], renderContext);
-            }
+            renderContext.RenderPass = RenderPass.Opaque;
+            MeshBatchRenderer.Render(viewmodelRenderLists[RenderPass.Opaque], renderContext);
         }
 
         /// <summary>
@@ -1400,17 +1401,14 @@ namespace ValveResourceFormat.Renderer
         /// <param name="renderContext">The render context for this pass, expected to use the dedicated viewmodel camera and depth range.</param>
         public void RenderViewmodelTranslucentLayer(RenderContext renderContext)
         {
-            using (new GLDebugGroup("Viewmodel Translucent Render"))
-            {
-                GL.DepthMask(false);
-                GL.Enable(EnableCap.Blend);
+            GL.DepthMask(false);
+            GL.Enable(EnableCap.Blend);
 
-                renderContext.RenderPass = RenderPass.ViewmodelTranslucent;
-                MeshBatchRenderer.Render(renderLists[RenderPass.ViewmodelTranslucent], renderContext);
+            renderContext.RenderPass = RenderPass.Translucent;
+            MeshBatchRenderer.Render(viewmodelRenderLists[RenderPass.Translucent], renderContext);
 
-                GL.Disable(EnableCap.Blend);
-                GL.DepthMask(true);
-            }
+            GL.Disable(EnableCap.Blend);
+            GL.DepthMask(true);
         }
 
         /// <summary>Renders water draw calls collected during <see cref="CollectSceneDrawCalls"/>.</summary>
