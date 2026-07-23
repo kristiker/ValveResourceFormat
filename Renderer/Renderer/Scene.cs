@@ -1154,8 +1154,8 @@ namespace ValveResourceFormat.Renderer
                 FrustumCullShader.SetUniform1("g_nDepthPyramidMaxMip", DepthPyramid.NumMipLevels - 1);
                 FrustumCullShader.SetUniform1("g_nDepthPyramidWidth", DepthPyramid.Width);
                 FrustumCullShader.SetUniform1("g_nDepthPyramidHeight", DepthPyramid.Height);
-                FrustumCullShader.SetUniform1("g_flDepthRangeMin", 0.05f);
-                FrustumCullShader.SetUniform1("g_flDepthRangeMax", 1.0f);
+                FrustumCullShader.SetUniform1("g_flDepthRangeMin", Renderer.DepthRange.Scene.Near);
+                FrustumCullShader.SetUniform1("g_flDepthRangeMax", Renderer.DepthRange.Scene.Far);
 
                 // Bind depth pyramid as texture for sampling
                 GL.ActiveTexture(TextureUnit.Texture0);
@@ -1371,15 +1371,29 @@ namespace ValveResourceFormat.Renderer
             }
         }
 
-        /// <summary>Renders the first-person viewmodel layer collected during <see cref="CollectSceneDrawCalls"/>.</summary>
+        /// <summary>
+        /// Renders the opaque first-person viewmodel layer collected during <see cref="CollectSceneDrawCalls"/>.
+        /// Rendered before the main scene so its reserved near depth range can never be overtaken by world geometry.
+        /// </summary>
         /// <param name="renderContext">The render context for this pass, expected to use the dedicated viewmodel camera and depth range.</param>
-        public void RenderViewmodelLayer(RenderContext renderContext)
+        public void RenderViewmodelOpaqueLayer(RenderContext renderContext)
         {
             using (new GLDebugGroup("Viewmodel Render"))
             {
                 renderContext.RenderPass = RenderPass.Viewmodel;
                 MeshBatchRenderer.Render(renderLists[RenderPass.Viewmodel], renderContext);
+            }
+        }
 
+        /// <summary>
+        /// Renders the translucent first-person viewmodel layer collected during <see cref="CollectSceneDrawCalls"/>.
+        /// Rendered after the main scene (and 3D sky) translucent passes so it composites correctly on top of them.
+        /// </summary>
+        /// <param name="renderContext">The render context for this pass, expected to use the dedicated viewmodel camera and depth range.</param>
+        public void RenderViewmodelTranslucentLayer(RenderContext renderContext)
+        {
+            using (new GLDebugGroup("Viewmodel Translucent Render"))
+            {
                 GL.DepthMask(false);
                 GL.Enable(EnableCap.Blend);
 

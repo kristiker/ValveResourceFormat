@@ -225,7 +225,7 @@ namespace GUI.Controls
             viewmodelFovInput.Name = "viewmodelFovInput";
             viewmodelFovInput.Size = new System.Drawing.Size(100, 25);
             viewmodelFovInput.TabIndex = 14;
-            viewmodelFovInput.Value = 68;
+            viewmodelFovInput.Value = 64;
             viewmodelFovInput.ValueChanged += OnViewmodelFovValueChanged;
             //
             // viewmodelFovLabel

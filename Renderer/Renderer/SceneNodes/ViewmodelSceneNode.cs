@@ -13,7 +13,7 @@ public class ViewmodelSceneNode : ModelSceneNode
     /// <summary>
     /// Viewmodel offset in viewmodel space (forward, right, up).
     /// </summary>
-    public Vector3 ViewmodelOffset { get; set; } = new Vector3(2, -2, -2);
+    public Vector3 ViewmodelOffset { get; set; } = new Vector3(5, -2, -2);
 
     /// <summary>
     /// The player arms.

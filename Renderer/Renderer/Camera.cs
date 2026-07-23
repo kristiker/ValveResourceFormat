@@ -156,10 +156,8 @@ namespace ValveResourceFormat.Renderer
             viewConstants.CameraUpDirWs = Up;
 
             // todo: these change per scene, move to the other buffer
-            // Main scene occupies [0.05, 0.95] of the depth range; sky reserves [0, 0.05) and the
-            // first-person viewmodel reserves (0.95, 1] -- see Renderer.RenderScenesWithView.
-            viewConstants.ViewportMinZ = 0.05f;
-            viewConstants.ViewportMaxZ = 0.95f;
+            viewConstants.ViewportMinZ = Renderer.DepthRange.Scene.Near;
+            viewConstants.ViewportMaxZ = Renderer.DepthRange.Scene.Far;
         }
 
         /// <summary>

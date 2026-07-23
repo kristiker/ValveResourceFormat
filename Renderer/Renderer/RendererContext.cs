@@ -46,7 +46,7 @@ public class RendererContext : IDisposable
     /// <summary>
     /// First-person viewmodel field of view, in horizontal degrees at a 4:3 aspect ratio.
     /// </summary>
-    public float ViewmodelFieldOfView { get; set; } = 68.0f;
+    public float ViewmodelFieldOfView { get; set; } = 64.0f;
 
     /// <summary>
     /// Initializes a new renderer context.

@@ -285,7 +285,7 @@ namespace GUI.Utils
 
             if (currentVersion < 16) // version 16: added viewmodel field of view
             {
-                Config.ViewmodelFieldOfView = 68;
+                Config.ViewmodelFieldOfView = 64;
             }
 
             if (currentVersion > 0 && currentVersion != SettingsFileCurrentVersion)
