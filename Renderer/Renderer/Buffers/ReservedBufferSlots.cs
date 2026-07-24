@@ -44,8 +44,6 @@ public enum ReservedBufferSlots
     CompactedCounts = 9,
     /// <summary>Compaction request descriptors SSBO slot.</summary>
     CompactionRequests = 10,
-    /// <summary>Bone transform matrices SSBO slot.</summary>
-    BoneTransforms = 11,
     /// <summary>Barn light constants SSBO slot.</summary>
     BarnLights = 12,
     /// <summary>Opportunistic instancing object index list SSBO slot.</summary>

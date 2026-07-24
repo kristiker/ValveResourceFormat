@@ -17,17 +17,14 @@ layout (location = 2) in vec4 vBLENDWEIGHT;
 
 uniform uvec4 uAnimationData;
 
-layout(std430, binding = 11) readonly buffer g_boneTransformBuffer
-{
-    mat3x4 boneTransforms[];
-};
-
 #define bAnimated (uAnimationData.x != 0u)
 #define meshBoneOffset uAnimationData.y
 #define meshBoneCount uAnimationData.z
 #define numWeights uAnimationData.w
 
-mat4 getMatrix(uint boneIndex)
+// Skinning matrices live in the shared transform buffer, at a per-object
+// offset from object data so instanced draws can each animate independently.
+mat4 getMatrix(uint boneIndex, uint objectBoneOffset)
 {
     // Issue #705 out of bounds bone index (model needs ApplyVBIBDefaults)
     // Model:  hlvr/models/props/xen/xen_villi_medium.vmdl
@@ -36,9 +33,9 @@ mat4 getMatrix(uint boneIndex)
         return mat4(1.0);
     }
 
-    boneIndex += meshBoneOffset;
+    boneIndex += objectBoneOffset + meshBoneOffset;
 
-    return UnpackMatrix4(boneTransforms[boneIndex]);
+    return UnpackMatrix4(transforms[boneIndex]);
 }
 
 mat4 getSkinMatrix()
@@ -48,24 +45,26 @@ mat4 getSkinMatrix()
         return mat4(1.0);
     }
 
+    uint objectBoneOffset = GetObjectBoneOffset();
+
     if (numWeights == 1u)
     {
-        return getMatrix(vBLENDINDICES.x);
+        return getMatrix(vBLENDINDICES.x, objectBoneOffset);
     }
 
     mat4 skinMatrix = mat4(0.0);
 
 
-    skinMatrix += vBLENDWEIGHT.x * getMatrix(vBLENDINDICES.x);
-    skinMatrix += vBLENDWEIGHT.y * getMatrix(vBLENDINDICES.y);
-    skinMatrix += vBLENDWEIGHT.z * getMatrix(vBLENDINDICES.z);
-    skinMatrix += vBLENDWEIGHT.w * getMatrix(vBLENDINDICES.w);
+    skinMatrix += vBLENDWEIGHT.x * getMatrix(vBLENDINDICES.x, objectBoneOffset);
+    skinMatrix += vBLENDWEIGHT.y * getMatrix(vBLENDINDICES.y, objectBoneOffset);
+    skinMatrix += vBLENDWEIGHT.z * getMatrix(vBLENDINDICES.z, objectBoneOffset);
+    skinMatrix += vBLENDWEIGHT.w * getMatrix(vBLENDINDICES.w, objectBoneOffset);
 
     #if (D_EIGHT_BONE_BLENDING == 1)
-        skinMatrix += vBLENDWEIGHT2.x * getMatrix(vBLENDINDICES2.x);
-        skinMatrix += vBLENDWEIGHT2.y * getMatrix(vBLENDINDICES2.y);
-        skinMatrix += vBLENDWEIGHT2.z * getMatrix(vBLENDINDICES2.z);
-        skinMatrix += vBLENDWEIGHT2.w * getMatrix(vBLENDINDICES2.w);
+        skinMatrix += vBLENDWEIGHT2.x * getMatrix(vBLENDINDICES2.x, objectBoneOffset);
+        skinMatrix += vBLENDWEIGHT2.y * getMatrix(vBLENDINDICES2.y, objectBoneOffset);
+        skinMatrix += vBLENDWEIGHT2.z * getMatrix(vBLENDINDICES2.z, objectBoneOffset);
+        skinMatrix += vBLENDWEIGHT2.w * getMatrix(vBLENDINDICES2.w, objectBoneOffset);
     #endif
 
     return skinMatrix;

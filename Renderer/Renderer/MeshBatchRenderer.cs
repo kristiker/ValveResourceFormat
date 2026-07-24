@@ -143,8 +143,7 @@ namespace ValveResourceFormat.Renderer
         private static bool IsInstanceable(in Request request)
         {
             return request.Node.Id != 0
-                && request.Mesh.BoneMatricesGpu == null // per-node bone buffers cannot be shared between instances
-                && request.Mesh.FlexStateManager == null
+                && request.Mesh.FlexStateManager == null // per-node morph composite textures cannot be shared
                 && request.Node is not SceneAggregate // uses the sequential instance transform path
                 && !request.Node.TransformBufferStale; // instanced draws read the gpu transform buffer
         }
@@ -153,6 +152,21 @@ namespace ValveResourceFormat.Renderer
         private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headTint)
         {
             if (candidate.Call == null || !IsInstanceable(in candidate))
+            {
+                return false;
+            }
+
+            // uAnimationData is a group-wide uniform; the per-instance bone offset comes from object data.
+            // Instances of the same model share mesh bone layout, so this only splits mixed groups.
+            if (head.Mesh.IsAnimated != candidate.Mesh.IsAnimated)
+            {
+                return false;
+            }
+
+            if (head.Mesh.IsAnimated
+                && (head.Mesh.MeshBoneOffset != candidate.Mesh.MeshBoneOffset
+                    || head.Mesh.MeshBoneCount != candidate.Mesh.MeshBoneCount
+                    || head.Mesh.BoneWeightCount != candidate.Mesh.BoneWeightCount))
             {
                 return false;
             }
@@ -542,14 +556,13 @@ namespace ValveResourceFormat.Renderer
 
             if (uniforms.AnimationData != -1)
             {
-                var bAnimated = request.Mesh.BoneMatricesGpu != null;
+                var bAnimated = request.Mesh.IsAnimated;
                 var numBones = 0u;
                 var numWeights = 0u;
                 var boneStart = 0u;
 
                 if (bAnimated)
                 {
-                    request.Mesh.BoneMatricesGpu!.BindBufferBase();
                     numBones = (uint)request.Mesh.MeshBoneCount;
                     boneStart = (uint)request.Mesh.MeshBoneOffset;
                     numWeights = (uint)request.Mesh.BoneWeightCount;

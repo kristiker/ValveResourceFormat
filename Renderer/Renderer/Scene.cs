@@ -520,6 +520,18 @@ namespace ValveResourceFormat.Renderer
 
                 node.TransformBufferStale = false;
 
+                var boneTransformOffset = 0u;
+
+                if (node is ModelSceneNode { BoneTransformCount: > 0 } model)
+                {
+                    // Reserve a skinning matrix range so animated models read (and stream) bones
+                    // from the shared transform buffer, keyed per object for instanced draws
+                    boneTransformOffset = (uint)transformData.Count;
+                    CollectionsMarshal.SetCount(transformData, transformData.Count + model.BoneTransformCount);
+                    model.WriteBoneTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)boneTransformOffset, model.BoneTransformCount));
+                    model.BoneTransformOffset = boneTransformOffset;
+                }
+
                 instanceData[node.Id] = new ObjectDataStandard
                 {
                     TintAlpha = Color32.FromVector4(instanceTint).PackedValue,
@@ -527,6 +539,7 @@ namespace ValveResourceFormat.Renderer
                     EnvMapVisibility = node.ShaderEnvMapVisibility,
                     VisibleLPV = (uint)(node.LightProbeBinding?.ShaderIndex ?? 0),
                     Identification = node.Id,
+                    BoneOffset = boneTransformOffset,
                 };
             }
 
@@ -534,7 +547,9 @@ namespace ValveResourceFormat.Renderer
             TransformBufferGpu = new StorageBuffer(ReservedBufferSlots.Transforms);
 
             InstanceBufferGpu.Create(instanceData, BufferUsageHint.StaticDraw);
-            TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.StaticDraw);
+
+            // Dynamic: animated models stream skinning matrices and moved dynamic nodes refresh their slot every frame
+            TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.DynamicDraw);
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)

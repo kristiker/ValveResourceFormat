@@ -27,6 +27,10 @@ struct ObjectDataStandard
     uint TransformIndex;
     uint VisibleLPV;
     uint Identification;
+    uint BoneOffset; // start of this object's skinning matrices in the transform buffer, 0 = none
+    uint Padding1;
+    uint Padding2;
+    uint Padding3;
     uvec4 EnvMapVisibility;
 };
 
@@ -72,17 +76,25 @@ mat4 UnpackMatrix4(mat3x4 m)
     );
 }
 
-ObjectData_t GetObjectData()
+uint GetObjectIndex()
 {
-    uint objectIndex = gl_BaseInstance;
-
     if (nInstancingMode == INSTANCING_MODE_OBJECT_LIST)
     {
         // gl_BaseInstance is an offset into the per-frame object index list
-        objectIndex = instancingObjectIndices[gl_BaseInstance + gl_InstanceID];
+        return instancingObjectIndices[gl_BaseInstance + gl_InstanceID];
     }
 
-    ObjectDataStandard objectData = objects[objectIndex];
+    return gl_BaseInstance;
+}
+
+uint GetObjectBoneOffset()
+{
+    return objects[GetObjectIndex()].BoneOffset;
+}
+
+ObjectData_t GetObjectData()
+{
+    ObjectDataStandard objectData = objects[GetObjectIndex()];
 
     mat3x4 objectTransform;
 
