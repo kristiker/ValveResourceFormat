@@ -5,7 +5,13 @@
 
 uniform mat3x4 transform;
 uniform uint vTint;
-uniform bool bIsInstancing = false;
+
+// Must match MeshBatchRenderer.InstancingMode
+#define INSTANCING_MODE_NONE 0
+#define INSTANCING_MODE_AGGREGATE 1
+#define INSTANCING_MODE_OBJECT_LIST 2
+
+uniform int nInstancingMode = INSTANCING_MODE_NONE;
 
 #if (S_SCENE_CUBEMAP_TYPE > 0)
     flat out uvec4 g_nEnvMapVisibility;
@@ -32,6 +38,11 @@ layout(std430, binding = 0) readonly buffer g_objectBuffer
 layout(std430, binding = 1) readonly buffer g_transformBuffer
 {
     mat3x4 transforms[];
+};
+
+layout(std430, binding = 13) readonly buffer g_instancingObjectIndexBuffer
+{
+    uint instancingObjectIndices[];
 };
 
 struct ObjectData_t
@@ -63,11 +74,34 @@ mat4 UnpackMatrix4(mat3x4 m)
 
 ObjectData_t GetObjectData()
 {
-    ObjectDataStandard objectData = objects[gl_BaseInstance];
+    uint objectIndex = gl_BaseInstance;
+
+    if (nInstancingMode == INSTANCING_MODE_OBJECT_LIST)
+    {
+        // gl_BaseInstance is an offset into the per-frame object index list
+        objectIndex = instancingObjectIndices[gl_BaseInstance + gl_InstanceID];
+    }
+
+    ObjectDataStandard objectData = objects[objectIndex];
+
+    mat3x4 objectTransform;
+
+    if (nInstancingMode == INSTANCING_MODE_NONE)
+    {
+        objectTransform = transform;
+    }
+    else if (nInstancingMode == INSTANCING_MODE_AGGREGATE)
+    {
+        objectTransform = transforms[objectData.TransformIndex + gl_InstanceID];
+    }
+    else
+    {
+        objectTransform = transforms[objectData.TransformIndex];
+    }
 
     ObjectData_t object;
-    object.transform = UnpackMatrix4(bIsInstancing ? transforms[objectData.TransformIndex + gl_InstanceID] : transform);
-    object.vTint = UnpackColor32(bIsInstancing ? objectData.TintAlpha : vTint);
+    object.transform = UnpackMatrix4(objectTransform);
+    object.vTint = UnpackColor32(nInstancingMode == INSTANCING_MODE_AGGREGATE ? objectData.TintAlpha : vTint);
 
     #if (S_SCENE_CUBEMAP_TYPE > 0)
         g_nEnvMapVisibility = objectData.EnvMapVisibility;

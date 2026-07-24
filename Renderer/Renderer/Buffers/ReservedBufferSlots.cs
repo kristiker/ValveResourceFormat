@@ -48,6 +48,8 @@ public enum ReservedBufferSlots
     BoneTransforms = 11,
     /// <summary>Barn light constants SSBO slot.</summary>
     BarnLights = 12,
+    /// <summary>Opportunistic instancing object index list SSBO slot.</summary>
+    InstancingObjectIndices = 13,
 
     /// <summary>Guaranteed minimum binding point count in OpenGL 4.6.</summary>
     Max = 8,

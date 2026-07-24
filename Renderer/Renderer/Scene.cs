@@ -94,6 +94,9 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the GPU buffer containing world-space transform matrices for all scene nodes.</summary>
         public StorageBuffer? TransformBufferGpu { get; set; }
 
+        /// <summary>Gets or sets the GPU buffer containing per-frame object indices for opportunistically instanced draws.</summary>
+        public StorageBuffer? InstancingObjectIndicesGpu { get; set; }
+
 
         /// <summary>Gets or sets the GPU buffer containing per-draw-call bounding boxes for indirect culling.</summary>
         public StorageBuffer? DrawBoundsGpu { get; set; }
@@ -405,6 +408,36 @@ namespace ValveResourceFormat.Renderer
                     CreateIndirectDrawBuffers(true);
                 }
             }
+            else
+            {
+                UploadStaleNodeTransforms();
+            }
+        }
+
+        private readonly OpenTK.Mathematics.Matrix3x4[] transformUploadScratch = new OpenTK.Mathematics.Matrix3x4[1];
+
+        /// <summary>
+        /// Refreshes the gpu transform buffer slots of dynamic nodes that moved since the last upload,
+        /// keeping them eligible for opportunistic instancing (which reads transforms from the buffer).
+        /// </summary>
+        private void UploadStaleNodeTransforms()
+        {
+            if (TransformBufferGpu == null)
+            {
+                return;
+            }
+
+            foreach (var node in dynamicNodes)
+            {
+                if (node.TransformBufferStale && node.TransformBufferIndex != 0)
+                {
+                    transformUploadScratch[0] = node.Transform.To3x4();
+                    TransformBufferGpu.Update(transformUploadScratch,
+                        (int)node.TransformBufferIndex * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
+                        Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>());
+                    node.TransformBufferStale = false;
+                }
+            }
         }
 
         /// <summary>Allocates GPU uniform and storage buffers for lighting, environment maps, light probes, frustum planes, and indirect draws.</summary>
@@ -416,6 +449,8 @@ namespace ValveResourceFormat.Renderer
             frustumBuffer ??= new(ReservedBufferSlots.FrustumPlanes);
 
             lightingBuffer.Data = LightingInfo.LightingData;
+
+            InstancingObjectIndicesGpu ??= StorageBuffer.Allocate<uint>(ReservedBufferSlots.InstancingObjectIndices, 1, BufferUsageHint.StreamDraw);
 
             LightingInfo.CreateBarnLightBuffer();
             CreateIndirectDrawBuffers();
@@ -445,8 +480,11 @@ namespace ValveResourceFormat.Renderer
                 Matrix4x4.Identity.To3x4()
             };
 
-            foreach (var node in nodes)
+            for (var nodeIndex = 0; nodeIndex < nodes.Count; nodeIndex++)
             {
+                var node = nodes[nodeIndex];
+                var isDynamic = nodeIndex >= staticNodes.Count;
+
                 var instanceTint = Vector4.One;
                 if (node is SceneAggregate.Fragment fragment)
                 {
@@ -464,16 +502,23 @@ namespace ValveResourceFormat.Renderer
                     {
                         transformData.Add(instanceTransform);
                     }
+
+                    node.TransformBufferIndex = 0; // no dedicated slot, the node transform is not in the buffer
                 }
-                else if (node.Transform.IsIdentity)
+                else if (node.Transform.IsIdentity && !isDynamic)
                 {
                     transformIndex = 0; // Reuse identity transform at index 0
+                    node.TransformBufferIndex = 0;
                 }
                 else
                 {
+                    // Dynamic nodes always get a dedicated slot so their transform can be refreshed in place when they move
                     transformIndex = (uint)transformData.Count;
                     transformData.Add(node.Transform.To3x4());
+                    node.TransformBufferIndex = transformIndex;
                 }
+
+                node.TransformBufferStale = false;
 
                 instanceData[node.Id] = new ObjectDataStandard
                 {
@@ -653,6 +698,7 @@ namespace ValveResourceFormat.Renderer
             lightingBuffer.BindBufferBase();
             envMapBuffer.BindBufferBase();
             lpvBuffer.BindBufferBase();
+            InstancingObjectIndicesGpu?.BindBufferBase();
             LightingInfo.BindBarnLightBuffer();
         }
 

@@ -21,8 +21,21 @@ namespace ValveResourceFormat.Renderer
             {
                 transform = value;
                 BoundingBox = LocalBoundingBox.Transform(transform);
+                TransformBufferStale = true;
             }
         }
+
+        /// <summary>
+        /// Index of this node's dedicated slot in <see cref="Scene.TransformBufferGpu"/>, or 0 when the node
+        /// shares the identity transform at index 0 (or has no dedicated slot, e.g. instanced aggregates).
+        /// </summary>
+        internal uint TransformBufferIndex { get; set; }
+
+        /// <summary>
+        /// Whether <see cref="Transform"/> changed since it was last uploaded to <see cref="Scene.TransformBufferGpu"/>.
+        /// Stale nodes are excluded from opportunistic instancing since instanced draws read the gpu transform buffer.
+        /// </summary>
+        internal bool TransformBufferStale { get; set; }
 
         /// <summary>
         /// Gets or sets the visibility layer name.
