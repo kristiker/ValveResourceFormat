@@ -315,6 +315,13 @@ namespace ValveResourceFormat.Renderer
                     GroupInstanceableDraws(requests, context.Scene);
                 }
             }
+            else if (context.RenderPass == RenderPass.DepthOnly)
+            {
+                // Shadow and depth prepass draws; the depth-only replacement shaders read
+                // per-instance transforms and bones through object data like material shaders do
+                requests.Sort(CompareCustomPipeline);
+                GroupInstanceableDraws(requests, context.Scene);
+            }
             else if (context.RenderPass == RenderPass.OpaqueAggregate)
             {
                 using var _ = new GLDebugGroup("Sort Indirect Draws");
@@ -377,7 +384,8 @@ namespace ValveResourceFormat.Renderer
                 LightmapGameVersionNumber = context.Scene.LightingInfo.LightmapGameVersionNumber,
                 LightProbeType = context.Scene.LightingInfo.LightProbeType,
                 IndirectDraw = context.Scene.DrawMeshletsIndirect && context.RenderPass < RenderPass.Opaque,
-                OpportunisticInstancing = context.RenderPass == RenderPass.Opaque && context.ReplacementShader == null,
+                OpportunisticInstancing = (context.RenderPass == RenderPass.Opaque && context.ReplacementShader == null)
+                    || context.RenderPass == RenderPass.DepthOnly,
             };
 
             var counters = PerfStats.Active;
