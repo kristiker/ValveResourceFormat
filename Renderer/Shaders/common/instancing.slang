@@ -44,7 +44,7 @@ layout(std430, binding = 1) readonly buffer g_transformBuffer
     mat3x4 transforms[];
 };
 
-layout(std430, binding = 13) readonly buffer g_instancingObjectIndexBuffer
+layout(std430, binding = 11) readonly buffer g_instancingObjectIndexBuffer
 {
     uint instancingObjectIndices[];
 };
