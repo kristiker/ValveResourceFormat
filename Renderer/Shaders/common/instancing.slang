@@ -113,7 +113,13 @@ ObjectData_t GetObjectData()
 
     ObjectData_t object;
     object.transform = UnpackMatrix4(objectTransform);
-    object.vTint = UnpackColor32(nInstancingMode == INSTANCING_MODE_AGGREGATE ? objectData.TintAlpha : vTint);
+
+    // Aggregate fragments bake their whole tint into object data, one entry per fragment.
+    // Everything else splits it: the per-object tint (render color) lives in object data so
+    // differently tinted instances can share a draw, the draw call tint stays a uniform.
+    object.vTint = nInstancingMode == INSTANCING_MODE_AGGREGATE
+        ? UnpackColor32(objectData.TintAlpha)
+        : UnpackColor32(vTint) * UnpackColor32(objectData.TintAlpha);
 
     #if (S_SCENE_CUBEMAP_TYPE > 0)
         g_nEnvMapVisibility = objectData.EnvMapVisibility;

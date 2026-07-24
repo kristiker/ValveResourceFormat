@@ -13,7 +13,11 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         public override Vector4 Tint
         {
             get => RenderableMeshes[0].Tint;
-            set => RenderableMeshes[0].Tint = value;
+            set
+            {
+                RenderableMeshes[0].Tint = value;
+                MarkTintStale();
+            }
         }
 
         /// <summary>

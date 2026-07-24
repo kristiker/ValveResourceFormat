@@ -143,11 +143,21 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Reused scratch for the per-frame object index list; only grows, never allocates in steady state.</summary>
         private static uint[] instancingObjectIndices = new uint[4096];
 
-        /// <summary>Combined tint of a draw as it would be packed for the vTint uniform.</summary>
-        private static uint GetPackedDrawTint(RenderableMesh mesh, DrawCall call, SceneNode node)
+        /// <summary>
+        /// The group-wide part of a draw's tint, as packed for the vTint uniform. The per-object part
+        /// (render color) comes from object data, so it does not participate in grouping.
+        /// Aggregate fragments have their whole tint in object data and take white here.
+        /// </summary>
+        private static uint GetPackedUniformTint(DrawCall call, SceneNode node)
         {
-            var instanceTint = (node is SceneAggregate.Fragment fragment) ? fragment.Tint : Vector4.One;
-            var tint = Vector4.Clamp(mesh.Tint * call.TintColor * instanceTint, Vector4.Zero, Vector4.One);
+            if (node is SceneAggregate.Fragment)
+            {
+                return uint.MaxValue;
+            }
+
+            // Content can author out-of-range tints (e.g. renderamt above 255 baked into the draw call
+            // alpha); the packed byte color can only represent [0, 1].
+            var tint = Vector4.Clamp(call.TintColor, Vector4.Zero, Vector4.One);
             return Color32.FromVector4(tint).PackedValue;
         }
 
@@ -163,7 +173,7 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Whether two adjacent requests would issue GL-state-identical draws and can be merged into one
         /// instanced draw. With <paramref name="crossMaterial"/> (material-agnostic replacement shader), material
         /// identity and material-derived per-draw state are ignored so different skins of the same geometry merge.</summary>
-        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headTint, bool crossMaterial)
+        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headUniformTint, bool crossMaterial)
         {
             if (candidate.Call == null || !IsInstanceable(in candidate))
             {
@@ -223,8 +233,10 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            // Tint is a group-wide uniform in the object list instancing mode (unused by material-agnostic shaders)
-            if (!crossMaterial && headTint != GetPackedDrawTint(candidate.Mesh, b, candidate.Node))
+            // Only the draw call tint is a group-wide uniform; the per-object tint comes from object data.
+            // Instances of the same model share the draw call tint, so this only rejects mismatched sources
+            // (e.g. a fragment, whose tint is entirely in object data). Unused by material-agnostic shaders.
+            if (!crossMaterial && headUniformTint != GetPackedUniformTint(b, candidate.Node))
             {
                 return false;
             }
@@ -280,10 +292,10 @@ namespace ValveResourceFormat.Renderer
                     continue;
                 }
 
-                var headTint = crossMaterial ? 0u : GetPackedDrawTint(head.Mesh, head.Call, head.Node);
+                var headUniformTint = crossMaterial ? 0u : GetPackedUniformTint(head.Call, head.Node);
                 var groupEnd = i + 1;
 
-                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, headTint, crossMaterial))
+                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, headUniformTint, crossMaterial))
                 {
                     groupEnd++;
                 }
@@ -630,13 +642,9 @@ namespace ValveResourceFormat.Renderer
 
             if (uniforms.Tint > -1)
             {
-                var instanceTint = (request.Node is SceneAggregate.Fragment fragment) ? fragment.Tint : Vector4.One;
-
-                // Content can author out-of-range tints (e.g. renderamt above 255 baked into the draw call
-                // alpha); the packed byte color can only represent [0, 1].
-                var tint = Vector4.Clamp(request.Mesh.Tint * request.Call.TintColor * instanceTint, Vector4.Zero, Vector4.One);
-
-                GL.ProgramUniform1((uint)shader.Program, uniforms.Tint, Color32.FromVector4(tint).PackedValue);
+                // Object tint (render color) is per instance and comes from object data, the shader
+                // multiplies the two. Only the draw call tint is uniform across an instanced group.
+                GL.ProgramUniform1((uint)shader.Program, uniforms.Tint, GetPackedUniformTint(request.Call, request.Node));
             }
 
             var instanceCount = 1;

@@ -411,6 +411,7 @@ namespace ValveResourceFormat.Renderer
             else
             {
                 UploadStaleNodeTransforms();
+                UploadStaleNodeTints();
             }
         }
 
@@ -474,6 +475,10 @@ namespace ValveResourceFormat.Renderer
             var maxId = nodes.Max(n => n.Id);
 
             var instanceData = new ObjectDataStandard[maxId + 1];
+
+            // Id 0 means "not indexed"; keep its object data neutral so such a draw is not tinted to black
+            instanceData[0].TintAlpha = uint.MaxValue;
+
             var transformData = new List<OpenTK.Mathematics.Matrix3x4>(capacity: (int)maxId + 2)
             {
                 // Reserve index 0 for identity transform
@@ -484,13 +489,6 @@ namespace ValveResourceFormat.Renderer
             {
                 var node = nodes[nodeIndex];
                 var isDynamic = nodeIndex >= staticNodes.Count;
-
-                var instanceTint = Vector4.One;
-                if (node is SceneAggregate.Fragment fragment)
-                {
-                    // Content can author out-of-range tints; the packed byte color can only represent [0, 1].
-                    instanceTint = Vector4.Clamp(fragment.RenderMesh.Tint * fragment.DrawCall.TintColor * fragment.Tint, Vector4.Zero, Vector4.One);
-                }
 
                 uint transformIndex;
 
@@ -534,7 +532,7 @@ namespace ValveResourceFormat.Renderer
 
                 instanceData[node.Id] = new ObjectDataStandard
                 {
-                    TintAlpha = Color32.FromVector4(instanceTint).PackedValue,
+                    TintAlpha = PackNodeTint(node),
                     TransformIndex = transformIndex,
                     EnvMapVisibility = node.ShaderEnvMapVisibility,
                     VisibleLPV = (uint)(node.LightProbeBinding?.ShaderIndex ?? 0),
@@ -546,10 +544,82 @@ namespace ValveResourceFormat.Renderer
             InstanceBufferGpu = new StorageBuffer(ReservedBufferSlots.Objects);
             TransformBufferGpu = new StorageBuffer(ReservedBufferSlots.Transforms);
 
-            InstanceBufferGpu.Create(instanceData, BufferUsageHint.StaticDraw);
+            // Dynamic: node tints are refreshed in place when they change
+            InstanceBufferGpu.Create(instanceData, BufferUsageHint.DynamicDraw);
 
             // Dynamic: animated models stream skinning matrices and moved dynamic nodes refresh their slot every frame
             TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.DynamicDraw);
+
+            // Everything was just written from the current node state
+            foreach (var node in staleTintNodes)
+            {
+                node.TintBufferStale = false;
+            }
+
+            staleTintNodes.Clear();
+        }
+
+        /// <summary>
+        /// The per-object part of a node's tint, packed for <see cref="ObjectDataStandard.TintAlpha"/>.
+        /// Aggregate fragments are drawn by shared indirect draws, so their whole tint is baked in here;
+        /// every other node contributes only its render color, the draw call tint stays a shader uniform.
+        /// </summary>
+        private static uint PackNodeTint(SceneNode node)
+        {
+            var tint = node switch
+            {
+                SceneAggregate.Fragment fragment => fragment.RenderMesh.Tint * fragment.DrawCall.TintColor * fragment.Tint,
+                MeshCollectionNode meshNode => meshNode.Tint,
+                _ => Vector4.One,
+            };
+
+            // Content can author out-of-range tints; the packed byte color can only represent [0, 1].
+            return Color32.FromVector4(Vector4.Clamp(tint, Vector4.Zero, Vector4.One)).PackedValue;
+        }
+
+        private readonly List<SceneNode> staleTintNodes = [];
+        private readonly uint[] tintUploadScratch = new uint[1];
+
+        /// <summary>Queues a node's object data tint for re-upload after its tint changed.</summary>
+        internal void MarkTintBufferStale(SceneNode node)
+        {
+            if (!node.TintBufferStale)
+            {
+                node.TintBufferStale = true;
+                staleTintNodes.Add(node);
+            }
+        }
+
+        /// <summary>
+        /// Refreshes the object data tint of nodes recolored since the last upload. Tint is per object
+        /// rather than per draw so that differently tinted instances of a model still batch together.
+        /// </summary>
+        private void UploadStaleNodeTints()
+        {
+            if (staleTintNodes.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var node in staleTintNodes)
+            {
+                node.TintBufferStale = false;
+
+                var offset = (int)node.Id * Unsafe.SizeOf<ObjectDataStandard>();
+
+                // Unindexed, or added after the buffer was built - a rebuild is already pending
+                if (node.Id == 0 || InstanceBufferGpu == null || offset >= InstanceBufferGpu.Size)
+                {
+                    continue;
+                }
+
+                tintUploadScratch[0] = PackNodeTint(node);
+
+                // TintAlpha is the first field of the object data
+                InstanceBufferGpu.Update(tintUploadScratch, offset, sizeof(uint));
+            }
+
+            staleTintNodes.Clear();
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)

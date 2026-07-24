@@ -37,6 +37,8 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 {
                     renderer.Tint = value;
                 }
+
+                MarkTintStale();
             }
         }
 

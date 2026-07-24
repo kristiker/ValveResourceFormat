@@ -38,6 +38,14 @@ namespace ValveResourceFormat.Renderer
         internal bool TransformBufferStale { get; set; }
 
         /// <summary>
+        /// Whether this node's tint changed since it was last uploaded to <see cref="Scene.InstanceBufferGpu"/>.
+        /// </summary>
+        internal bool TintBufferStale { get; set; }
+
+        /// <summary>Queues this node's tint for re-upload to the object data buffer. Call after changing a mesh tint.</summary>
+        protected void MarkTintStale() => Scene.MarkTintBufferStale(this);
+
+        /// <summary>
         /// Gets or sets the visibility layer name.
         /// </summary>
         public string? LayerName { get; set; }
