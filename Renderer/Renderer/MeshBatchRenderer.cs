@@ -61,12 +61,12 @@ namespace ValveResourceFormat.Renderer
         {
             var comparison = b.Material.SortId - a.Material.SortId;
 
-            if (comparison != 0)
-            {
-                return comparison;
-            }
+            return comparison != 0 ? comparison : CompareGeometryIdentity(a, b);
+        }
 
-            comparison = a.IndexBuffer.Handle.CompareTo(b.IndexBuffer.Handle);
+        private static int CompareGeometryIdentity(DrawCall a, DrawCall b)
+        {
+            var comparison = a.IndexBuffer.Handle.CompareTo(b.IndexBuffer.Handle);
 
             if (comparison != 0)
             {
@@ -88,6 +88,18 @@ namespace ValveResourceFormat.Renderer
             }
 
             return a.IndexCount.CompareTo(b.IndexCount);
+        }
+
+        /// <summary>Compares two requests by geometry identity first, then by shader pipeline sort ID. Used for
+        /// passes drawn with a shared material-agnostic shader, where identical geometry from different
+        /// materials can be merged into one instanced draw.</summary>
+        public static int CompareGeometryThenPipeline(Request a, Request b)
+        {
+            Debug.Assert(a.Call != null && b.Call != null);
+
+            var comparison = CompareGeometryIdentity(a.Call, b.Call);
+
+            return comparison != 0 ? comparison : b.Call.Material.SortId - a.Call.Material.SortId;
         }
 
         /// <summary>Compares two requests first by render order, then by shader pipeline sort ID.</summary>
@@ -148,8 +160,10 @@ namespace ValveResourceFormat.Renderer
                 && !request.Node.TransformBufferStale; // instanced draws read the gpu transform buffer
         }
 
-        /// <summary>Whether two adjacent requests would issue GL-state-identical draws and can be merged into one instanced draw.</summary>
-        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headTint)
+        /// <summary>Whether two adjacent requests would issue GL-state-identical draws and can be merged into one
+        /// instanced draw. With <paramref name="crossMaterial"/> (material-agnostic replacement shader), material
+        /// identity and material-derived per-draw state are ignored so different skins of the same geometry merge.</summary>
+        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headTint, bool crossMaterial)
         {
             if (candidate.Call == null || !IsInstanceable(in candidate))
             {
@@ -174,8 +188,12 @@ namespace ValveResourceFormat.Renderer
             var a = head.Call!;
             var b = candidate.Call;
 
-            if (!ReferenceEquals(a.Material, b.Material)
-                || a.IndexBuffer.Handle != b.IndexBuffer.Handle
+            if (!crossMaterial && !ReferenceEquals(a.Material, b.Material))
+            {
+                return false;
+            }
+
+            if (a.IndexBuffer.Handle != b.IndexBuffer.Handle
                 || a.IndexBuffer.Offset != b.IndexBuffer.Offset
                 || a.StartIndex != b.StartIndex
                 || a.IndexCount != b.IndexCount
@@ -205,8 +223,8 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            // Tint is a group-wide uniform in the object list instancing mode
-            if (headTint != GetPackedDrawTint(candidate.Mesh, b, candidate.Node))
+            // Tint is a group-wide uniform in the object list instancing mode (unused by material-agnostic shaders)
+            if (!crossMaterial && headTint != GetPackedDrawTint(candidate.Mesh, b, candidate.Node))
             {
                 return false;
             }
@@ -236,7 +254,7 @@ namespace ValveResourceFormat.Renderer
         /// the instance count and an offset into the object index list, consumed members are marked skipped.
         /// The per-instance object indices are uploaded to <see cref="Scene.InstancingObjectIndicesGpu"/>.
         /// </summary>
-        private static void GroupInstanceableDraws(List<Request> requests, Scene scene)
+        private static void GroupInstanceableDraws(List<Request> requests, Scene scene, bool crossMaterial = false)
         {
             var gpuBuffer = scene.InstancingObjectIndicesGpu;
 
@@ -245,8 +263,9 @@ namespace ValveResourceFormat.Renderer
                 return;
             }
 
-            var perInstanceCubemaps = scene.LightingInfo.CubemapType == CubemapType.IndividualCubemaps;
-            var perInstanceProbes = scene.LightingInfo.LightProbeType == LightProbeType.IndividualProbes;
+            // Per-draw texture bindings are material/lighting state; material-agnostic shaders have neither
+            var perInstanceCubemaps = !crossMaterial && scene.LightingInfo.CubemapType == CubemapType.IndividualCubemaps;
+            var perInstanceProbes = !crossMaterial && scene.LightingInfo.LightProbeType == LightProbeType.IndividualProbes;
 
             var span = CollectionsMarshal.AsSpan(requests);
             var indexCount = 0;
@@ -261,10 +280,10 @@ namespace ValveResourceFormat.Renderer
                     continue;
                 }
 
-                var headTint = GetPackedDrawTint(head.Mesh, head.Call, head.Node);
+                var headTint = crossMaterial ? 0u : GetPackedDrawTint(head.Mesh, head.Call, head.Node);
                 var groupEnd = i + 1;
 
-                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, headTint))
+                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, headTint, crossMaterial))
                 {
                     groupEnd++;
                 }
@@ -318,9 +337,21 @@ namespace ValveResourceFormat.Renderer
             else if (context.RenderPass == RenderPass.DepthOnly)
             {
                 // Shadow and depth prepass draws; the depth-only replacement shaders read
-                // per-instance transforms and bones through object data like material shaders do
-                requests.Sort(CompareCustomPipeline);
-                GroupInstanceableDraws(requests, context.Scene);
+                // per-instance transforms and bones through object data like material shaders do.
+                // With a material-agnostic shader the material is irrelevant to the draw, so sort by
+                // geometry and merge identical geometry across materials (e.g. skins of the same model).
+                var crossMaterial = context.ReplacementShader?.IgnoreMaterialData == true;
+
+                if (crossMaterial)
+                {
+                    requests.Sort(CompareGeometryThenPipeline);
+                }
+                else
+                {
+                    requests.Sort(CompareCustomPipeline);
+                }
+
+                GroupInstanceableDraws(requests, context.Scene, crossMaterial);
             }
             else if (context.RenderPass == RenderPass.OpaqueAggregate)
             {
