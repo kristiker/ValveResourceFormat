@@ -70,6 +70,10 @@ public struct ObjectDataStandard
     public uint VisibleLPV;
     /// <summary>Unique identifier for this object used in selection and highlighting.</summary>
     public uint Identification;
+    /// <summary>Start of this object's skinning matrices in the transform buffer, 0 when the object has none.</summary>
+    public uint BoneOffset;
+    /// <summary>Padding to keep <see cref="EnvMapVisibility"/> aligned to 16 bytes for std430.</summary>
+    public uint _Padding1, _Padding2, _Padding3;
     /// <summary>Bitmask of which environment maps are visible to this object.</summary>
     public SceneEnvMap.EnvMapVisibility128 EnvMapVisibility;
 };
