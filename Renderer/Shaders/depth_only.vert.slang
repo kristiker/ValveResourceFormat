@@ -33,7 +33,7 @@ void main()
     #if (D_ANIMATED == 1)
         vec3 fragPosition = GetScaledPositionOs(vertexPosition) * GetSkinnedObjectToWorldMatrix();
     #else
-        vec3 fragPosition = vec4(vertexPosition, 1.0) * GetObjectToWorldMatrix3x4();
+        vec3 fragPosition = vec4(vertexPosition, 1.0) * CalculateObjectToWorldMatrix();
     #endif
 
     gl_Position = g_matWorldToProjection * vec4(fragPosition, 1.0);

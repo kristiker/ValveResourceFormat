@@ -76,7 +76,7 @@ void SetObjectInterpolators(ObjectDataStandard objectData)
     #endif
 }
 
-mat3x4 GetObjectToWorldMatrix3x4()
+mat3x4 CalculateObjectToWorldMatrix()
 {
     ObjectDataStandard objectData = objects[gl_BaseInstance];
 
@@ -97,10 +97,6 @@ ObjectData_t GetObjectData()
     return object;
 }
 
-mat4 CalculateObjectToWorldMatrix()
-{
-    return UnpackMatrix4(GetObjectToWorldMatrix3x4());
-}
 
 vec4 GetObjectTintSrgb()
 {

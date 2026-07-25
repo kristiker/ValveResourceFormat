@@ -58,7 +58,7 @@ mat3x4 getMatrix(uint boneIndex, uint objectBoneOffset)
     // In map: hlvr/maps/a3_distillery.vmap
     // The unskinned transform, not identity: the object transform lives in the bones now
     if (boneIndex >= meshBoneCount) {
-        return GetObjectToWorldMatrix3x4();
+        return CalculateObjectToWorldMatrix();
     }
 
     boneIndex += objectBoneOffset + meshBoneOffset;
@@ -71,7 +71,7 @@ mat3x4 GetSkinnedObjectToWorldMatrix()
 {
     if (!bAnimated)
     {
-        return GetObjectToWorldMatrix3x4();
+        return CalculateObjectToWorldMatrix();
     }
 
     uint objectBoneOffset = GetObjectBoneOffset();
