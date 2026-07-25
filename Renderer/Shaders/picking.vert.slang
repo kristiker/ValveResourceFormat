@@ -11,7 +11,7 @@ flat out uint sceneObjectId;
 flat out uint meshletId;
 
 void main(void) {
-    gl_Position = g_matWorldToProjection * vec4(GetScaledPositionOs(vPOSITION) * CalculateSkinTransform(), 1.0);
+    gl_Position = g_matWorldToProjection * vec4(ApplyUniformScale(vPOSITION) * CalculateSkinTransform(), 1.0);
     sceneObjectId = gl_BaseInstance + gl_InstanceID;
     meshletId = gl_DrawID;
 }

@@ -28,10 +28,8 @@ void main()
         texCoord = vTEXCOORD;
     #endif
 
-    // The unanimated combo keeps the bone and scale fetches out of the shader entirely, so both sides
-    // have to pick their matrix and their position together
     #if (D_ANIMATED == 1)
-        vec3 fragPosition = GetScaledPositionOs(vertexPosition) * CalculateSkinTransform();
+        vec3 fragPosition = ApplyUniformScale(vertexPosition) * CalculateSkinTransform();
     #else
         vec3 fragPosition = vec4(vertexPosition, 1.0) * CalculateObjectToWorldMatrix();
     #endif

@@ -26,7 +26,7 @@ uniform uvec4 uAnimationData;
 // scale, which a rigid matrix cannot carry. Vertex positions get that applied directly instead.
 float GetObjectUniformScale()
 {
-    // A mesh without bones falls through getMatrix to the unskinned transform, which still has the scale
+    // A mesh without bones falls through the unskinned transform, which still has the scale
     if (!bAnimated || meshBoneCount == 0u)
     {
         return 1.0;
@@ -36,18 +36,13 @@ float GetObjectUniformScale()
     return transforms[objects[gl_BaseInstance].TransformIndex + 1u][0].z;
 }
 
-// Object space position with the instance's uniform scale applied, ready for a skinning matrix.
-vec4 GetScaledPositionOs(vec3 vPositionOs)
+vec4 ApplyUniformScale(vec3 vPositionOs)
 {
     return vec4(vPositionOs * GetObjectUniformScale(), 1.0);
 }
 
-// A w of zero drops the translation. The matrices are rotation plus translation, so no inverse
-// transpose is needed to keep a normal perpendicular.
 vec3 TransformDirectionToWorld(mat3x4 objectToWorld, vec3 vDirectionOs)
 {
-    // Zero scaled bones upload with an epsilon basis, so normalize never sees a zero vector here:
-    // return vDirectionWs * inversesqrt(max(dot(vDirectionWs, vDirectionWs), 1e-8));
     return normalize(vec4(vDirectionOs, 0.0) * objectToWorld);
 }
 
@@ -56,7 +51,6 @@ mat3x4 getMatrix(uint boneIndex, uint objectBoneOffset)
     // Issue #705 out of bounds bone index (model needs ApplyVBIBDefaults)
     // Model:  hlvr/models/props/xen/xen_villi_medium.vmdl
     // In map: hlvr/maps/a3_distillery.vmap
-    // The unskinned transform, not identity: the object transform lives in the bones now
     if (boneIndex >= meshBoneCount) {
         return CalculateObjectToWorldMatrix();
     }
