@@ -416,13 +416,16 @@ namespace ValveResourceFormat.Renderer
                 UpdateNodesParallel(updateContext);
             }
 
-            using (new GLDebugGroup("Uploads"))
+            using (new GLDebugGroup("Static Nodes"))
             {
                 foreach (var node in staticNodes)
                 {
                     node.Update(updateContext);
                 }
+            }
 
+            using (new GLDebugGroup("Dynamic Nodes"))
+            {
                 foreach (var node in dynamicNodes)
                 {
                     if (node.Parent != null)
@@ -430,15 +433,32 @@ namespace ValveResourceFormat.Renderer
                         continue; // child nodes are updated by their parent
                     }
 
-                    var oldBox = node.BoundingBoxBeforeUpdate;
                     node.Update(updateContext);
+                }
+            }
+
+            // A separate pass from the updates above: nothing reads the octrees until draw call
+            // collection, so relocating late costs nothing and keeps the two costs tellable apart
+            using (new GLDebugGroup("Octree Relocate"))
+            {
+                foreach (var node in dynamicNodes)
+                {
+                    if (node.Parent != null)
+                    {
+                        continue;
+                    }
+
+                    var oldBox = node.BoundingBoxBeforeUpdate;
 
                     if (node.LayerEnabled && !oldBox.Equals(node.BoundingBox))
                     {
                         DynamicOctree.Update(node, oldBox);
                     }
                 }
+            }
 
+            using (new GLDebugGroup("Transform Upload"))
+            {
                 FlushSkinningTransforms();
             }
 
