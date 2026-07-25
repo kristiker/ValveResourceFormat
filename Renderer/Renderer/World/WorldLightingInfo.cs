@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
@@ -268,7 +268,7 @@ namespace ValveResourceFormat.Renderer.World
             if (UseSceneBoundsForSunLightFrustum)
             {
                 var staticBounds = scene.StaticOctree.Root.GetBounds();
-                var dynamicBounds = scene.DynamicOctree.Root.GetBounds();
+                var dynamicBounds = scene.DynamicOctree.GetBounds();
                 var sceneBounds = staticBounds.Union(dynamicBounds);
                 var max = Math.Max(sceneBounds.Size.X, Math.Max(sceneBounds.Size.Y, sceneBounds.Size.Z));
 
