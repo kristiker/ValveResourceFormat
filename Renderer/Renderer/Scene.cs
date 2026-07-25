@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Blocks;
@@ -172,6 +173,13 @@ namespace ValveResourceFormat.Renderer
         private readonly List<SceneNode> staticNodes = [];
         private readonly List<SceneNode> dynamicNodes = [];
 
+        /// <summary>Nodes with a threaded update phase, cached until the scene contents change.</summary>
+        private readonly List<SceneNode> parallelUpdateNodes = [];
+        private bool parallelUpdateNodesDirty = true;
+
+        /// <summary>Below this many nodes the thread pool dispatch costs more than it saves.</summary>
+        private const int MinNodesForParallelUpdate = 8;
+
         private Shader? OutlineShader;
 
         /// <summary>
@@ -228,6 +236,7 @@ namespace ValveResourceFormat.Renderer
 
             nodeList.Add(node);
             octree.Dirty = true;
+            parallelUpdateNodesDirty = true;
         }
 
         /// <summary>
@@ -243,6 +252,7 @@ namespace ValveResourceFormat.Renderer
 
             nodeList.Remove(node);
             octree.Dirty = true;
+            parallelUpdateNodesDirty = true;
         }
 
         /// <summary>Indicates which spatial partition a scene node belongs to.</summary>
@@ -299,6 +309,9 @@ namespace ValveResourceFormat.Renderer
                 item.Delete();
             }
             staticNodes.Clear();
+
+            parallelUpdateNodes.Clear();
+            parallelUpdateNodesDirty = true;
 
             StaticOctree.Clear();
             DynamicOctree.Clear();
@@ -369,6 +382,14 @@ namespace ValveResourceFormat.Renderer
         /// <param name="updateContext">Per-frame context data including camera and timestep.</param>
         public void Update(Scene.UpdateContext updateContext)
         {
+            // Captured before the threaded pass below, which moves these nodes
+            foreach (var node in dynamicNodes)
+            {
+                node.BoundingBoxBeforeUpdate = node.BoundingBox;
+            }
+
+            UpdateNodesParallel(updateContext);
+
             foreach (var node in staticNodes)
             {
                 node.Update(updateContext);
@@ -381,7 +402,7 @@ namespace ValveResourceFormat.Renderer
                     continue; // child nodes are updated by their parent
                 }
 
-                var oldBox = node.BoundingBox;
+                var oldBox = node.BoundingBoxBeforeUpdate;
                 node.Update(updateContext);
 
                 if (node.LayerEnabled && !oldBox.Equals(node.BoundingBox))
@@ -405,6 +426,53 @@ namespace ValveResourceFormat.Renderer
                     CreateIndirectDrawBuffers(true);
                 }
             }
+        }
+
+        /// <summary>
+        /// Runs the CPU-only half of the frame update, pose evaluation and skinning matrices, across the
+        /// thread pool. Each <see cref="SceneNode.UpdateParallel"/> only touches state its own node owns;
+        /// the GPU uploads that follow from it are left to <see cref="SceneNode.Update"/> afterwards.
+        /// </summary>
+        private void UpdateNodesParallel(Scene.UpdateContext updateContext)
+        {
+            if (parallelUpdateNodesDirty)
+            {
+                parallelUpdateNodes.Clear();
+
+                foreach (var node in AllNodes)
+                {
+                    if (node.SupportsParallelUpdate)
+                    {
+                        parallelUpdateNodes.Add(node);
+                    }
+                }
+
+                parallelUpdateNodesDirty = false;
+            }
+
+            // Attached nodes are driven by their parent, which has to evaluate its own pose first
+            if (parallelUpdateNodes.Count < MinNodesForParallelUpdate)
+            {
+                foreach (var node in parallelUpdateNodes)
+                {
+                    if (node.Parent == null)
+                    {
+                        node.UpdateParallel(updateContext);
+                    }
+                }
+
+                return;
+            }
+
+            Parallel.For(0, parallelUpdateNodes.Count, i =>
+            {
+                var node = parallelUpdateNodes[i];
+
+                if (node.Parent == null)
+                {
+                    node.UpdateParallel(updateContext);
+                }
+            });
         }
 
         /// <summary>Allocates GPU uniform and storage buffers for lighting, environment maps, light probes, frustum planes, and indirect draws.</summary>

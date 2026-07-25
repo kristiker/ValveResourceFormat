@@ -97,6 +97,18 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         private readonly int[] remappingTable;
         private bool transformDirty;
 
+        /// <summary>This model's slice of the scene transform buffer, filled off the render thread and
+        /// uploaded from it. Only allocated once something actually animates.</summary>
+        private OpenTK.Mathematics.Matrix3x4[]? skinningTransforms;
+        private bool skinningTransformsDirty;
+
+        /// <summary>Set once <see cref="UpdateParallel"/> has run for this frame, so <see cref="Update"/>
+        /// knows whether it still has to evaluate the pose itself.</summary>
+        private bool poseEvaluated;
+
+        /// <summary>Flex states whose morph weights changed and still need their composite rendered.</summary>
+        private readonly List<FlexStateManager> pendingMorphComposites = [];
+
         private HashSet<string> activeMeshGroups = [];
         private (string Name, string[] Materials) activeMaterialGroup;
         private Dictionary<string, string>? materialTable;
@@ -256,40 +268,78 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             => remappingTable.AsSpan(mesh.MeshBoneOffset, mesh.MeshBoneCount).IndexOf(modelBoneIndex);
 
         /// <inheritdoc/>
-        public override void Update(Scene.UpdateContext context)
+        public override bool SupportsParallelUpdate => true;
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Advances the animation and rebuilds this model's skinning matrices and morph weights, all of
+        /// which only touch state this node owns. The GPU side of it is left to <see cref="Update"/>.
+        /// </remarks>
+        public override void UpdateParallel(Scene.UpdateContext context)
         {
             UpdateAutoLod(context.Camera);
             var animationUpdated = AnimationController.Update(context.Timestep);
-            UpdateAttachments(context);
 
             if (IsAnimated && (animationUpdated || transformDirty))
             {
-                UploadSkinningTransforms();
-                transformDirty = false;
+                ComputeSkinningTransforms();
             }
 
-            if (!animationUpdated)
+            transformDirty = false;
+            poseEvaluated = true;
+
+            if (!animationUpdated || AnimationController.AnimationFrame == null)
             {
                 return;
             }
 
-            if (AnimationController.AnimationFrame != null)
+            var datas = AnimationController.AnimationFrame.Datas;
+            foreach (var renderableMesh in RenderableMeshes)
             {
-                var datas = AnimationController.AnimationFrame.Datas;
-                foreach (var renderableMesh in RenderableMeshes)
+                if (renderableMesh.FlexStateManager is not { } flexState)
                 {
-                    if (renderableMesh.FlexStateManager == null)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    if (renderableMesh.FlexStateManager.SetControllerValues(datas))
-                    {
-                        renderableMesh.FlexStateManager.UpdateComposite();
-                        renderableMesh.FlexStateManager.MorphComposite.Render();
-                    }
+                if (flexState.SetControllerValues(datas))
+                {
+                    flexState.UpdateComposite();
+                    pendingMorphComposites.Add(flexState);
                 }
             }
+        }
+
+        /// <inheritdoc/>
+        public override void Update(Scene.UpdateContext context)
+        {
+            if (!poseEvaluated)
+            {
+                // Attached to another model, or added after the scene built its threaded work list
+                UpdateParallel(context);
+            }
+            else if (IsAnimated && transformDirty)
+            {
+                // Moved after the threaded pass ran; the skinning matrices fold in the object transform
+                ComputeSkinningTransforms();
+                transformDirty = false;
+            }
+
+            poseEvaluated = false;
+
+            UpdateAttachments(context);
+
+            if (skinningTransformsDirty)
+            {
+                UploadSkinningTransforms();
+                skinningTransformsDirty = false;
+            }
+
+            foreach (var flexState in pendingMorphComposites)
+            {
+                flexState.MorphComposite.Render();
+            }
+
+            pendingMorphComposites.Clear();
         }
 
         private void UpdateAttachments(Scene.UpdateContext context)
@@ -498,31 +548,33 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <summary>
-        /// Streams this model's transform buffer range to the GPU. The bounding box is refreshed even when
-        /// there is nothing to upload to yet.
+        /// Fills this model's transform buffer range into <see cref="skinningTransforms"/>, ready for
+        /// <see cref="UploadSkinningTransforms"/>. The bounding box is refreshed even when there is
+        /// nothing to upload to yet. Safe to call off the render thread.
+        /// </summary>
+        private void ComputeSkinningTransforms()
+        {
+            skinningTransforms ??= new OpenTK.Mathematics.Matrix3x4[remappingTable.Length + (int)BoneTransformStart];
+
+            WriteSkinningTransforms(skinningTransforms);
+            skinningTransformsDirty = true;
+        }
+
+        /// <summary>
+        /// Streams the matrices <see cref="ComputeSkinningTransforms"/> produced to the GPU. Render thread only.
         /// </summary>
         private void UploadSkinningTransforms()
         {
-            var floatBufferSize = (remappingTable.Length + (int)BoneTransformStart) * 12;
-            var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
-
-            try
+            if (skinningTransforms == null || TransformSlot == 0 || Scene.TransformBufferGpu == null)
             {
-                var slots = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSize));
-
-                WriteSkinningTransforms(slots);
-
-                if (TransformSlot != 0 && Scene.TransformBufferGpu != null)
-                {
-                    Scene.TransformBufferGpu.Update(floatBuffer,
-                        (int)TransformSlot * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
-                        floatBufferSize * sizeof(float));
-                }
+                return;
             }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(floatBuffer);
-            }
+
+            var slotSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
+
+            Scene.TransformBufferGpu.Update(skinningTransforms,
+                (int)TransformSlot * slotSize,
+                skinningTransforms.Length * slotSize);
         }
 
         /// <summary>

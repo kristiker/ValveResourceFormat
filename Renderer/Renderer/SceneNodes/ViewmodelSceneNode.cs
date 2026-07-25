@@ -806,6 +806,13 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
     }
 
+    /// <inheritdoc/>
+    /// <remarks>
+    /// There is only ever one viewmodel to pose, and its update drives the legs, the held items and their
+    /// animation state, so it stays whole on the render thread rather than splitting across the two phases.
+    /// </remarks>
+    public override bool SupportsParallelUpdate => false;
+
     /// <summary>
     /// Update
     /// </summary>

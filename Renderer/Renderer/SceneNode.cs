@@ -161,7 +161,33 @@ namespace ValveResourceFormat.Renderer
         }
 
         /// <summary>
-        /// Called each frame to update this node's state.
+        /// Gets whether <see cref="UpdateParallel"/> does enough work on this node to be worth handing
+        /// to the thread pool every frame. Nodes that leave it at <see langword="false"/> are updated
+        /// on the render thread only.
+        /// </summary>
+        public virtual bool SupportsParallelUpdate => false;
+
+        /// <summary>
+        /// World bounds as of the start of the frame, before <see cref="UpdateParallel"/> had a chance to
+        /// move them. The octree finds a node by the bounds it was inserted with, so relocating it needs
+        /// these rather than whatever this frame's pose has since produced.
+        /// </summary>
+        internal AABB BoundingBoxBeforeUpdate { get; set; }
+
+        /// <summary>
+        /// The CPU-only half of the per-frame update, run for every root node on the thread pool before
+        /// <see cref="Update"/> is called on the render thread. An override may only touch state owned by
+        /// this node: no OpenGL calls, no octree writes, and nothing shared with other nodes. Everything
+        /// else, GPU uploads included, belongs in <see cref="Update"/>.
+        /// </summary>
+        /// <param name="context">The current update context.</param>
+        public virtual void UpdateParallel(Scene.UpdateContext context)
+        {
+        }
+
+        /// <summary>
+        /// Called each frame on the render thread to update this node's state, after
+        /// <see cref="UpdateParallel"/> has finished for the whole scene.
         /// </summary>
         /// <param name="context">The current update context.</param>
         public virtual void Update(Scene.UpdateContext context)

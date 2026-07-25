@@ -95,12 +95,12 @@ public class XenFloraAnimatedMoverSceneNode : ModelSceneNode
     }
 
     /// <inheritdoc/>
-    public override void Update(Scene.UpdateContext context)
+    public override void UpdateParallel(Scene.UpdateContext context)
     {
         AdvancePath(context.Timestep);
         Transform = scaleMatrix * currentRotation * Matrix4x4.CreateTranslation(currentPosition);
 
-        base.Update(context);
+        base.UpdateParallel(context);
     }
 
     private void AdvancePath(float dt)
