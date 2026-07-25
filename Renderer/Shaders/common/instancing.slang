@@ -21,6 +21,10 @@ struct ObjectDataStandard
     uint TransformIndex;
     uint VisibleLPV;
     uint Identification;
+    uint BoneOffset; // start of this object's skinning matrices in the transform buffer, 0 = none
+    uint Padding1;
+    uint Padding2;
+    uint Padding3;
     uvec4 EnvMapVisibility;
 };
 
@@ -59,6 +63,11 @@ mat4 UnpackMatrix4(mat3x4 m)
         m[0][2], m[1][2], m[2][2], 0,
         m[0][3], m[1][3], m[2][3], 1
     );
+}
+
+uint GetObjectBoneOffset()
+{
+    return objects[gl_BaseInstance].BoneOffset;
 }
 
 ObjectData_t GetObjectData()

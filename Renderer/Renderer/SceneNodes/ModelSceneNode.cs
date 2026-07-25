@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Renderer.Buffers;
@@ -63,9 +64,15 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private readonly List<RenderableMesh> meshRenderers = [];
 
-        /// <summary>Gets whether this model has an active GPU bone matrix buffer (i.e., has animations loaded).</summary>
-        public bool IsAnimated => boneMatricesGpu != null;
-        private StorageBuffer? boneMatricesGpu;
+        /// <summary>Gets whether this model has animations loaded and a skeleton to animate.</summary>
+        public bool IsAnimated { get; private set; }
+
+        /// <summary>Gets the number of skinning matrix slots this model reserves in the scene transform buffer (the mesh-bone remapping table length).</summary>
+        internal int BoneTransformCount => remappingTable.Length;
+
+        /// <summary>Gets or sets the start of this model's skinning matrices in the scene transform buffer, assigned when the scene instance buffers are (re)built. 0 = no slots.</summary>
+        internal uint BoneTransformOffset { get; set; }
+
         private readonly int boneCount;
         private readonly int[] remappingTable;
 
@@ -241,48 +248,22 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             if (IsAnimated)
             {
-                Debug.Assert(boneMatricesGpu != null, "boneMatricesGpu should not be null when IsAnimated is true");
-
-                // Update animation matrices
-                var meshBoneCount = remappingTable.Length;
-
-                var floatBufferSizeMeshBones = meshBoneCount * 12;
-                var floatBufferSizeModelBones = boneCount * 16;
-
-                var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSizeMeshBones + floatBufferSizeModelBones);
-
-                var meshBones = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSizeMeshBones));
-                var modelBones = MemoryMarshal.Cast<float, Matrix4x4>(floatBuffer.AsSpan(floatBufferSizeMeshBones));
-
-                UpdateBoundingBox(); // Reset back to the mesh bbox
-                var newBoundingBox = LocalBoundingBox;
+                // Update animation matrices and stream them into the shared transform buffer
+                var floatBufferSize = remappingTable.Length * 12;
+                var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
 
                 try
                 {
-                    AnimationController.GetSkinningMatrices(modelBones);
+                    var meshBones = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSize));
 
-                    for (var i = 0; i < meshBoneCount; i++)
+                    WriteBoneTransforms(meshBones);
+
+                    if (BoneTransformOffset != 0 && Scene.TransformBufferGpu != null)
                     {
-                        var modelBoneIndex = remappingTable[i];
-                        var modelBoneExists = modelBoneIndex < boneCount && modelBoneIndex != -1;
-
-                        if (modelBoneExists)
-                        {
-                            meshBones[i] = modelBones[modelBoneIndex].To3x4();
-                        }
+                        Scene.TransformBufferGpu.Update(floatBuffer,
+                            (int)BoneTransformOffset * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
+                            floatBufferSize * sizeof(float));
                     }
-
-                    boneMatricesGpu.Update(floatBuffer, 0, floatBufferSizeMeshBones * sizeof(float));
-
-                    var first = true;
-                    foreach (var matrix in modelBones[..boneCount])
-                    {
-                        var bbox = LocalBoundingBox.Transform(matrix);
-                        newBoundingBox = first ? bbox : newBoundingBox.Union(bbox);
-                        first = false;
-                    }
-
-                    LocalBoundingBox = newBoundingBox;
                 }
                 finally
                 {
@@ -506,12 +487,67 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private void SetupBoneMatrixBuffers()
         {
-            if (boneCount == 0 || boneMatricesGpu != null)
+            if (boneCount == 0)
             {
                 return;
             }
 
-            boneMatricesGpu = new StorageBuffer(ReservedBufferSlots.BoneTransforms);
+            IsAnimated = true;
+        }
+
+        /// <summary>
+        /// Writes this model's current skinning matrices (or identity when not animating) into the given
+        /// slice of the scene transform buffer data, and refreshes the local bounding box to cover the
+        /// animated pose. Called every frame while animating, and when the scene instance buffers are
+        /// (re)built so paused animations survive buffer recreation.
+        /// </summary>
+        internal void WriteBoneTransforms(Span<OpenTK.Mathematics.Matrix3x4> dest)
+        {
+            Debug.Assert(dest.Length == remappingTable.Length);
+
+            var identity = Matrix4x4.Identity.To3x4();
+
+            if (!IsAnimated)
+            {
+                dest.Fill(identity);
+                return;
+            }
+
+            var floatBufferSize = boneCount * 16;
+            var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
+
+            try
+            {
+                var modelBones = MemoryMarshal.Cast<float, Matrix4x4>(floatBuffer.AsSpan(0, floatBufferSize));
+                AnimationController.GetSkinningMatrices(modelBones);
+
+                for (var i = 0; i < remappingTable.Length; i++)
+                {
+                    var modelBoneIndex = remappingTable[i];
+                    var modelBoneExists = modelBoneIndex < boneCount && modelBoneIndex != -1;
+
+                    // Caller may pass a rented buffer, so write identity for invalid remaps instead of leaking stale data into the shared buffer
+                    dest[i] = modelBoneExists ? modelBones[modelBoneIndex].To3x4() : identity;
+                }
+
+                UpdateBoundingBox(); // Reset back to the mesh bbox
+                var meshBoundingBox = LocalBoundingBox;
+                var newBoundingBox = meshBoundingBox;
+
+                var first = true;
+                foreach (var matrix in modelBones)
+                {
+                    var bbox = meshBoundingBox.Transform(matrix);
+                    newBoundingBox = first ? bbox : newBoundingBox.Union(bbox);
+                    first = false;
+                }
+
+                LocalBoundingBox = newBoundingBox;
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(floatBuffer);
+            }
         }
 
         /// <summary>Activates the animation with the given name, or stops animation if not found.</summary>
@@ -554,21 +590,11 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             AnimationController.SetAnimation(activeAnimation, blendTime);
             UpdateBoundingBox();
 
-            if (activeAnimation != default)
+            var animated = activeAnimation != default && IsAnimated;
+
+            foreach (var renderer in meshRenderers)
             {
-                foreach (var renderer in meshRenderers)
-                {
-                    // renderer.SetMaterialCombo(("D_ANIMATED", 1));
-                    renderer.SetBoneMatricesBuffer(boneMatricesGpu);
-                }
-            }
-            else
-            {
-                foreach (var renderer in meshRenderers)
-                {
-                    // renderer.SetMaterialCombo(("D_ANIMATED", 0));
-                    renderer.SetBoneMatricesBuffer(null);
-                }
+                renderer.SetAnimated(animated);
             }
         }
 
@@ -786,7 +812,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <inheritdoc/>
         public override void Delete()
         {
-            boneMatricesGpu?.Delete();
         }
 
         /// <summary>

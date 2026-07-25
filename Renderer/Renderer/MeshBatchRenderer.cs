@@ -312,14 +312,13 @@ namespace ValveResourceFormat.Renderer
 
             if (uniforms.AnimationData != -1)
             {
-                var bAnimated = request.Mesh.BoneMatricesGpu != null;
+                var bAnimated = request.Mesh.IsAnimated;
                 var numBones = 0u;
                 var numWeights = 0u;
                 var boneStart = 0u;
 
                 if (bAnimated)
                 {
-                    request.Mesh.BoneMatricesGpu!.BindBufferBase();
                     numBones = (uint)request.Mesh.MeshBoneCount;
                     boneStart = (uint)request.Mesh.MeshBoneOffset;
                     numWeights = (uint)request.Mesh.BoneWeightCount;
