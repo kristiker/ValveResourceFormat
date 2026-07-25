@@ -36,7 +36,6 @@ layout(std430, binding = 1) readonly buffer g_transformBuffer
 
 struct ObjectData_t
 {
-    mat4 transform;
     vec4 vTint;
 };
 
@@ -61,19 +60,13 @@ mat4 UnpackMatrix4(mat3x4 m)
     );
 }
 
-// Skinning matrices live in the shared transform buffer, starting two slots after
-// the object transform, the way Source 2 lays them out.
 uint GetObjectBoneOffset()
 {
     return objects[gl_BaseInstance].TransformIndex + 2u;
 }
 
-// The object to world matrix still packed. vec4(v, w) * m is the same three dot products
-// UnpackMatrix4 would hand to a mat4.
-mat3x4 GetObjectToWorldMatrix3x4()
+void SetObjectInterpolators(ObjectDataStandard objectData)
 {
-    ObjectDataStandard objectData = objects[gl_BaseInstance];
-
     #if (S_SCENE_CUBEMAP_TYPE > 0)
         g_nEnvMapVisibility = objectData.EnvMapVisibility;
     #endif
@@ -81,22 +74,32 @@ mat3x4 GetObjectToWorldMatrix3x4()
     #if (D_BAKED_LIGHTING_FROM_PROBE > 0)
         g_nVisibleLPV = objectData.VisibleLPV;
     #endif
+}
+
+mat3x4 GetObjectToWorldMatrix3x4()
+{
+    ObjectDataStandard objectData = objects[gl_BaseInstance];
+
+    SetObjectInterpolators(objectData);
 
     return bIsInstancing ? transforms[objectData.TransformIndex + gl_InstanceID] : transform;
 }
 
 ObjectData_t GetObjectData()
 {
+    ObjectDataStandard objectData = objects[gl_BaseInstance];
+
+    SetObjectInterpolators(objectData);
+
     ObjectData_t object;
-    object.transform = UnpackMatrix4(GetObjectToWorldMatrix3x4());
-    object.vTint = UnpackColor32(bIsInstancing ? objects[gl_BaseInstance].TintAlpha : vTint);
+    object.vTint = UnpackColor32(bIsInstancing ? objectData.TintAlpha : vTint);
 
     return object;
 }
 
 mat4 CalculateObjectToWorldMatrix()
 {
-    return GetObjectData().transform;
+    return UnpackMatrix4(GetObjectToWorldMatrix3x4());
 }
 
 vec4 GetObjectTintSrgb()
