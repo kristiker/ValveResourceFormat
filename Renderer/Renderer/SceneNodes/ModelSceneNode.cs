@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Renderer.Buffers;
 using ValveResourceFormat.ResourceTypes;
@@ -248,53 +247,25 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             if (IsAnimated)
             {
-                // Update animation matrices
+                // Update animation matrices and stream them into the shared transform buffer
                 var meshBoneCount = remappingTable.Length;
-
-                var floatBufferSizeMeshBones = meshBoneCount * 12;
-                var floatBufferSizeModelBones = boneCount * 16;
-
-                var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSizeMeshBones + floatBufferSizeModelBones);
-
-                var meshBones = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSizeMeshBones));
-                var modelBones = MemoryMarshal.Cast<float, Matrix4x4>(floatBuffer.AsSpan(floatBufferSizeMeshBones));
-
-                UpdateBoundingBox(); // Reset back to the mesh bbox
-                var newBoundingBox = LocalBoundingBox;
+                var meshBones = ArrayPool<OpenTK.Mathematics.Matrix3x4>.Shared.Rent(meshBoneCount);
 
                 try
                 {
-                    AnimationController.GetSkinningMatrices(modelBones);
-
-                    for (var i = 0; i < meshBoneCount; i++)
-                    {
-                        var modelBoneIndex = remappingTable[i];
-                        var modelBoneExists = modelBoneIndex < boneCount && modelBoneIndex != -1;
-
-                        // Rented buffer, so write identity for invalid remaps instead of leaking stale data into the shared buffer
-                        meshBones[i] = modelBoneExists ? modelBones[modelBoneIndex].To3x4() : Matrix4x4.Identity.To3x4();
-                    }
+                    WriteBoneTransforms(meshBones.AsSpan(0, meshBoneCount));
 
                     if (BoneTransformOffset != 0 && Scene.TransformBufferGpu != null)
                     {
-                        Scene.TransformBufferGpu.Update(floatBuffer,
-                            (int)BoneTransformOffset * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
-                            floatBufferSizeMeshBones * sizeof(float));
+                        var matrixSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
+                        Scene.TransformBufferGpu.Update(meshBones,
+                            (int)BoneTransformOffset * matrixSize,
+                            meshBoneCount * matrixSize);
                     }
-
-                    var first = true;
-                    foreach (var matrix in modelBones[..boneCount])
-                    {
-                        var bbox = LocalBoundingBox.Transform(matrix);
-                        newBoundingBox = first ? bbox : newBoundingBox.Union(bbox);
-                        first = false;
-                    }
-
-                    LocalBoundingBox = newBoundingBox;
                 }
                 finally
                 {
-                    ArrayPool<float>.Shared.Return(floatBuffer);
+                    ArrayPool<OpenTK.Mathematics.Matrix3x4>.Shared.Return(meshBones);
                 }
             }
 
@@ -524,8 +495,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         /// <summary>
         /// Writes this model's current skinning matrices (or identity when not animating) into the given
-        /// slice of the scene transform buffer data. Called when the scene instance buffers are (re)built
-        /// so paused animations survive buffer recreation.
+        /// slice of the scene transform buffer data, and refreshes the local bounding box to cover the
+        /// animated pose. Called every frame while animating, and when the scene instance buffers are
+        /// (re)built so paused animations survive buffer recreation.
         /// </summary>
         internal void WriteBoneTransforms(Span<OpenTK.Mathematics.Matrix3x4> dest)
         {
@@ -539,23 +511,39 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 return;
             }
 
-            var modelBones = ArrayPool<Matrix4x4>.Shared.Rent(boneCount);
+            var modelBonesBuffer = ArrayPool<Matrix4x4>.Shared.Rent(boneCount);
 
             try
             {
-                AnimationController.GetSkinningMatrices(modelBones.AsSpan(0, boneCount));
+                var modelBones = modelBonesBuffer.AsSpan(0, boneCount);
+                AnimationController.GetSkinningMatrices(modelBones);
 
                 for (var i = 0; i < remappingTable.Length; i++)
                 {
                     var modelBoneIndex = remappingTable[i];
                     var modelBoneExists = modelBoneIndex < boneCount && modelBoneIndex != -1;
 
+                    // Caller may pass a rented buffer, so write identity for invalid remaps instead of leaking stale data into the shared buffer
                     dest[i] = modelBoneExists ? modelBones[modelBoneIndex].To3x4() : identity;
                 }
+
+                UpdateBoundingBox(); // Reset back to the mesh bbox
+                var meshBoundingBox = LocalBoundingBox;
+                var newBoundingBox = meshBoundingBox;
+
+                var first = true;
+                foreach (var matrix in modelBones)
+                {
+                    var bbox = meshBoundingBox.Transform(matrix);
+                    newBoundingBox = first ? bbox : newBoundingBox.Union(bbox);
+                    first = false;
+                }
+
+                LocalBoundingBox = newBoundingBox;
             }
             finally
             {
-                ArrayPool<Matrix4x4>.Shared.Return(modelBones);
+                ArrayPool<Matrix4x4>.Shared.Return(modelBonesBuffer);
             }
         }
 
