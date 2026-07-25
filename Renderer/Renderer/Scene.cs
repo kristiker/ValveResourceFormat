@@ -398,26 +398,32 @@ namespace ValveResourceFormat.Renderer
                 node.BoundingBoxBeforeUpdate = node.BoundingBox;
             }
 
-            UpdateNodesParallel(updateContext);
-
-            foreach (var node in staticNodes)
+            using (new GLDebugGroup("Poses (threaded)"))
             {
-                node.Update(updateContext);
+                UpdateNodesParallel(updateContext);
             }
 
-            foreach (var node in dynamicNodes)
+            using (new GLDebugGroup("Uploads"))
             {
-                if (node.Parent != null)
+                foreach (var node in staticNodes)
                 {
-                    continue; // child nodes are updated by their parent
+                    node.Update(updateContext);
                 }
 
-                var oldBox = node.BoundingBoxBeforeUpdate;
-                node.Update(updateContext);
-
-                if (node.LayerEnabled && !oldBox.Equals(node.BoundingBox))
+                foreach (var node in dynamicNodes)
                 {
-                    DynamicOctree.Update(node, oldBox);
+                    if (node.Parent != null)
+                    {
+                        continue; // child nodes are updated by their parent
+                    }
+
+                    var oldBox = node.BoundingBoxBeforeUpdate;
+                    node.Update(updateContext);
+
+                    if (node.LayerEnabled && !oldBox.Equals(node.BoundingBox))
+                    {
+                        DynamicOctree.Update(node, oldBox);
+                    }
                 }
             }
 

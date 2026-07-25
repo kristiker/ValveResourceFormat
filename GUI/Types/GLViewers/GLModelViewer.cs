@@ -22,7 +22,7 @@ namespace GUI.Types.GLViewers
         private const float StressTestGridSpacing = 50f;
 
         /// <summary>Whether each copy plays a random animation, instead of all of them playing the first one.</summary>
-        private const bool StressTestRandomAnimations = true;
+        private const bool StressTestRandomAnimations = false;
 
         /// <summary>Scene bounds before the stress test grid was spawned, to keep the camera framing the model.</summary>
         private AABB? preStressTestBounds;

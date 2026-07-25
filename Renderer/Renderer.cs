@@ -944,20 +944,28 @@ public class Renderer
 
         Camera.RecalculateMatrices();
 
-        Scene.Update(updateContext);
-        SkyboxScene?.Update(updateContext);
+        using (new GLDebugGroup("Scene Nodes"))
+        {
+            Scene.Update(updateContext);
+            SkyboxScene?.Update(updateContext);
+        }
 
         Scene.PostProcessInfo.UpdatePostProcessing(updateContext.Camera);
 
-        Scene.SetupSceneShadows(updateContext.Camera, ShadowDepthBuffer.Width);
+        using (new GLDebugGroup("Shadows"))
+        {
+            Scene.SetupSceneShadows(updateContext.Camera, ShadowDepthBuffer.Width);
+        }
 
         if (ViewBuffer.Data.ExperimentalLightsEnabled)
         {
+            using var _ = new GLDebugGroup("Light Binning");
             Scene.LightingInfo.BinBarnLights(Camera, ShadowTextureSize);
         }
 
         if (Scene is { EnablePvsCulling: true, VoxelVisibility: not null })
         {
+            using var _ = new GLDebugGroup("PVS");
             var pvsPosition = LockedCullPosition ?? updateContext.Camera.Location;
             Scene.CurrentFramePvs = Scene.VoxelVisibility.GetPVSForPoint(pvsPosition);
         }
@@ -966,8 +974,11 @@ public class Renderer
             Scene.CurrentFramePvs = null;
         }
 
-        Scene.CollectSceneDrawCalls(updateContext.Camera, LockedCullFrustum);
-        SkyboxScene?.CollectSceneDrawCalls(updateContext.Camera, LockedCullFrustum);
+        using (new GLDebugGroup("Collect Draw Calls"))
+        {
+            Scene.CollectSceneDrawCalls(updateContext.Camera, LockedCullFrustum);
+            SkyboxScene?.CollectSceneDrawCalls(updateContext.Camera, LockedCullFrustum);
+        }
     }
 
     void EnsureDepthPyramidSize(int width, int height)
