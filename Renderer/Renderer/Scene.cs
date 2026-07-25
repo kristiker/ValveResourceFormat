@@ -94,6 +94,9 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the GPU buffer containing world-space transform matrices for all scene nodes.</summary>
         public StorageBuffer? TransformBufferGpu { get; set; }
 
+        /// <summary>Gets or sets the GPU buffer containing composited per-vertex morph offsets for every morphed mesh in the scene.</summary>
+        public StorageBuffer? MorphOffsetsBufferGpu { get; set; }
+
 
         /// <summary>Gets or sets the GPU buffer containing per-draw-call bounding boxes for indirect culling.</summary>
         public StorageBuffer? DrawBoundsGpu { get; set; }
@@ -427,6 +430,8 @@ namespace ValveResourceFormat.Renderer
             {
                 InstanceBufferGpu?.Delete();
                 TransformBufferGpu?.Delete();
+                MorphOffsetsBufferGpu?.Delete();
+                MorphOffsetsBufferGpu = null;
             }
 
             var nodes = AllNodes.ToList();
@@ -444,6 +449,9 @@ namespace ValveResourceFormat.Renderer
                 // Reserve index 0 for identity transform
                 Matrix4x4.Identity.To3x4()
             };
+
+            var morphComposites = new List<MorphComposite>();
+            var morphSlotCount = 0;
 
             foreach (var node in nodes)
             {
@@ -477,14 +485,31 @@ namespace ValveResourceFormat.Renderer
 
                 var boneTransformOffset = 0u;
 
-                if (node is ModelSceneNode { BoneTransformCount: > 0 } model)
+                if (node is ModelSceneNode model)
                 {
-                    // Reserve a skinning matrix range so animated models read (and stream) bones
-                    // from the shared transform buffer, keyed per object
-                    boneTransformOffset = (uint)transformData.Count;
-                    CollectionsMarshal.SetCount(transformData, transformData.Count + model.BoneTransformCount);
-                    model.WriteBoneTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)boneTransformOffset, model.BoneTransformCount));
-                    model.BoneTransformOffset = boneTransformOffset;
+                    if (model.BoneTransformCount > 0)
+                    {
+                        // Reserve a skinning matrix range so animated models read (and stream) bones
+                        // from the shared transform buffer, keyed per object
+                        boneTransformOffset = (uint)transformData.Count;
+                        CollectionsMarshal.SetCount(transformData, transformData.Count + model.BoneTransformCount);
+                        model.WriteBoneTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)boneTransformOffset, model.BoneTransformCount));
+                        model.BoneTransformOffset = boneTransformOffset;
+                    }
+
+                    // Reserve a composite range per morphed mesh, so every flexed mesh in the scene
+                    // gathers into one shared buffer instead of owning its own
+                    foreach (var mesh in model.RenderableMeshes)
+                    {
+                        if (mesh.FlexStateManager?.MorphComposite is not { HasMorphData: true } composite)
+                        {
+                            continue;
+                        }
+
+                        composite.BaseOffset = (uint)morphSlotCount;
+                        morphSlotCount += composite.SlotCount;
+                        morphComposites.Add(composite);
+                    }
                 }
 
                 instanceData[node.Id] = new ObjectDataStandard
@@ -505,6 +530,23 @@ namespace ValveResourceFormat.Renderer
 
             // Dynamic: animated models stream their skinning matrices into it every frame
             TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.DynamicDraw);
+
+            if (morphSlotCount == 0)
+            {
+                return;
+            }
+
+            MorphOffsetsBufferGpu = StorageBuffer.Allocate<Vector4>(ReservedBufferSlots.MorphOffsets, morphSlotCount, BufferUsageHint.DynamicCopy);
+
+            // Any range that does not get dispatched below reads as no deformation rather than garbage
+            MorphOffsetsBufferGpu.Clear();
+
+            // The buffer is new, so every composite has to fill its range again; a mesh whose flex
+            // controllers never change is otherwise never dispatched and would render neutral
+            foreach (var composite in morphComposites)
+            {
+                composite.Dispatch(MorphOffsetsBufferGpu);
+            }
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)

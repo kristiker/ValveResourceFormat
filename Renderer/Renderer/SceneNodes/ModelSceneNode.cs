@@ -284,7 +284,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     if (renderableMesh.FlexStateManager.SetControllerValues(datas))
                     {
                         renderableMesh.FlexStateManager.UpdateComposite();
-                        renderableMesh.FlexStateManager.MorphComposite.Dispatch();
+                        renderableMesh.FlexStateManager.MorphComposite.Dispatch(Scene.MorphOffsetsBufferGpu);
                     }
                 }
             }

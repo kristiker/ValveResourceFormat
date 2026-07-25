@@ -4,16 +4,17 @@
 #define VRF_MORPH_INCLUDE
 
 #define F_MORPH_SUPPORTED 0 // most shaders
-#define bMorphed (morphVertexIdOffset != -1)
+#define bMorphed (morphBufferOffset != -1)
 
 #if (F_MORPH_SUPPORTED == 1)
-    // Composited by morph_composite.comp.slang, indexed by mesh vertex id
+    // Composited by morph_composite.comp.slang, one entry per vertex of every morphed mesh in the scene
     layout(binding = 13, std430) readonly buffer MorphOffsets
     {
         vec4 morphOffsets[];
     };
 
-    uniform int morphVertexIdOffset;
+    // Index of this draw call's first vertex in the buffer above, or -1 when the mesh has no morphs
+    uniform int morphBufferOffset;
 #endif
 
 vec3 getMorphOffset()
@@ -21,7 +22,7 @@ vec3 getMorphOffset()
     #if (F_MORPH_SUPPORTED == 1)
         if (bMorphed)
         {
-            return morphOffsets[gl_VertexID + morphVertexIdOffset].xyz;
+            return morphOffsets[morphBufferOffset + gl_VertexID].xyz;
         }
     #endif
 

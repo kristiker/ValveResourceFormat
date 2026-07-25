@@ -42,6 +42,7 @@ layout(binding = 13, std430) writeonly buffer MorphOffsets
 uniform sampler2D morphAtlas;
 uniform uint g_nCompositeWidth;
 uniform uint g_nCompositeSlotCount;
+uniform uint g_nCompositeBaseOffset; // Where this composite's range starts in the scene wide buffer
 
 void main()
 {
@@ -75,5 +76,5 @@ void main()
         // TODO: normals would gather from the NormalWrinkle bundle's own source rect: normal += weight * (texelFetch(morphAtlas, ivec2(rect.normalSrc) + local, 0) * rect.normalRanges + rect.normalOffsets).xyz;
     }
 
-    morphOffsets[slot] = vec4(offset, 0.0);
+    morphOffsets[g_nCompositeBaseOffset + slot] = vec4(offset, 0.0);
 }

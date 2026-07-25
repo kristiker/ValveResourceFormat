@@ -14,10 +14,14 @@ namespace ValveResourceFormat.Renderer
     {
         private const int ComputeGroupSize = 64;
 
-        /// <summary>Gets the composited per-vertex morph offsets, indexed by mesh vertex id.</summary>
-        public StorageBuffer OffsetBuffer { get; }
+        /// <summary>Gets or sets the start of this composite's range in the scene morph offsets buffer,
+        /// assigned when the scene instance buffers are (re)built. <see langword="null"/> until then.</summary>
+        public uint? BaseOffset { get; set; }
 
-        /// <summary>Gets whether this composite has anything to gather, and so anything worth binding.</summary>
+        /// <summary>Gets the number of slots this composite occupies in the scene morph offsets buffer.</summary>
+        public int SlotCount => slotCount;
+
+        /// <summary>Gets whether this composite has anything to gather, and so a range worth reserving.</summary>
         public bool HasMorphData => slotCount > 0 && rectCount > 0;
 
         /// <summary>A single morph rect. The first two vectors mirror <c>MorphRect</c> in morph_composite.comp.slang.</summary>
@@ -72,14 +76,10 @@ namespace ValveResourceFormat.Renderer
             var rects = BuildRects(morphDatas);
             rectCount = rects.Length;
 
-            OffsetBuffer = StorageBuffer.Allocate<Vector4>(ReservedBufferSlots.MorphOffsets, Math.Max(slotCount, 1), BufferUsageHint.DynamicCopy);
             rectBuffer = new StorageBuffer(ReservedBufferSlots.MorphRects);
             rectStartBuffer = new StorageBuffer(ReservedBufferSlots.MorphRectStarts);
             rectEntryBuffer = new StorageBuffer(ReservedBufferSlots.MorphRectEntries);
             weightBuffer = new StorageBuffer(ReservedBufferSlots.MorphWeights);
-
-            // Models whose morphs never animate are never dispatched, so start from no deformation
-            OffsetBuffer.Clear();
 
             if (!HasMorphData)
             {
@@ -201,10 +201,12 @@ namespace ValveResourceFormat.Renderer
             }
         }
 
-        /// <summary>Dispatches the compute pass that gathers all active morph targets into <see cref="OffsetBuffer"/>.</summary>
-        public void Dispatch()
+        /// <summary>Dispatches the compute pass that gathers all active morph targets into this composite's
+        /// range of the scene morph offsets buffer.</summary>
+        /// <param name="offsetBuffer">The scene morph offsets buffer, or <see langword="null"/> if it has not been built yet.</param>
+        public void Dispatch(StorageBuffer? offsetBuffer)
         {
-            if (!HasMorphData)
+            if (!HasMorphData || offsetBuffer == null || BaseOffset is not uint baseOffset)
             {
                 return;
             }
@@ -219,12 +221,13 @@ namespace ValveResourceFormat.Renderer
             shader.SetTexture(0, "morphAtlas", morphAtlas);
             shader.SetUniform1("g_nCompositeWidth", (uint)compositeWidth);
             shader.SetUniform1("g_nCompositeSlotCount", (uint)slotCount);
+            shader.SetUniform1("g_nCompositeBaseOffset", baseOffset);
 
             rectBuffer.BindBufferBase();
             rectStartBuffer.BindBufferBase();
             rectEntryBuffer.BindBufferBase();
             weightBuffer.BindBufferBase();
-            OffsetBuffer.BindBufferBase();
+            offsetBuffer.BindBufferBase();
 
             GL.DispatchCompute((slotCount + ComputeGroupSize - 1) / ComputeGroupSize, 1, 1);
 
@@ -245,10 +248,9 @@ namespace ValveResourceFormat.Renderer
             weightsDirty = true;
         }
 
-        /// <summary>Deletes the GPU buffers owned by this composite.</summary>
+        /// <summary>Deletes the GPU buffers owned by this composite. The scene owns the offsets buffer it gathers into.</summary>
         public void Delete()
         {
-            OffsetBuffer.Delete();
             rectBuffer.Delete();
             rectStartBuffer.Delete();
             rectEntryBuffer.Delete();

@@ -109,7 +109,7 @@ namespace ValveResourceFormat.Renderer
             public int MeshId = -1;
             public int ShaderId = -1;
             public int ShaderProgramId = -1;
-            public int MorphVertexIdOffset = -1;
+            public int MorphBufferOffset = -1;
 
             public Uniforms() { }
         }
@@ -195,7 +195,7 @@ namespace ValveResourceFormat.Renderer
 
                         if (shader.Parameters.ContainsKey("F_MORPH_SUPPORTED"))
                         {
-                            uniforms.MorphVertexIdOffset = shader.GetUniformLocation("morphVertexIdOffset");
+                            uniforms.MorphBufferOffset = shader.GetUniformLocation("morphBufferOffset");
                         }
 
                         if (shader.Parameters.ContainsKey("D_BAKED_LIGHTING_FROM_PROBE"))
@@ -225,6 +225,9 @@ namespace ValveResourceFormat.Renderer
                         Debug.Assert(context.Scene.InstanceBufferGpu != null && context.Scene.TransformBufferGpu != null);
                         context.Scene.TransformBufferGpu.BindBufferBase();
                         context.Scene.InstanceBufferGpu.BindBufferBase();
+
+                        // Null when the scene has no morphed meshes, in which case no draw reads it
+                        context.Scene.MorphOffsetsBufferGpu?.BindBufferBase();
 
                         if (config.IndirectDraw)
                         {
@@ -323,17 +326,14 @@ namespace ValveResourceFormat.Renderer
                 GL.ProgramUniform4((uint)shader.Program, uniforms.AnimationData, bAnimated ? 1u : 0u, boneStart, numBones, numWeights);
             }
 
-            if (uniforms.MorphVertexIdOffset != -1)
+            if (uniforms.MorphBufferOffset != -1)
             {
-                var morphComposite = request.Mesh.FlexStateManager?.MorphComposite;
-                var morphed = morphComposite is { HasMorphData: true };
+                // No range means the scene buffer this would index into does not exist yet
+                var morphBufferOffset = request.Mesh.FlexStateManager?.MorphComposite is { HasMorphData: true, BaseOffset: uint baseOffset }
+                    ? (int)baseOffset + request.Call.VertexIdOffset
+                    : -1;
 
-                if (morphed)
-                {
-                    morphComposite!.OffsetBuffer.BindBufferBase();
-                }
-
-                GL.ProgramUniform1(shader.Program, uniforms.MorphVertexIdOffset, morphed ? request.Call.VertexIdOffset : -1);
+                GL.ProgramUniform1(shader.Program, uniforms.MorphBufferOffset, morphBufferOffset);
             }
 
             if (uniforms.Transform > -1)
