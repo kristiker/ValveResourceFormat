@@ -17,6 +17,16 @@ namespace GUI.Types.GLViewers
 {
     class GLModelViewer : GLSingleNodeViewer
     {
+        /// <summary>Extra copies of the model to spawn for stress testing. Set to 0 to disable.</summary>
+        private const int StressTestModelCount = 1_000;
+        private const float StressTestGridSpacing = 50f;
+
+        /// <summary>Whether each copy plays a random animation, instead of all of them playing the first one.</summary>
+        private const bool StressTestRandomAnimations = true;
+
+        /// <summary>Scene bounds before the stress test grid was spawned, to keep the camera framing the model.</summary>
+        private AABB? preStressTestBounds;
+
         protected Model? model { get; init; }
         private PhysAggregateData? phys;
 
@@ -270,6 +280,102 @@ namespace GUI.Types.GLViewers
             };
 
             Scene.PostProcessInfo.AddPostProcessVolume(post);
+
+            if (model != null)
+            {
+                // Last, so the copies get the same scene setup as the model they came from
+                AddStressTestModels(model);
+            }
+        }
+
+        /// <inheritdoc/>
+        public override void PostSceneLoad()
+        {
+            base.PostSceneLoad();
+
+            if (preStressTestBounds is AABB bounds)
+            {
+                // Frame what the viewer would have loaded, not the grid spread out around it
+                FocusCamera(bounds);
+            }
+        }
+
+        /// <summary>
+        /// Spawns copies of the loaded model in a grid, each looping the first animation from a random start,
+        /// to stress test many animated models at once. The model the ui drives is left untouched at the origin.
+        /// </summary>
+        private void AddStressTestModels(Model model)
+        {
+            Debug.Assert(modelSceneNode != null);
+
+            if (this is GLAnimationViewer)
+            {
+                return; // Inspecting a single animation, a grid of copies would only get in the way
+            }
+
+            // Single node viewers lock an empty cull frustum, which culls nothing
+            Renderer.LockedCullFrustum = null;
+
+            preStressTestBounds = GetSceneBounds();
+
+            // Square grid over the slots, one of which is the model already in the scene
+            var gridWidth = (int)MathF.Ceiling(MathF.Sqrt(StressTestModelCount + 1));
+
+            // Centered on the origin, so the model the camera frames is surrounded by the copies
+            var gridCenter = (gridWidth - 1) * StressTestGridSpacing * 0.5f;
+            var centerSlot = (gridWidth / 2 * gridWidth) + (gridWidth / 2);
+
+            var animationNames = modelSceneNode.Animations.Keys.ToArray();
+            var random = new Random(Seed: 0); // Fixed seed keeps runs comparable
+
+            var spawned = 0;
+
+            for (var slot = 0; spawned < StressTestModelCount; slot++)
+            {
+                if (slot == centerSlot)
+                {
+                    continue; // Closest slot to the origin, that is where the ui controlled model sits
+                }
+
+                var node = new ModelSceneNode(Scene, model)
+                {
+                    Transform = Matrix4x4.CreateTranslation(
+                        (slot % gridWidth * StressTestGridSpacing) - gridCenter,
+                        (slot / gridWidth * StressTestGridSpacing) - gridCenter,
+                        0f),
+                };
+
+                if (animationNames.Length > 0)
+                {
+                    // Loops by default, so these keep animating without any further input
+                    node.SetAnimationByName(StressTestRandomAnimations
+                        ? animationNames[random.Next(animationNames.Length)]
+                        : animationNames[0]);
+
+                    if (node.AnimationController.ActiveAnimation is { FrameCount: > 1, Fps: > 0f } animation)
+                    {
+                        node.AnimationController.Time = random.NextSingle() * (animation.FrameCount / animation.Fps);
+                    }
+                }
+
+                Scene.Add(node, true);
+                spawned++;
+            }
+        }
+
+        /// <summary>Returns the combined bounds of every node currently in the scene.</summary>
+        private AABB GetSceneBounds()
+        {
+            var bounds = new AABB();
+            var first = true;
+
+            foreach (var node in Scene.AllNodes)
+            {
+                bounds = first ? node.BoundingBox : bounds.Union(node.BoundingBox);
+                first = false;
+            }
+
+            return bounds;
         }
 
         protected override void AddUiControls()
