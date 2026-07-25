@@ -3,8 +3,9 @@ global using DepthOnlyDrawBuckets = System.Collections.Generic.Dictionary<ValveR
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Blocks;
@@ -177,8 +178,17 @@ namespace ValveResourceFormat.Renderer
         private readonly List<SceneNode> parallelUpdateNodes = [];
         private bool parallelUpdateNodesDirty = true;
 
-        /// <summary>Below this many nodes the thread pool dispatch costs more than it saves.</summary>
-        private const int MinNodesForParallelUpdate = 8;
+        /// <summary>Nodes claimed at a time. Large enough to amortize the interlocked handoff, small
+        /// enough that a few heavy skeletons landing together do not strand a thread at the end.</summary>
+        private const int ParallelUpdateChunkSize = 16;
+
+        private ParallelUpdateWorker[]? parallelUpdateWorkers;
+        private readonly ManualResetEventSlim parallelUpdateDone = new(false);
+        private Scene.UpdateContext parallelUpdateContext;
+        private Exception? parallelUpdateException;
+        private int parallelUpdateCursor;
+        private int parallelUpdateCompletedChunks;
+        private int parallelUpdateChunkCount;
 
         private Shader? OutlineShader;
 
@@ -433,6 +443,11 @@ namespace ValveResourceFormat.Renderer
         /// thread pool. Each <see cref="SceneNode.UpdateParallel"/> only touches state its own node owns;
         /// the GPU uploads that follow from it are left to <see cref="SceneNode.Update"/> afterwards.
         /// </summary>
+        /// <remarks>
+        /// Hand rolled rather than <c>Parallel.For</c>, which rebuilds its replicating tasks, range
+        /// workers and index ranges on every call and so allocates a few kilobytes per frame. The workers
+        /// here are created once and the node list is handed out in chunks through one shared cursor.
+        /// </remarks>
         private void UpdateNodesParallel(Scene.UpdateContext updateContext)
         {
             if (parallelUpdateNodesDirty)
@@ -450,8 +465,10 @@ namespace ValveResourceFormat.Renderer
                 parallelUpdateNodesDirty = false;
             }
 
-            // Attached nodes are driven by their parent, which has to evaluate its own pose first
-            if (parallelUpdateNodes.Count < MinNodesForParallelUpdate)
+            var nodeCount = parallelUpdateNodes.Count;
+
+            // Not enough to fill two chunks, so there is nothing for a second thread to take
+            if (nodeCount < ParallelUpdateChunkSize * 2)
             {
                 foreach (var node in parallelUpdateNodes)
                 {
@@ -464,15 +481,117 @@ namespace ValveResourceFormat.Renderer
                 return;
             }
 
-            Parallel.For(0, parallelUpdateNodes.Count, i =>
-            {
-                var node = parallelUpdateNodes[i];
+            parallelUpdateWorkers ??= CreateParallelUpdateWorkers();
 
-                if (node.Parent == null)
+            parallelUpdateContext = updateContext;
+            parallelUpdateChunkCount = (nodeCount + ParallelUpdateChunkSize - 1) / ParallelUpdateChunkSize;
+            parallelUpdateCursor = 0;
+            parallelUpdateCompletedChunks = 0;
+            parallelUpdateDone.Reset();
+
+            foreach (var worker in parallelUpdateWorkers)
+            {
+                worker.Queue();
+            }
+
+            // The calling thread is a worker too, so a starved pool costs latency rather than a stall
+            DrainParallelUpdate();
+
+            // Blocking, not spinning: SpinWait escalates to Thread.Sleep(1), which on Windows rounds up
+            // to the ~15ms scheduler tick and drowns out the whole frame
+            parallelUpdateDone.Wait();
+
+            if (parallelUpdateException != null)
+            {
+                var exception = parallelUpdateException;
+                parallelUpdateException = null;
+                ExceptionDispatchInfo.Throw(exception);
+            }
+        }
+
+        private ParallelUpdateWorker[] CreateParallelUpdateWorkers()
+        {
+            var workers = new ParallelUpdateWorker[Math.Max(1, Environment.ProcessorCount - 1)];
+
+            for (var i = 0; i < workers.Length; i++)
+            {
+                workers[i] = new ParallelUpdateWorker(this);
+            }
+
+            return workers;
+        }
+
+        /// <summary>
+        /// Claims chunks off <see cref="parallelUpdateCursor"/> until the node list is exhausted. Run by
+        /// the render thread and every worker alike; completion is counted in chunks rather than workers,
+        /// so one that the pool only gets around to late is harmless extra help rather than a miscount.
+        /// </summary>
+        private void DrainParallelUpdate()
+        {
+            var nodes = parallelUpdateNodes;
+            var nodeCount = nodes.Count;
+            int start;
+
+            while ((start = Interlocked.Add(ref parallelUpdateCursor, ParallelUpdateChunkSize) - ParallelUpdateChunkSize) < nodeCount)
+            {
+                try
                 {
-                    node.UpdateParallel(updateContext);
+                    var end = Math.Min(start + ParallelUpdateChunkSize, nodeCount);
+
+                    for (var i = start; i < end; i++)
+                    {
+                        var node = nodes[i];
+
+                        // Attached nodes are driven by their parent, which has to evaluate its own pose first
+                        if (node.Parent == null)
+                        {
+                            node.UpdateParallel(parallelUpdateContext);
+                        }
+                    }
                 }
-            });
+#pragma warning disable CA1031 // Do not catch general exception types
+                catch (Exception exception)
+                {
+                    // Rethrown on the render thread. Letting one escape a pool thread would take the process down
+                    Interlocked.CompareExchange(ref parallelUpdateException, exception, null);
+                }
+#pragma warning restore CA1031
+                finally
+                {
+                    // Every chunk increments exactly once, so this only reaches the total after the last
+                    // one has run its finally: the render thread cannot be released early
+                    if (Interlocked.Increment(ref parallelUpdateCompletedChunks) == parallelUpdateChunkCount)
+                    {
+                        parallelUpdateDone.Set();
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// A reusable thread pool work item, queued once per frame per worker. Queuing the item itself
+        /// rather than a delegate keeps the dispatch free of allocations.
+        /// </summary>
+        private sealed class ParallelUpdateWorker(Scene scene) : IThreadPoolWorkItem
+        {
+            private int queued;
+
+            /// <summary>Queues this worker unless it is still sitting unstarted in the pool from an earlier frame.</summary>
+            public void Queue()
+            {
+                if (Interlocked.Exchange(ref queued, 1) == 1)
+                {
+                    return;
+                }
+
+                ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: false);
+            }
+
+            public void Execute()
+            {
+                Volatile.Write(ref queued, 0);
+                scene.DrainParallelUpdate();
+            }
         }
 
         /// <summary>Allocates GPU uniform and storage buffers for lighting, environment maps, light probes, frustum planes, and indirect draws.</summary>
@@ -1983,6 +2102,7 @@ namespace ValveResourceFormat.Renderer
                 lightingBuffer?.Dispose();
                 lpvBuffer?.Dispose();
                 envMapBuffer?.Dispose();
+                parallelUpdateDone.Dispose();
                 LightingInfo.DisposeBarnLights();
             }
         }
