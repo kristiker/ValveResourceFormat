@@ -68,8 +68,8 @@ uint GetObjectBoneOffset()
     return objects[gl_BaseInstance].TransformIndex + 2u;
 }
 
-// The object to world matrix still packed. Positions and directions can be multiplied straight
-// against it, vec4(v, w) * m being the same three dot products UnpackMatrix4 feeds to a mat4.
+// The object to world matrix still packed. vec4(v, w) * m is the same three dot products
+// UnpackMatrix4 would hand to a mat4.
 mat3x4 GetObjectToWorldMatrix3x4()
 {
     ObjectDataStandard objectData = objects[gl_BaseInstance];

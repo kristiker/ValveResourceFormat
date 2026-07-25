@@ -67,14 +67,12 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <summary>Gets whether this model has animations loaded and a skeleton to animate.</summary>
         public bool IsAnimated { get; private set; }
 
-        /// <summary>Distance from an object's transform to its first skinning matrix in the scene transform buffer.
-        /// Kept in sync with <c>GetObjectBoneOffset</c> in instancing.slang, which derives the bone range from the
-        /// transform index alone rather than storing a second index per object. The slot in between carries the
-        /// uniform scale that the vertex shader applies to positions.</summary>
+        /// <summary>Distance from an object's transform to its first skinning matrix, the slot in between holding
+        /// its Transform. Kept in sync with <c>GetObjectBoneOffset</c> in instancing.slang.</summary>
         internal const uint BoneTransformStart = 2;
 
-        /// <summary>Smallest basis a skinning matrix is uploaded with. Invisible at any camera distance, and
-        /// far enough from zero that squaring it in the shader's normalize stays well clear of underflow.</summary>
+        /// <summary>Smallest basis a skinning matrix is uploaded with. Invisible at any camera distance, and far
+        /// enough from zero that squaring it in the shader's normalize cannot underflow.</summary>
         private const float MinimumBoneScale = 1e-5f;
 
         /// <summary>Gets the number of skinning matrix slots this model reserves in the scene transform buffer (the mesh-bone remapping table length).</summary>
@@ -500,8 +498,8 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <summary>
-        /// Streams this model's scale slot and skinning matrices into the scene transform buffer. The bounding
-        /// box is refreshed even when there is nothing to upload to yet.
+        /// Streams this model's transform buffer range to the GPU. The bounding box is refreshed even when
+        /// there is nothing to upload to yet.
         /// </summary>
         private void UploadSkinningTransforms()
         {
@@ -530,10 +528,8 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <summary>
         /// Writes this model's whole transform buffer range and refreshes the local bounding box to cover the
         /// animated pose: the object transform as a matrix, the same transform as a Transform, then one
-        /// skinning matrix per mesh bone. The object transform is folded into every matrix so the vertex
-        /// shader needs no second matrix; its uniform scale is left out of them and applied per vertex
-        /// instead, which keeps them rotation plus translation. The matrix slot stays live for the draws that
-        /// read it unskinned, and the Transform beside it is where the shader picks that scale back up.
+        /// skinning matrix per mesh bone. The object transform is folded into the matrices so the vertex
+        /// shader needs no second one, its uniform scale left out of them and applied per vertex instead.
         /// Called every frame while animating, when the model moves, and when the scene instance buffers are
         /// (re)built so paused animations survive buffer recreation.
         /// </summary>
@@ -545,9 +541,8 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             if (!Matrix4x4.Decompose(objectToWorld, out var scalePerAxis, out var rotation, out var translation))
             {
-                // A collapsed transform is how content hides a model, so keep the zero rather than falling
-                // back to one: the vertices fold onto a point and the rasterizer drops the triangles. Only a
-                // transform that is degenerate for some other reason, a mirrored one, keeps its size.
+                // A collapsed transform is how content hides a model, so keep the zero: the vertices fold
+                // onto a point and the triangles come out zero area. Degenerate for any other reason does not.
                 scalePerAxis = objectToWorld.GetDeterminant() == 0f ? Vector3.Zero : Vector3.One;
                 rotation = Quaternion.Identity;
                 translation = objectToWorld.Translation;
@@ -558,10 +553,8 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             dest[0] = objectToWorld.To3x4();
 
-            // The slot Source 2 keeps between the transform and the bones, holding a Transform rather than a
-            // matrix: scale, rotation and translation each stay a field of their own, so the shader reads the
-            // scale as one float instead of measuring a basis vector. Laid out as three vec4s, which puts the
-            // scale at the same byte offset the Source 2 shaders read it from
+            // A Transform rather than a matrix, so the shader reads the scale as one float instead of
+            // measuring a basis. Three vec4s puts it at the same byte offset Source 2 reads it from
             dest[1] = new OpenTK.Mathematics.Matrix3x4(
                 scalePerAxis.X, scalePerAxis.Y, scalePerAxis.Z, 0f,
                 rotation.X, rotation.Y, rotation.Z, rotation.W,
@@ -601,12 +594,10 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
                     var bone = modelBones[modelBoneIndex];
 
-                    // Content hides parts of a model by animating a bone to zero scale, which zeroes its
-                    // whole matrix. Only the vertices weighted to that bone collapse, so the triangles across
-                    // the seam keep their area and would carry a normalized zero length normal, a NaN, into
-                    // the lighting. An epsilon basis keeps them finite and collapses the geometry just the
-                    // same. Substituted on the way to the GPU rather than in the pose, so attachments and the
-                    // skeleton view still see the real transform and nothing compounds down a bone chain.
+                    // A bone animated to zero scale zeroes its matrix, but only the vertices weighted to it
+                    // collapse, so the seam triangles still rasterize and would carry a normalized zero
+                    // length normal, a NaN, into the lighting. Substituted here rather than in the pose, so
+                    // attachments keep the real transform and nothing compounds down a bone chain.
                     if (((bone.M11 * bone.M11) + (bone.M12 * bone.M12) + (bone.M13 * bone.M13)) < MinimumBoneScale * MinimumBoneScale)
                     {
                         bone.M11 = MinimumBoneScale;
@@ -614,8 +605,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                         bone.M33 = MinimumBoneScale;
                     }
 
-                    // Scaling the position rather than the matrix moves the scale onto the bone translation,
-                    // which is what conjugating the skinning matrix by the scale leaves behind
+                    // Conjugating by the scale leaves it on the translation, the position multiply does the rest
                     bone.M41 *= scale;
                     bone.M42 *= scale;
                     bone.M43 *= scale;

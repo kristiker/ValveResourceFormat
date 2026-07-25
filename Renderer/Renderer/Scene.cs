@@ -487,9 +487,8 @@ namespace ValveResourceFormat.Renderer
 
                 if (skinnedModel != null)
                 {
-                    // Reserve the uniform scale slot and the skinning matrix range after the object transform,
-                    // so animated models read (and stream) the whole range from the shared transform buffer at
-                    // the offsets the shader derives from the object transform index
+                    // The Transform slot and the skinning matrices follow the object transform, at the
+                    // offsets the shader derives from the transform index
                     var skinningSlotCount = skinnedModel.BoneTransformCount + (int)ModelSceneNode.BoneTransformStart;
 
                     CollectionsMarshal.SetCount(transformData, (int)transformIndex + skinningSlotCount);

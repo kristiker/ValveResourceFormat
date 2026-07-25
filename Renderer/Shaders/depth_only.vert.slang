@@ -18,9 +18,6 @@ layout (location = 0) in vec3 vPOSITION;
 
 void main()
 {
-    // Falls back to the plain object transform when the draw is not animated, so the matrix and the
-    // scale in GetScaledPositionOs below always agree on which path this vertex is taking
-    mat3x4 vertexTransform = GetSkinnedObjectToWorldMatrix();
     vec3 vertexPosition = vPOSITION;
 
     #if (D_MORPHED == 1)
@@ -31,6 +28,13 @@ void main()
         texCoord = vTEXCOORD;
     #endif
 
-    vec3 fragPosition = GetScaledPositionOs(vertexPosition) * vertexTransform;
+    // The unanimated combo keeps the bone and scale fetches out of the shader entirely, so both sides
+    // have to pick their matrix and their position together
+    #if (D_ANIMATED == 1)
+        vec3 fragPosition = GetScaledPositionOs(vertexPosition) * GetSkinnedObjectToWorldMatrix();
+    #else
+        vec3 fragPosition = vec4(vertexPosition, 1.0) * GetObjectToWorldMatrix3x4();
+    #endif
+
     gl_Position = g_matWorldToProjection * vec4(fragPosition, 1.0);
 }
