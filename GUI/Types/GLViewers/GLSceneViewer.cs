@@ -219,22 +219,28 @@ namespace GUI.Types.GLViewers
                     bbox = bbox.Union(node.BoundingBox);
                 }
 
-                // If there is no bbox, LookAt will break camera, so +1 to location
-                var offset = Math.Max(bbox.Max.X, Math.Max(bbox.Max.Y, bbox.Max.Z)) + 1f * 1.5f;
-                offset = Math.Clamp(offset, 0f, 2000f);
-                var location = new Vector3(offset, 0, offset);
-
-                if (this is GLAnimationViewer)
-                {
-                    location = new(offset);
-                }
-
-                Input.Camera.SetLocation(location);
-                Input.Camera.LookAt(bbox.Center);
+                FocusCamera(bbox);
             }
 
             Scene.StaticOctree.DebugRenderer = new(Scene.StaticOctree, Scene.RendererContext, false);
             Scene.DynamicOctree.DebugRenderer = new(Scene.DynamicOctree, Scene.RendererContext, true);
+        }
+
+        /// <summary>Places the camera far enough out to see the given bounds, looking at their center.</summary>
+        protected void FocusCamera(AABB bbox)
+        {
+            // If there is no bbox, LookAt will break camera, so +1 to location
+            var offset = Math.Max(bbox.Max.X, Math.Max(bbox.Max.Y, bbox.Max.Z)) + 1f * 1.5f;
+            offset = Math.Clamp(offset, 0f, 2000f);
+            var location = new Vector3(offset, 0, offset);
+
+            if (this is GLAnimationViewer)
+            {
+                location = new(offset);
+            }
+
+            Input.Camera.SetLocation(location);
+            Input.Camera.LookAt(bbox.Center);
         }
 
         protected abstract void LoadScene();
