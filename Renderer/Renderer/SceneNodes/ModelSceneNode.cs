@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Renderer.Buffers;
 using ValveResourceFormat.ResourceTypes;
@@ -248,24 +249,25 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             if (IsAnimated)
             {
                 // Update animation matrices and stream them into the shared transform buffer
-                var meshBoneCount = remappingTable.Length;
-                var meshBones = ArrayPool<OpenTK.Mathematics.Matrix3x4>.Shared.Rent(meshBoneCount);
+                var floatBufferSize = remappingTable.Length * 12;
+                var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
 
                 try
                 {
-                    WriteBoneTransforms(meshBones.AsSpan(0, meshBoneCount));
+                    var meshBones = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSize));
+
+                    WriteBoneTransforms(meshBones);
 
                     if (BoneTransformOffset != 0 && Scene.TransformBufferGpu != null)
                     {
-                        var matrixSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
-                        Scene.TransformBufferGpu.Update(meshBones,
-                            (int)BoneTransformOffset * matrixSize,
-                            meshBoneCount * matrixSize);
+                        Scene.TransformBufferGpu.Update(floatBuffer,
+                            (int)BoneTransformOffset * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
+                            floatBufferSize * sizeof(float));
                     }
                 }
                 finally
                 {
-                    ArrayPool<OpenTK.Mathematics.Matrix3x4>.Shared.Return(meshBones);
+                    ArrayPool<float>.Shared.Return(floatBuffer);
                 }
             }
 
@@ -511,11 +513,12 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 return;
             }
 
-            var modelBonesBuffer = ArrayPool<Matrix4x4>.Shared.Rent(boneCount);
+            var floatBufferSize = boneCount * 16;
+            var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
 
             try
             {
-                var modelBones = modelBonesBuffer.AsSpan(0, boneCount);
+                var modelBones = MemoryMarshal.Cast<float, Matrix4x4>(floatBuffer.AsSpan(0, floatBufferSize));
                 AnimationController.GetSkinningMatrices(modelBones);
 
                 for (var i = 0; i < remappingTable.Length; i++)
@@ -543,7 +546,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             }
             finally
             {
-                ArrayPool<Matrix4x4>.Shared.Return(modelBonesBuffer);
+                ArrayPool<float>.Shared.Return(floatBuffer);
             }
         }
 
