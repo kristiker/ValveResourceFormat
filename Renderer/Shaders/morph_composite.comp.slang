@@ -2,8 +2,8 @@
 
 layout (local_size_x = 64) in;
 
-// One thread per composite slot (a mesh vertex id). Each slot gathers every morph rect that
-// covers it and sums their weighted contributions, replacing the additive blending that the
+// One thread per composite slot, for every mesh sharing this morph atlas. Each slot gathers every morph
+// rect that covers it and sums their weighted contributions, replacing the additive blending that the
 // old raster pass relied on.
 
 struct MorphRect
@@ -40,28 +40,39 @@ layout(binding = 13, std430) writeonly buffer MorphOffsets
 };
 
 uniform sampler2D morphAtlas;
+
+// Per morph resource: all meshes in one dispatch share these, since they share the gather tables
 uniform uint g_nCompositeWidth;
 uniform uint g_nCompositeSlotCount;
-uniform uint g_nCompositeBaseOffset; // Where this composite's range starts in the scene wide buffer
+uniform uint g_nRectStartsBase;
+uniform uint g_nMeshCount;
+
+// Per mesh ranges. Meshes are packed back to back in dispatch order, so a stride reaches all of them
+uniform uint g_nOffsetsBase;
+uniform uint g_nWeightsBase;
+uniform uint g_nWeightStride;
 
 void main()
 {
-    uint slot = gl_GlobalInvocationID.x;
+    uint mesh = gl_GlobalInvocationID.x / g_nCompositeSlotCount;
+    uint slot = gl_GlobalInvocationID.x % g_nCompositeSlotCount;
 
-    if (slot >= g_nCompositeSlotCount)
+    if (mesh >= g_nMeshCount)
     {
         return;
     }
+
+    uint weightsBase = g_nWeightsBase + mesh * g_nWeightStride;
 
     ivec2 destCoord = ivec2(slot % g_nCompositeWidth, slot / g_nCompositeWidth);
 
     vec3 offset = vec3(0.0);
 
-    for (uint i = rectStarts[slot]; i < rectStarts[slot + 1u]; i++)
+    for (uint i = rectStarts[g_nRectStartsBase + slot]; i < rectStarts[g_nRectStartsBase + slot + 1u]; i++)
     {
         MorphRect rect = rects[rectEntries[i]];
 
-        float weight = morphWeights[rect.morph.x];
+        float weight = morphWeights[weightsBase + rect.morph.x];
 
         if (weight == 0.0)
         {
@@ -76,5 +87,5 @@ void main()
         // TODO: normals would gather from the NormalWrinkle bundle's own source rect: normal += weight * (texelFetch(morphAtlas, ivec2(rect.normalSrc) + local, 0) * rect.normalRanges + rect.normalOffsets).xyz;
     }
 
-    morphOffsets[g_nCompositeBaseOffset + slot] = vec4(offset, 0.0);
+    morphOffsets[g_nOffsetsBase + mesh * g_nCompositeSlotCount + slot] = vec4(offset, 0.0);
 }

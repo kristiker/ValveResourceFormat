@@ -130,6 +130,8 @@ namespace ValveResourceFormat.Renderer
             }
 
             vertexArrayObjects.Clear();
+
+            DeleteMorphTables();
         }
 
         /// <summary>Deletes and removes the cached GPU buffers and vertex arrays for the specified mesh.</summary>

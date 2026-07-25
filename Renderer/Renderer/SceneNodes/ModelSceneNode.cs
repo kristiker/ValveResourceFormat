@@ -284,7 +284,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     if (renderableMesh.FlexStateManager.SetControllerValues(datas))
                     {
                         renderableMesh.FlexStateManager.UpdateComposite();
-                        renderableMesh.FlexStateManager.MorphComposite.Dispatch(Scene.MorphOffsetsBufferGpu);
+
+                        // The scene composites every changed mesh in one pass once all nodes have updated
+                        Scene.RequestMorphDispatch();
                     }
                 }
             }
@@ -812,10 +814,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <inheritdoc/>
         public override void Delete()
         {
-            foreach (var renderer in meshRenderers)
-            {
-                renderer.FlexStateManager?.MorphComposite.Delete();
-            }
+            // Morph gather tables are owned by the mesh buffer cache, and the composite ranges by the scene
         }
 
         /// <summary>

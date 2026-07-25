@@ -329,8 +329,8 @@ namespace ValveResourceFormat.Renderer
             if (uniforms.MorphBufferOffset != -1)
             {
                 // No range means the scene buffer this would index into does not exist yet
-                var morphBufferOffset = request.Mesh.FlexStateManager?.MorphComposite is { HasMorphData: true, BaseOffset: uint baseOffset }
-                    ? (int)baseOffset + request.Call.VertexIdOffset
+                var morphBufferOffset = request.Mesh.FlexStateManager?.MorphComposite is { HasMorphData: true, OffsetsBase: uint offsetsBase }
+                    ? (int)offsetsBase + request.Call.VertexIdOffset
                     : -1;
 
                 GL.ProgramUniform1(shader.Program, uniforms.MorphBufferOffset, morphBufferOffset);

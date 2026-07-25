@@ -97,6 +97,26 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the GPU buffer containing composited per-vertex morph offsets for every morphed mesh in the scene.</summary>
         public StorageBuffer? MorphOffsetsBufferGpu { get; set; }
 
+        /// <summary>Gets or sets the GPU buffer containing morph target blend weights for every morphed mesh in the scene.</summary>
+        public StorageBuffer? MorphWeightsBufferGpu { get; set; }
+
+        private const int MorphComputeGroupSize = 64;
+
+        /// <summary>The morphed meshes sharing one morph resource, packed back to back in the scene morph buffers.</summary>
+        private sealed class MorphDispatchGroup
+        {
+            public required GPUMeshBufferCache.MorphTables Tables { get; init; }
+            public required List<MorphComposite> Composites { get; init; }
+            public required uint OffsetsBase { get; init; }
+            public required uint WeightsBase { get; init; }
+
+            /// <summary>Whether any mesh in this group uploaded new weights, and so needs compositing again.</summary>
+            public bool Dirty { get; set; }
+        }
+
+        private readonly List<MorphDispatchGroup> morphDispatchGroups = [];
+        private bool morphDispatchNeeded;
+
 
         /// <summary>Gets or sets the GPU buffer containing per-draw-call bounding boxes for indirect culling.</summary>
         public StorageBuffer? DrawBoundsGpu { get; set; }
@@ -121,6 +141,7 @@ namespace ValveResourceFormat.Renderer
 
         private Shader? FrustumCullShader;
         private Shader? CompactionShader;
+        private Shader? MorphCompositeShader;
 
         private Shader? DepthPyramidShader;
         private Shader? DepthPyramidNpotShader;
@@ -408,6 +429,9 @@ namespace ValveResourceFormat.Renderer
                     CreateIndirectDrawBuffers(true);
                 }
             }
+
+            // After the node updates, so one pass picks up every flex change made this frame
+            DispatchMorphComposites();
         }
 
         /// <summary>Allocates GPU uniform and storage buffers for lighting, environment maps, light probes, frustum planes, and indirect draws.</summary>
@@ -431,7 +455,9 @@ namespace ValveResourceFormat.Renderer
                 InstanceBufferGpu?.Delete();
                 TransformBufferGpu?.Delete();
                 MorphOffsetsBufferGpu?.Delete();
+                MorphWeightsBufferGpu?.Delete();
                 MorphOffsetsBufferGpu = null;
+                MorphWeightsBufferGpu = null;
             }
 
             var nodes = AllNodes.ToList();
@@ -450,8 +476,7 @@ namespace ValveResourceFormat.Renderer
                 Matrix4x4.Identity.To3x4()
             };
 
-            var morphComposites = new List<MorphComposite>();
-            var morphSlotCount = 0;
+            var morphGroups = new Dictionary<GPUMeshBufferCache.MorphTables, List<MorphComposite>>();
 
             foreach (var node in nodes)
             {
@@ -497,8 +522,8 @@ namespace ValveResourceFormat.Renderer
                         model.BoneTransformOffset = boneTransformOffset;
                     }
 
-                    // Reserve a composite range per morphed mesh, so every flexed mesh in the scene
-                    // gathers into one shared buffer instead of owning its own
+                    // Group morphed meshes by the tables they share, so every mesh using one morph
+                    // resource composites in a single dispatch no matter how many of them there are
                     foreach (var mesh in model.RenderableMeshes)
                     {
                         if (mesh.FlexStateManager?.MorphComposite is not { HasMorphData: true } composite)
@@ -506,9 +531,13 @@ namespace ValveResourceFormat.Renderer
                             continue;
                         }
 
-                        composite.BaseOffset = (uint)morphSlotCount;
-                        morphSlotCount += composite.SlotCount;
-                        morphComposites.Add(composite);
+                        if (!morphGroups.TryGetValue(composite.Tables, out var group))
+                        {
+                            group = [];
+                            morphGroups.Add(composite.Tables, group);
+                        }
+
+                        group.Add(composite);
                     }
                 }
 
@@ -531,22 +560,129 @@ namespace ValveResourceFormat.Renderer
             // Dynamic: animated models stream their skinning matrices into it every frame
             TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.DynamicDraw);
 
-            if (morphSlotCount == 0)
+            CreateMorphBuffers(morphGroups);
+        }
+
+        /// <summary>
+        /// Reserves each morphed mesh its ranges in the scene morph buffers, packing the meshes of one morph
+        /// resource back to back so a single dispatch can stride through all of them.
+        /// </summary>
+        private void CreateMorphBuffers(Dictionary<GPUMeshBufferCache.MorphTables, List<MorphComposite>> morphGroups)
+        {
+            morphDispatchGroups.Clear();
+
+            var offsetsCount = 0;
+            var weightsCount = 0;
+
+            foreach (var (tables, composites) in morphGroups)
+            {
+                morphDispatchGroups.Add(new MorphDispatchGroup
+                {
+                    Tables = tables,
+                    Composites = composites,
+                    OffsetsBase = (uint)offsetsCount,
+                    WeightsBase = (uint)weightsCount,
+                });
+
+                foreach (var composite in composites)
+                {
+                    composite.OffsetsBase = (uint)offsetsCount;
+                    composite.WeightsBase = (uint)weightsCount;
+
+                    // The buffers below are new, so the weights have to be uploaded again
+                    composite.InvalidateWeights();
+
+                    offsetsCount += tables.SlotCount;
+                    weightsCount += tables.WeightCount;
+                }
+            }
+
+            if (offsetsCount == 0)
             {
                 return;
             }
 
-            MorphOffsetsBufferGpu = StorageBuffer.Allocate<Vector4>(ReservedBufferSlots.MorphOffsets, morphSlotCount, BufferUsageHint.DynamicCopy);
+            MorphOffsetsBufferGpu = StorageBuffer.Allocate<Vector4>(ReservedBufferSlots.MorphOffsets, offsetsCount, BufferUsageHint.DynamicCopy);
+            MorphWeightsBufferGpu = StorageBuffer.Allocate<float>(ReservedBufferSlots.MorphWeights, weightsCount, BufferUsageHint.DynamicDraw);
 
-            // Any range that does not get dispatched below reads as no deformation rather than garbage
+            // Any range that never gets dispatched reads as no deformation rather than garbage
             MorphOffsetsBufferGpu.Clear();
 
-            // The buffer is new, so every composite has to fill its range again; a mesh whose flex
-            // controllers never change is otherwise never dispatched and would render neutral
-            foreach (var composite in morphComposites)
+            // A mesh whose flex controllers never change again is otherwise never dispatched, and the
+            // ranges it was just given would render neutral
+            morphDispatchNeeded = true;
+        }
+
+        /// <summary>Requests a morph composite pass at the end of this frame's update, after a mesh changed
+        /// its flex controller values.</summary>
+        public void RequestMorphDispatch()
+        {
+            morphDispatchNeeded = true;
+        }
+
+        /// <summary>Composites every morphed mesh whose blend weights changed into the scene morph offsets
+        /// buffer, one dispatch per morph resource in use.</summary>
+        private void DispatchMorphComposites()
+        {
+            if (!morphDispatchNeeded || MorphOffsetsBufferGpu == null || MorphWeightsBufferGpu == null)
             {
-                composite.Dispatch(MorphOffsetsBufferGpu);
+                return;
             }
+
+            morphDispatchNeeded = false;
+
+            var anyDirty = false;
+
+            foreach (var group in morphDispatchGroups)
+            {
+                group.Dirty = false;
+
+                foreach (var composite in group.Composites)
+                {
+                    group.Dirty |= composite.UploadWeights(MorphWeightsBufferGpu);
+                }
+
+                anyDirty |= group.Dirty;
+            }
+
+            if (!anyDirty)
+            {
+                // Controllers moved but every weight landed on the value it already had
+                return;
+            }
+
+            // Only scenes that actually have flexed meshes pay for compiling this
+            MorphCompositeShader ??= RendererContext.ShaderLoader.LoadShader("vrf.morph_composite");
+
+            MorphCompositeShader.Use();
+            RendererContext.MeshBufferCache.BindMorphTables();
+            MorphWeightsBufferGpu.BindBufferBase();
+            MorphOffsetsBufferGpu.BindBufferBase();
+
+            foreach (var group in morphDispatchGroups)
+            {
+                if (!group.Dirty)
+                {
+                    continue;
+                }
+
+                var tables = group.Tables;
+
+                // One sampler per dispatch, so meshes are grouped by atlas rather than all done at once
+                MorphCompositeShader.SetTexture(0, "morphAtlas", tables.Atlas);
+                MorphCompositeShader.SetUniform1("g_nCompositeWidth", (uint)tables.CompositeWidth);
+                MorphCompositeShader.SetUniform1("g_nCompositeSlotCount", (uint)tables.SlotCount);
+                MorphCompositeShader.SetUniform1("g_nRectStartsBase", tables.RectStartsBase);
+                MorphCompositeShader.SetUniform1("g_nMeshCount", (uint)group.Composites.Count);
+                MorphCompositeShader.SetUniform1("g_nOffsetsBase", group.OffsetsBase);
+                MorphCompositeShader.SetUniform1("g_nWeightsBase", group.WeightsBase);
+                MorphCompositeShader.SetUniform1("g_nWeightStride", (uint)tables.WeightCount);
+
+                var slots = tables.SlotCount * group.Composites.Count;
+                GL.DispatchCompute((slots + MorphComputeGroupSize - 1) / MorphComputeGroupSize, 1, 1);
+            }
+
+            GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)
