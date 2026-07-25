@@ -52,7 +52,17 @@ mat3x4 getMatrix(uint boneIndex, uint objectBoneOffset)
     // Model:  hlvr/models/props/xen/xen_villi_medium.vmdl
     // In map: hlvr/maps/a3_distillery.vmap
     if (boneIndex >= meshBoneCount) {
-        return CalculateObjectToWorldMatrix();
+        mat3x4 objectToWorld = CalculateObjectToWorldMatrix();
+        float flScale = GetObjectUniformScale();
+
+        if (flScale != 0.0)
+        {
+            objectToWorld[0].xyz /= flScale;
+            objectToWorld[1].xyz /= flScale;
+            objectToWorld[2].xyz /= flScale;
+        }
+
+        return objectToWorld;
     }
 
     boneIndex += objectBoneOffset + meshBoneOffset;
