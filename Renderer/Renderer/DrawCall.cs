@@ -30,6 +30,14 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the per-draw-call tint color multiplier.</summary>
         public Vector4 TintColor { get; set; } = Vector4.One;
 
+        /// <summary>
+        /// Index of this draw's entry in <see cref="Scene.InstanceBufferGpu"/>, assigned when the scene
+        /// instance buffers are (re)built, 0 when the owning node is not indexed yet. Draws of a node
+        /// with a single draw call share the node's entry, so this equals the node id for them.
+        /// The owning node is identified by <see cref="Buffers.ObjectDataStandard.Identification"/>.
+        /// </summary>
+        public uint ObjectIndex { get; set; }
+
         /// <summary>Gets or sets the optional bounding box used for draw-level culling.</summary>
         public AABB? DrawBounds { get; set; }
 

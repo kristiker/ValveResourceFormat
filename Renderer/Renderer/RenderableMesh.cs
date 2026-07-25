@@ -41,6 +41,9 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets all draw calls across all render buckets.</summary>
         public IEnumerable<DrawCall> DrawCalls => DrawCallsOpaque.Concat(DrawCallsOverlay).Concat(DrawCallsBlended);
 
+        /// <summary>Gets the number of draw calls across all render buckets.</summary>
+        public int DrawCallCount => DrawCallsOpaque.Count + DrawCallsOverlay.Count + DrawCallsBlended.Count;
+
         /// <summary>Gets whether this mesh currently renders with skeletal animation. The skinning matrices
         /// live in the scene transform buffer at the owning object's bone offset.</summary>
         public bool IsAnimated { get; private set; }
@@ -570,5 +573,11 @@ namespace ValveResourceFormat.Renderer
 
         /// <summary>Gets the list of renderable meshes owned by this node.</summary>
         public List<RenderableMesh> RenderableMeshes { get; protected init; } = [];
+
+        /// <summary>
+        /// Gets every mesh this node owns, including ones not currently rendered. <see cref="RenderableMeshes"/>
+        /// can be a subset that changes with LoD or mesh groups, so draw call object indices are assigned over this.
+        /// </summary>
+        public virtual IReadOnlyList<RenderableMesh> AllRenderableMeshes => RenderableMeshes;
     }
 }

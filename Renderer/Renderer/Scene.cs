@@ -474,10 +474,12 @@ namespace ValveResourceFormat.Renderer
 
             var maxId = nodes.Max(n => n.Id);
 
-            var instanceData = new ObjectDataStandard[maxId + 1];
+            // Node entries occupy [1, maxId], one per node id, followed by the per draw call entries
+            var instanceData = new List<ObjectDataStandard>(capacity: (int)maxId + 1);
+            CollectionsMarshal.SetCount(instanceData, (int)maxId + 1);
 
             // Id 0 means "not indexed"; keep its object data neutral so such a draw is not tinted to black
-            instanceData[0].TintAlpha = uint.MaxValue;
+            instanceData[0] = new ObjectDataStandard { TintAlpha = uint.MaxValue };
 
             var transformData = new List<OpenTK.Mathematics.Matrix3x4>(capacity: (int)maxId + 2)
             {
@@ -530,7 +532,7 @@ namespace ValveResourceFormat.Renderer
                     model.BoneTransformOffset = boneTransformOffset;
                 }
 
-                instanceData[node.Id] = new ObjectDataStandard
+                instanceData[(int)node.Id] = new ObjectDataStandard
                 {
                     TintAlpha = PackNodeTint(node),
                     TransformIndex = transformIndex,
@@ -541,11 +543,13 @@ namespace ValveResourceFormat.Renderer
                 };
             }
 
+            AssignDrawCallObjects(nodes, instanceData);
+
             InstanceBufferGpu = new StorageBuffer(ReservedBufferSlots.Objects);
             TransformBufferGpu = new StorageBuffer(ReservedBufferSlots.Transforms);
 
-            // Dynamic: node tints are refreshed in place when they change
-            InstanceBufferGpu.Create(instanceData, BufferUsageHint.DynamicDraw);
+            // Dynamic: tints are refreshed in place when they change
+            InstanceBufferGpu.Create(CollectionsMarshal.AsSpan(instanceData), BufferUsageHint.DynamicDraw);
 
             // Dynamic: animated models stream skinning matrices and moved dynamic nodes refresh their slot every frame
             TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.DynamicDraw);
@@ -560,15 +564,91 @@ namespace ValveResourceFormat.Renderer
         }
 
         /// <summary>
-        /// The per-object part of a node's tint, packed for <see cref="ObjectDataStandard.TintAlpha"/>.
-        /// Aggregate fragments are drawn by shared indirect draws, so their whole tint is baked in here;
-        /// every other node contributes only its render color, the draw call tint stays a shader uniform.
+        /// Gives every draw call of every node an object data entry, so that state which varies per draw
+        /// (currently the tint) does not have to be a draw uniform and cannot split instanced draws.
+        /// Nodes drawn by a single draw call reuse their node entry rather than getting a second one.
+        /// </summary>
+        private static void AssignDrawCallObjects(List<SceneNode> nodes, List<ObjectDataStandard> instanceData)
+        {
+#if DEBUG
+            // Draw calls belong to exactly one node; a mesh shared by two would get one node's data for both
+            var assignedMeshes = new HashSet<RenderableMesh>();
+#endif
+
+            foreach (var node in nodes)
+            {
+                if (node is SceneAggregate.Fragment fragment)
+                {
+                    // One fragment is one draw, the node entry already holds its baked tint
+                    fragment.DrawCall.ObjectIndex = fragment.Id;
+                    continue;
+                }
+
+                if (node is not MeshCollectionNode collection)
+                {
+                    continue;
+                }
+
+                var drawCallCount = 0;
+
+                foreach (var mesh in collection.AllRenderableMeshes)
+                {
+                    drawCallCount += mesh.DrawCallCount;
+                }
+
+                if (drawCallCount == 0)
+                {
+                    continue;
+                }
+
+                // Node entry doubles as the draw entry, so it takes the full draw tint
+                var aliasNodeEntry = drawCallCount == 1;
+
+                foreach (var mesh in collection.AllRenderableMeshes)
+                {
+#if DEBUG
+                    Debug.Assert(assignedMeshes.Add(mesh), "Renderable mesh is shared by more than one node");
+#endif
+
+                    foreach (var call in mesh.DrawCalls)
+                    {
+                        var tint = PackDrawTint(mesh, call, node);
+
+                        if (aliasNodeEntry)
+                        {
+                            call.ObjectIndex = node.Id;
+                            instanceData[(int)node.Id] = instanceData[(int)node.Id] with { TintAlpha = tint };
+                            continue;
+                        }
+
+                        call.ObjectIndex = (uint)instanceData.Count;
+                        instanceData.Add(instanceData[(int)node.Id] with { TintAlpha = tint });
+                    }
+                }
+            }
+        }
+
+        /// <summary>The tint of a single draw, packed for <see cref="ObjectDataStandard.TintAlpha"/>.</summary>
+        private static uint PackDrawTint(RenderableMesh mesh, DrawCall call, SceneNode node)
+        {
+            var instanceTint = node is SceneAggregate.Fragment fragment ? fragment.Tint : Vector4.One;
+
+            // Content can author out-of-range tints (e.g. renderamt above 255 baked into the draw call
+            // alpha); the packed byte color can only represent [0, 1].
+            var tint = Vector4.Clamp(mesh.Tint * call.TintColor * instanceTint, Vector4.Zero, Vector4.One);
+            return Color32.FromVector4(tint).PackedValue;
+        }
+
+        /// <summary>
+        /// The tint of a node's own object data entry. Nodes that draw meshes have it overwritten with the
+        /// draw tint by <see cref="AssignDrawCallObjects"/>; it is what draws issued with a raw node id read.
         /// </summary>
         private static uint PackNodeTint(SceneNode node)
         {
             var tint = node switch
             {
                 SceneAggregate.Fragment fragment => fragment.RenderMesh.Tint * fragment.DrawCall.TintColor * fragment.Tint,
+                SceneAggregate { RenderMesh.DrawCallsOpaque: [var call, ..] } aggregate => aggregate.RenderMesh.Tint * call.TintColor,
                 MeshCollectionNode meshNode => meshNode.Tint,
                 _ => Vector4.One,
             };
@@ -591,8 +671,8 @@ namespace ValveResourceFormat.Renderer
         }
 
         /// <summary>
-        /// Refreshes the object data tint of nodes recolored since the last upload. Tint is per object
-        /// rather than per draw so that differently tinted instances of a model still batch together.
+        /// Refreshes the object data tint of nodes recolored since the last upload. Tint is object data
+        /// rather than a draw uniform so that differently tinted instances of a model still batch together.
         /// </summary>
         private void UploadStaleNodeTints()
         {
@@ -605,18 +685,29 @@ namespace ValveResourceFormat.Renderer
             {
                 node.TintBufferStale = false;
 
-                var offset = (int)node.Id * Unsafe.SizeOf<ObjectDataStandard>();
-
-                // Unindexed, or added after the buffer was built - a rebuild is already pending
-                if (node.Id == 0 || InstanceBufferGpu == null || offset >= InstanceBufferGpu.Size)
+                if (InstanceBufferGpu == null || node.Id == 0 || node is not MeshCollectionNode collection)
                 {
                     continue;
                 }
 
-                tintUploadScratch[0] = PackNodeTint(node);
+                foreach (var mesh in collection.AllRenderableMeshes)
+                {
+                    foreach (var call in mesh.DrawCalls)
+                    {
+                        var offset = (int)call.ObjectIndex * Unsafe.SizeOf<ObjectDataStandard>();
 
-                // TintAlpha is the first field of the object data
-                InstanceBufferGpu.Update(tintUploadScratch, offset, sizeof(uint));
+                        // Unindexed, or added after the buffer was built - a rebuild is already pending
+                        if (call.ObjectIndex == 0 || offset >= InstanceBufferGpu.Size)
+                        {
+                            continue;
+                        }
+
+                        tintUploadScratch[0] = PackDrawTint(mesh, call, node);
+
+                        // TintAlpha is the first field of the object data
+                        InstanceBufferGpu.Update(tintUploadScratch, offset, sizeof(uint));
+                    }
+                }
             }
 
             staleTintNodes.Clear();
@@ -687,6 +778,7 @@ namespace ValveResourceFormat.Renderer
                     var drawIndex = 0;
                     foreach (var fragment in agg.Fragments)
                     {
+                        // One draw per fragment, so its draw call object aliases the fragment's node entry
                         var fragmentInstanceId = fragment.Id;
                         var drawCall = fragment.DrawCall;
 

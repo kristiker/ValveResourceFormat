@@ -143,28 +143,10 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Reused scratch for the per-frame object index list; only grows, never allocates in steady state.</summary>
         private static uint[] instancingObjectIndices = new uint[4096];
 
-        /// <summary>
-        /// The group-wide part of a draw's tint, as packed for the vTint uniform. The per-object part
-        /// (render color) comes from object data, so it does not participate in grouping.
-        /// Aggregate fragments have their whole tint in object data and take white here.
-        /// </summary>
-        private static uint GetPackedUniformTint(DrawCall call, SceneNode node)
-        {
-            if (node is SceneAggregate.Fragment)
-            {
-                return uint.MaxValue;
-            }
-
-            // Content can author out-of-range tints (e.g. renderamt above 255 baked into the draw call
-            // alpha); the packed byte color can only represent [0, 1].
-            var tint = Vector4.Clamp(call.TintColor, Vector4.Zero, Vector4.One);
-            return Color32.FromVector4(tint).PackedValue;
-        }
-
         /// <summary>Whether a request can participate in an opportunistically instanced draw at all.</summary>
         private static bool IsInstanceable(in Request request)
         {
-            return request.Node.Id != 0
+            return request.Call!.ObjectIndex != 0 // draws read their per draw object data
                 && request.Mesh.FlexStateManager == null // per-node morph composite textures cannot be shared
                 && request.Node is not SceneAggregate // uses the sequential instance transform path
                 && !request.Node.TransformBufferStale; // instanced draws read the gpu transform buffer
@@ -173,7 +155,7 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Whether two adjacent requests would issue GL-state-identical draws and can be merged into one
         /// instanced draw. With <paramref name="crossMaterial"/> (material-agnostic replacement shader), material
         /// identity and material-derived per-draw state are ignored so different skins of the same geometry merge.</summary>
-        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headUniformTint, bool crossMaterial)
+        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, bool crossMaterial)
         {
             if (candidate.Call == null || !IsInstanceable(in candidate))
             {
@@ -233,14 +215,6 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            // Only the draw call tint is a group-wide uniform; the per-object tint comes from object data.
-            // Instances of the same model share the draw call tint, so this only rejects mismatched sources
-            // (e.g. a fragment, whose tint is entirely in object data). Unused by material-agnostic shaders.
-            if (!crossMaterial && headUniformTint != GetPackedUniformTint(b, candidate.Node))
-            {
-                return false;
-            }
-
             // Per-draw texture bindings must match across the group
             if (perInstanceCubemaps)
             {
@@ -292,10 +266,9 @@ namespace ValveResourceFormat.Renderer
                     continue;
                 }
 
-                var headUniformTint = crossMaterial ? 0u : GetPackedUniformTint(head.Call, head.Node);
                 var groupEnd = i + 1;
 
-                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, headUniformTint, crossMaterial))
+                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, crossMaterial))
                 {
                     groupEnd++;
                 }
@@ -314,12 +287,12 @@ namespace ValveResourceFormat.Renderer
 
                 head.InstanceCount = groupCount;
                 head.ObjectIndexOffset = indexCount;
-                instancingObjectIndices[indexCount++] = head.Node.Id;
+                instancingObjectIndices[indexCount++] = head.Call.ObjectIndex;
 
                 for (var member = i + 1; member < groupEnd; member++)
                 {
                     span[member].InstanceCount = -1;
-                    instancingObjectIndices[indexCount++] = span[member].Node.Id;
+                    instancingObjectIndices[indexCount++] = span[member].Call!.ObjectIndex;
                 }
 
                 i = groupEnd - 1;
@@ -390,7 +363,6 @@ namespace ValveResourceFormat.Renderer
             public int LPVIrradianceTexture = -1;
             public int Transform = -1;
             public int InstancingModeLocation = -1;
-            public int Tint = -1;
             public int MeshId = -1;
             public int ShaderId = -1;
             public int ShaderProgramId = -1;
@@ -480,7 +452,6 @@ namespace ValveResourceFormat.Renderer
                             AnimationData = shader.GetUniformLocation("uAnimationData"),
                             Transform = shader.GetUniformLocation("transform"),
                             InstancingModeLocation = shader.GetUniformLocation("nInstancingMode"),
-                            Tint = shader.GetUniformLocation("vTint"),
                         };
 
                         if (shader.Parameters.ContainsKey("S_SCENE_CUBEMAP_TYPE"))
@@ -640,15 +611,10 @@ namespace ValveResourceFormat.Renderer
                 GL.ProgramUniformMatrix3x4(shader.Program, uniforms.Transform, false, ref transform);
             }
 
-            if (uniforms.Tint > -1)
-            {
-                // Object tint (render color) is per instance and comes from object data, the shader
-                // multiplies the two. Only the draw call tint is uniform across an instanced group.
-                GL.ProgramUniform1((uint)shader.Program, uniforms.Tint, GetPackedUniformTint(request.Call, request.Node));
-            }
-
             var instanceCount = 1;
-            var baseInstance = request.Node.Id;
+
+            // Aggregates read their own node entry, every other draw reads its per draw entry
+            var baseInstance = request.Node is SceneAggregate ? request.Node.Id : request.Call.ObjectIndex;
             var instancingMode = InstancingMode.None;
 
             if (request.Node is SceneAggregate { InstanceTransforms.Count: > 0 } aggregate)

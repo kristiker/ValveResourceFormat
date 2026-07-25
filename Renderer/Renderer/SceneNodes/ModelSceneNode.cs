@@ -66,6 +66,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         private readonly List<RenderableMesh> meshRenderers = [];
 
+        /// <inheritdoc/>
+        public override IReadOnlyList<RenderableMesh> AllRenderableMeshes => meshRenderers;
+
         /// <summary>Gets whether this model has animations loaded and a skeleton to animate.</summary>
         public bool IsAnimated { get; private set; }
 

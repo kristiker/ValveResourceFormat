@@ -12,6 +12,7 @@ flat out uint meshletId;
 
 void main(void) {
     gl_Position = g_matWorldToProjection * CalculateObjectToWorldMatrix() * getSkinMatrix() * vec4(vPOSITION, 1.0);
-    sceneObjectId = gl_BaseInstance + gl_InstanceID;
+    // Object indices are per draw call, the node id a draw belongs to is in its object data
+    sceneObjectId = objects[GetObjectIndex()].Identification;
     meshletId = gl_DrawID;
 }
