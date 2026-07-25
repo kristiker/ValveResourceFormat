@@ -178,6 +178,16 @@ namespace ValveResourceFormat.Renderer
         private readonly List<SceneNode> parallelUpdateNodes = [];
         private bool parallelUpdateNodesDirty = true;
 
+        /// <summary>CPU mirror of <see cref="TransformBufferGpu"/>. Models fill their own slices of it
+        /// off the render thread and the changed ranges go up together.</summary>
+        private OpenTK.Mathematics.Matrix3x4[] transformDataCpu = [];
+
+        /// <summary>Skinned models in ascending <see cref="ModelSceneNode.TransformSlot"/> order.</summary>
+        private readonly List<ModelSceneNode> skinnedModels = [];
+
+        /// <summary>How many untouched slots are worth re-uploading to avoid splitting one call in two.</summary>
+        private const int MaxTransformUploadGap = 64;
+
         /// <summary>Nodes claimed at a time. Large enough to amortize the interlocked handoff, small
         /// enough that a few heavy skeletons landing together do not strand a thread at the end.</summary>
         private const int ParallelUpdateChunkSize = 16;
@@ -323,6 +333,9 @@ namespace ValveResourceFormat.Renderer
             parallelUpdateNodes.Clear();
             parallelUpdateNodesDirty = true;
 
+            skinnedModels.Clear();
+            transformDataCpu = [];
+
             StaticOctree.Clear();
             DynamicOctree.Clear();
 
@@ -425,6 +438,8 @@ namespace ValveResourceFormat.Renderer
                         DynamicOctree.Update(node, oldBox);
                     }
                 }
+
+                FlushSkinningTransforms();
             }
 
             if (StaticOctree.Dirty || DynamicOctree.Dirty)
@@ -624,8 +639,11 @@ namespace ValveResourceFormat.Renderer
 
             var nodes = AllNodes.ToList();
 
+            skinnedModels.Clear();
+
             if (nodes.Count == 0)
             {
+                transformDataCpu = [];
                 return;
             }
 
@@ -688,6 +706,10 @@ namespace ValveResourceFormat.Renderer
 
                     skinnedModel.TransformSlot = transformIndex;
                     skinnedModel.WriteSkinningTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)transformIndex, skinningSlotCount));
+
+                    // Built here so it comes out in ascending slot order, which is what lets the
+                    // per-frame flush merge neighbouring models into one upload
+                    skinnedModels.Add(skinnedModel);
                 }
 
                 instanceData[node.Id] = new ObjectDataStandard
@@ -705,8 +727,89 @@ namespace ValveResourceFormat.Renderer
 
             InstanceBufferGpu.Create(instanceData, BufferUsageHint.StaticDraw);
 
+            // Kept as the CPU mirror the models write their skinning matrices into
+            transformDataCpu = [.. transformData];
+
             // Dynamic: animated models stream their skinning matrices into it every frame
-            TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.DynamicDraw);
+            TransformBufferGpu.Create(transformDataCpu.AsSpan(), BufferUsageHint.DynamicDraw);
+
+            // Everything just went up in full, so nothing is outstanding
+            foreach (var model in skinnedModels)
+            {
+                model.ConsumeSkinningTransformsDirty();
+            }
+        }
+
+        /// <summary>
+        /// This model's slice of the transform buffer mirror, or an empty span when it has no slot yet.
+        /// Slices never overlap, so models can fill their own from the thread pool.
+        /// </summary>
+        internal Span<OpenTK.Mathematics.Matrix3x4> GetTransformSlice(uint slot, int length)
+            => slot != 0 && (int)slot + length <= transformDataCpu.Length
+                ? transformDataCpu.AsSpan((int)slot, length)
+                : [];
+
+        /// <summary>
+        /// Streams every model that reposed this frame to the GPU, merging neighbours into single
+        /// uploads. One <c>glNamedBufferSubData</c> per model costs milliseconds of driver time once
+        /// there are a few hundred of them, and animated models sit next to each other in the buffer.
+        /// </summary>
+        private void FlushSkinningTransforms()
+        {
+            if (TransformBufferGpu == null || transformDataCpu.Length == 0)
+            {
+                return;
+            }
+
+            var runStart = -1;
+            var runEnd = -1;
+
+            foreach (var model in skinnedModels)
+            {
+                if (!model.ConsumeSkinningTransformsDirty())
+                {
+                    continue;
+                }
+
+                var start = (int)model.TransformSlot;
+                var end = start + model.BoneTransformCount + (int)ModelSceneNode.BoneTransformStart;
+
+                if (start == 0 || end > transformDataCpu.Length)
+                {
+                    continue; // no slot assigned yet, or stale between buffer rebuilds
+                }
+
+                if (runStart < 0)
+                {
+                    (runStart, runEnd) = (start, end);
+                    continue;
+                }
+
+                // The mirror is current for every slot, so bridging a small gap re-sends data that is
+                // already correct. One call over a few stale slots beats two calls.
+                if (start - runEnd <= MaxTransformUploadGap)
+                {
+                    runEnd = Math.Max(runEnd, end);
+                    continue;
+                }
+
+                UploadTransformRange(runStart, runEnd);
+                (runStart, runEnd) = (start, end);
+            }
+
+            if (runStart >= 0)
+            {
+                UploadTransformRange(runStart, runEnd);
+            }
+        }
+
+        private void UploadTransformRange(int start, int end)
+        {
+            Debug.Assert(TransformBufferGpu != null);
+
+            var slotSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
+
+            TransformBufferGpu.Update<OpenTK.Mathematics.Matrix3x4>(transformDataCpu.AsSpan(start, end - start), start * slotSize);
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)

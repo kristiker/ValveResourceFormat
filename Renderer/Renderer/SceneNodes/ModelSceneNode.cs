@@ -97,9 +97,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         private readonly int[] remappingTable;
         private bool transformDirty;
 
-        /// <summary>This model's slice of the scene transform buffer, filled off the render thread and
-        /// uploaded from it. Only allocated once something actually animates.</summary>
-        private OpenTK.Mathematics.Matrix3x4[]? skinningTransforms;
+        /// <summary>Stand-in for the scene mirror while this model has no transform slot, so the bounding
+        /// box a skinning write refreshes stays correct until it gets one.</summary>
+        private OpenTK.Mathematics.Matrix3x4[]? skinningScratch;
         private bool skinningTransformsDirty;
 
         /// <summary>Set once <see cref="UpdateParallel"/> has run for this frame, so <see cref="Update"/>
@@ -328,12 +328,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             UpdateAttachments(context);
 
-            if (skinningTransformsDirty)
-            {
-                UploadSkinningTransforms();
-                skinningTransformsDirty = false;
-            }
-
             foreach (var flexState in pendingMorphComposites)
             {
                 flexState.MorphComposite.Render();
@@ -548,33 +542,33 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <summary>
-        /// Fills this model's transform buffer range into <see cref="skinningTransforms"/>, ready for
-        /// <see cref="UploadSkinningTransforms"/>. The bounding box is refreshed even when there is
-        /// nothing to upload to yet. Safe to call off the render thread.
+        /// Fills this model's slice of the scene transform mirror. Slices never overlap, so this is safe
+        /// off the render thread; the scene sends the changed ranges together once the frame's updates are
+        /// done. A model with no slot yet still runs, for the bounding box the write refreshes.
         /// </summary>
         private void ComputeSkinningTransforms()
         {
-            skinningTransforms ??= new OpenTK.Mathematics.Matrix3x4[remappingTable.Length + (int)BoneTransformStart];
+            var slotCount = remappingTable.Length + (int)BoneTransformStart;
+            var slice = Scene.GetTransformSlice(TransformSlot, slotCount);
 
-            WriteSkinningTransforms(skinningTransforms);
+            if (slice.IsEmpty)
+            {
+                skinningScratch ??= new OpenTK.Mathematics.Matrix3x4[slotCount];
+                slice = skinningScratch;
+            }
+
+            WriteSkinningTransforms(slice);
             skinningTransformsDirty = true;
         }
 
         /// <summary>
-        /// Streams the matrices <see cref="ComputeSkinningTransforms"/> produced to the GPU. Render thread only.
+        /// Reads and clears the flag saying this model reposed and its buffer range still needs sending.
         /// </summary>
-        private void UploadSkinningTransforms()
+        internal bool ConsumeSkinningTransformsDirty()
         {
-            if (skinningTransforms == null || TransformSlot == 0 || Scene.TransformBufferGpu == null)
-            {
-                return;
-            }
-
-            var slotSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
-
-            Scene.TransformBufferGpu.Update(skinningTransforms,
-                (int)TransformSlot * slotSize,
-                skinningTransforms.Length * slotSize);
+            var dirty = skinningTransformsDirty;
+            skinningTransformsDirty = false;
+            return dirty;
         }
 
         /// <summary>
