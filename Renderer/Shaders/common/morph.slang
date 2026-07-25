@@ -7,18 +7,13 @@
 #define bMorphed (morphVertexIdOffset != -1)
 
 #if (F_MORPH_SUPPORTED == 1)
-    uniform sampler2D morphCompositeTexture;
-    uniform vec2 morphCompositeTextureSize;
-    uniform int morphVertexIdOffset;
-
-    vec2 getMorphUV()
+    // Composited by morph_composite.comp.slang, indexed by mesh vertex id
+    layout(binding = 13, std430) readonly buffer MorphOffsets
     {
-        int vertexId = gl_VertexID + morphVertexIdOffset;
-        return vec2(
-            (1.5 + mod(vertexId, morphCompositeTextureSize.x)) / 2048.0,
-            1 - (1.5 + floor(vertexId / morphCompositeTextureSize.x)) / 2048.0
-        );
-    }
+        vec4 morphOffsets[];
+    };
+
+    uniform int morphVertexIdOffset;
 #endif
 
 vec3 getMorphOffset()
@@ -26,7 +21,7 @@ vec3 getMorphOffset()
     #if (F_MORPH_SUPPORTED == 1)
         if (bMorphed)
         {
-            return textureLod(morphCompositeTexture, getMorphUV(), 0).xyz;
+            return morphOffsets[gl_VertexID + morphVertexIdOffset].xyz;
         }
     #endif
 

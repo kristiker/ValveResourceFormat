@@ -46,6 +46,16 @@ public enum ReservedBufferSlots
     CompactionRequests = 10,
     /// <summary>Barn light constants SSBO slot.</summary>
     BarnLights = 12,
+    /// <summary>Composited per-vertex morph offsets SSBO slot.</summary>
+    MorphOffsets = 13,
+    /// <summary>Morph rect descriptors SSBO slot.</summary>
+    MorphRects = 14,
+    /// <summary>Per-slot morph rect list start offsets SSBO slot.</summary>
+    MorphRectStarts = 15,
+    /// <summary>Per-slot morph rect list entries SSBO slot.</summary>
+    MorphRectEntries = 16,
+    /// <summary>Morph target blend weights SSBO slot.</summary>
+    MorphWeights = 17,
 
     /// <summary>Guaranteed minimum binding point count in OpenGL 4.6.</summary>
     Max = 8,

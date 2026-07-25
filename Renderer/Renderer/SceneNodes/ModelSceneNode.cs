@@ -284,7 +284,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     if (renderableMesh.FlexStateManager.SetControllerValues(datas))
                     {
                         renderableMesh.FlexStateManager.UpdateComposite();
-                        renderableMesh.FlexStateManager.MorphComposite.Render();
+                        renderableMesh.FlexStateManager.MorphComposite.Dispatch();
                     }
                 }
             }
@@ -812,6 +812,10 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <inheritdoc/>
         public override void Delete()
         {
+            foreach (var renderer in meshRenderers)
+            {
+                renderer.FlexStateManager?.MorphComposite.Delete();
+            }
         }
 
         /// <summary>
