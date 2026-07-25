@@ -18,8 +18,8 @@ flat out vec4 vTintColorFadeOut;
 
 void main()
 {
-    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
-    vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
+    mat4 skinTransform = GetSkinnedObjectToWorldMatrix();
+    vec4 fragPosition = skinTransform * GetScaledPositionOs(vPOSITION);
     gl_Position = g_matWorldToProjection * fragPosition;
     vFragPosition = fragPosition.xyz;
 
@@ -27,10 +27,10 @@ void main()
     vec4 tangent;
     GetOptionallyCompressedNormalTangent(normal, tangent);
 
-    mat3 normalTransform = adjoint(skinTransform);
-    vNormalOut = normalize(normalTransform * normal);
+    mat3 normalTransform = mat3(skinTransform);
+    vNormalOut = safeNormalize(normalTransform * normal);
     // vNormalOut = vBLENDINDICES.x == 23.0 ? vec3(1.0) : vec3(0.0);
-    vTangentOut = normalize(normalTransform * tangent.xyz);
+    vTangentOut = safeNormalize(normalTransform * tangent.xyz);
     vBitangentOut = tangent.w * cross(vNormalOut, vTangentOut);
 
     vTintColorFadeOut = GetObjectTintSrgb();

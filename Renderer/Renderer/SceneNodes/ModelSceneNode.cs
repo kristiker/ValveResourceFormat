@@ -69,17 +69,31 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
         /// <summary>Distance from an object's transform to its first skinning matrix in the scene transform buffer.
         /// Kept in sync with <c>GetObjectBoneOffset</c> in instancing.slang, which derives the bone range from the
-        /// transform index alone rather than storing a second index per object.</summary>
+        /// transform index alone rather than storing a second index per object. The slot in between carries the
+        /// uniform scale that the vertex shader applies to positions.</summary>
         internal const uint BoneTransformStart = 2;
 
         /// <summary>Gets the number of skinning matrix slots this model reserves in the scene transform buffer (the mesh-bone remapping table length).</summary>
         internal int BoneTransformCount => remappingTable.Length;
 
-        /// <summary>Gets or sets the start of this model's skinning matrices in the scene transform buffer, assigned when the scene instance buffers are (re)built. 0 = no slots.</summary>
-        internal uint BoneTransformOffset { get; set; }
+        /// <summary>Gets or sets this model's object transform slot in the scene transform buffer, assigned when the
+        /// scene instance buffers are (re)built. The scale slot and the skinning matrices follow it. 0 = not assigned.</summary>
+        internal uint TransformSlot { get; set; }
+
+        /// <inheritdoc/>
+        public override Matrix4x4 Transform
+        {
+            get => base.Transform;
+            set
+            {
+                base.Transform = value;
+                transformDirty = true;
+            }
+        }
 
         private readonly int boneCount;
         private readonly int[] remappingTable;
+        private bool transformDirty;
 
         private HashSet<string> activeMeshGroups = [];
         private (string Name, string[] Materials) activeMaterialGroup;
@@ -246,34 +260,15 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             var animationUpdated = AnimationController.Update(context.Timestep);
             UpdateAttachments(context);
 
+            if (IsAnimated && (animationUpdated || transformDirty))
+            {
+                UploadSkinningTransforms();
+                transformDirty = false;
+            }
+
             if (!animationUpdated)
             {
                 return;
-            }
-
-            if (IsAnimated)
-            {
-                // Update animation matrices and stream them into the shared transform buffer
-                var floatBufferSize = remappingTable.Length * 12;
-                var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
-
-                try
-                {
-                    var meshBones = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSize));
-
-                    WriteBoneTransforms(meshBones);
-
-                    if (BoneTransformOffset != 0 && Scene.TransformBufferGpu != null)
-                    {
-                        Scene.TransformBufferGpu.Update(floatBuffer,
-                            (int)BoneTransformOffset * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
-                            floatBufferSize * sizeof(float));
-                    }
-                }
-                finally
-                {
-                    ArrayPool<float>.Shared.Return(floatBuffer);
-                }
             }
 
             if (AnimationController.AnimationFrame != null)
@@ -501,20 +496,88 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <summary>
-        /// Writes this model's current skinning matrices (or identity when not animating) into the given
-        /// slice of the scene transform buffer data, and refreshes the local bounding box to cover the
-        /// animated pose. Called every frame while animating, and when the scene instance buffers are
+        /// Streams this model's scale slot and skinning matrices into the scene transform buffer. The bounding
+        /// box is refreshed even when there is nothing to upload to yet.
+        /// </summary>
+        private void UploadSkinningTransforms()
+        {
+            var floatBufferSize = (remappingTable.Length + (int)BoneTransformStart) * 12;
+            var floatBuffer = ArrayPool<float>.Shared.Rent(floatBufferSize);
+
+            try
+            {
+                var slots = MemoryMarshal.Cast<float, OpenTK.Mathematics.Matrix3x4>(floatBuffer.AsSpan(0, floatBufferSize));
+
+                WriteSkinningTransforms(slots);
+
+                if (TransformSlot != 0 && Scene.TransformBufferGpu != null)
+                {
+                    Scene.TransformBufferGpu.Update(floatBuffer,
+                        (int)TransformSlot * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>(),
+                        floatBufferSize * sizeof(float));
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(floatBuffer);
+            }
+        }
+
+        /// <summary>
+        /// Writes this model's whole transform buffer range and refreshes the local bounding box to cover the
+        /// animated pose: the object transform as a matrix, the same transform as a Transform, then one
+        /// skinning matrix per mesh bone. The object transform is folded into every matrix so the vertex
+        /// shader needs no second matrix; its uniform scale is left out of them and applied per vertex
+        /// instead, which keeps them rotation plus translation. The matrix slot stays live for the draws that
+        /// read it unskinned, and the Transform beside it is where the shader picks that scale back up.
+        /// Called every frame while animating, when the model moves, and when the scene instance buffers are
         /// (re)built so paused animations survive buffer recreation.
         /// </summary>
-        internal void WriteBoneTransforms(Span<OpenTK.Mathematics.Matrix3x4> dest)
+        internal void WriteSkinningTransforms(Span<OpenTK.Mathematics.Matrix3x4> dest)
         {
-            Debug.Assert(dest.Length == remappingTable.Length);
+            Debug.Assert(dest.Length == remappingTable.Length + (int)BoneTransformStart);
 
-            var identity = Matrix4x4.Identity.To3x4();
+            var objectToWorld = Transform;
+
+            var scalePerAxis = new Vector3(
+                MathF.Sqrt((objectToWorld.M11 * objectToWorld.M11) + (objectToWorld.M12 * objectToWorld.M12) + (objectToWorld.M13 * objectToWorld.M13)),
+                MathF.Sqrt((objectToWorld.M21 * objectToWorld.M21) + (objectToWorld.M22 * objectToWorld.M22) + (objectToWorld.M23 * objectToWorld.M23)),
+                MathF.Sqrt((objectToWorld.M31 * objectToWorld.M31) + (objectToWorld.M32 * objectToWorld.M32) + (objectToWorld.M33 * objectToWorld.M33)));
+
+            // The shader broadcasts one component and ignores any non uniformity, as Source 2 does. Which one
+            // does not matter for correctness as long as it is the one factored out below: the position
+            // multiply and the strip cancel exactly, whatever the scalar, so a non uniform transform still
+            // renders correctly through the leftovers left in the folded matrices.
+            var scale = scalePerAxis.Z;
+
+            dest[0] = objectToWorld.To3x4();
+
+            if (scale != 0f)
+            {
+                // Strip the uniform scale, leaving rotation and translation for the fold below
+                var inverseScale = 1f / scale;
+                objectToWorld.M11 *= inverseScale; objectToWorld.M12 *= inverseScale; objectToWorld.M13 *= inverseScale;
+                objectToWorld.M21 *= inverseScale; objectToWorld.M22 *= inverseScale; objectToWorld.M23 *= inverseScale;
+                objectToWorld.M31 *= inverseScale; objectToWorld.M32 *= inverseScale; objectToWorld.M33 *= inverseScale;
+            }
+
+            // The slot Source 2 keeps between the transform and the bones, holding a Transform rather than a
+            // matrix: scale, rotation and translation each stay a field of their own, so the shader reads the
+            // scale as one float instead of measuring a basis vector. Laid out as three vec4s, which puts the
+            // scale at the same byte offset the Source 2 shaders read it from
+            var rotation = Quaternion.CreateFromRotationMatrix(objectToWorld);
+
+            dest[1] = new OpenTK.Mathematics.Matrix3x4(
+                scalePerAxis.X, scalePerAxis.Y, scalePerAxis.Z, 0f,
+                rotation.X, rotation.Y, rotation.Z, rotation.W,
+                objectToWorld.M41, objectToWorld.M42, objectToWorld.M43, 0f);
+
+            var boneTransforms = dest[(int)BoneTransformStart..];
+            var unskinned = objectToWorld.To3x4();
 
             if (!IsAnimated)
             {
-                dest.Fill(identity);
+                boneTransforms.Fill(unskinned);
                 return;
             }
 
@@ -531,7 +594,20 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     var modelBoneIndex = remappingTable[i];
                     var modelBoneExists = modelBoneIndex < boneCount && modelBoneIndex != -1;
 
-                    dest[i] = modelBoneExists ? modelBones[modelBoneIndex].To3x4() : identity;
+                    if (!modelBoneExists)
+                    {
+                        boneTransforms[i] = unskinned;
+                        continue;
+                    }
+
+                    // Scaling the position rather than the matrix moves the scale onto the bone translation,
+                    // which is what conjugating the skinning matrix by the scale leaves behind
+                    var bone = modelBones[modelBoneIndex];
+                    bone.M41 *= scale;
+                    bone.M42 *= scale;
+                    bone.M43 *= scale;
+
+                    boneTransforms[i] = (bone * objectToWorld).To3x4();
                 }
 
                 UpdateBoundingBox(); // Reset back to the mesh bbox

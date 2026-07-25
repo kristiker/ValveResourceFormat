@@ -274,16 +274,16 @@ void main()
 {
     ObjectData_t object = GetObjectData();
 
-    mat4 skinTransform = object.transform * getSkinMatrix();
-    vFragPosition = (skinTransform * vec4(vPOSITION + getMorphOffset(), 1.0)).xyz;
+    mat4 skinTransform = GetSkinnedObjectToWorldMatrix();
+    vFragPosition = (skinTransform * GetScaledPositionOs(vPOSITION + getMorphOffset())).xyz;
 
     vec3 normal;
     vec4 tangent;
     GetOptionallyCompressedNormalTangent(normal, tangent);
 
-    mat3 normalTransform = adjoint(skinTransform);
-    vNormalOut = normalize(normalTransform * normal);
-    vTangentOut = normalize(normalTransform * tangent.xyz);
+    mat3 normalTransform = mat3(skinTransform);
+    vNormalOut = safeNormalize(normalTransform * normal);
+    vTangentOut = safeNormalize(normalTransform * tangent.xyz);
     vBitangentOut = tangent.w * cross(vNormalOut, vTangentOut);
 
     #if defined(foliage_vfx_common)

@@ -487,17 +487,15 @@ namespace ValveResourceFormat.Renderer
 
                 if (skinnedModel != null)
                 {
-                    // Reserve a skinning matrix range so animated models read (and stream) bones from the
-                    // shared transform buffer, at the fixed offset from the object transform the shader expects
-                    var boneTransformOffset = transformIndex + ModelSceneNode.BoneTransformStart;
+                    // Reserve the uniform scale slot and the skinning matrix range after the object transform,
+                    // so animated models read (and stream) the whole range from the shared transform buffer at
+                    // the offsets the shader derives from the object transform index
+                    var skinningSlotCount = skinnedModel.BoneTransformCount + (int)ModelSceneNode.BoneTransformStart;
 
-                    CollectionsMarshal.SetCount(transformData, (int)boneTransformOffset + skinnedModel.BoneTransformCount);
+                    CollectionsMarshal.SetCount(transformData, (int)transformIndex + skinningSlotCount);
 
-                    var transforms = CollectionsMarshal.AsSpan(transformData);
-                    transforms[(int)transformIndex + 1] = identityTransform; // empty space, not sure what for
-
-                    skinnedModel.WriteBoneTransforms(transforms.Slice((int)boneTransformOffset, skinnedModel.BoneTransformCount));
-                    skinnedModel.BoneTransformOffset = boneTransformOffset;
+                    skinnedModel.TransformSlot = transformIndex;
+                    skinnedModel.WriteSkinningTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)transformIndex, skinningSlotCount));
                 }
 
                 instanceData[node.Id] = new ObjectDataStandard

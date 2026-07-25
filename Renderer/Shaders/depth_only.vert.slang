@@ -18,12 +18,10 @@ layout (location = 0) in vec3 vPOSITION;
 
 void main()
 {
-    mat4 vertexTransform = CalculateObjectToWorldMatrix();
+    // Falls back to the plain object transform when the draw is not animated, so the matrix and the
+    // scale in GetScaledPositionOs below always agree on which path this vertex is taking
+    mat4 vertexTransform = GetSkinnedObjectToWorldMatrix();
     vec3 vertexPosition = vPOSITION;
-
-    #if (D_ANIMATED == 1)
-        vertexTransform *= getSkinMatrix();
-    #endif
 
     #if (D_MORPHED == 1)
         vertexPosition += getMorphOffset();
@@ -33,6 +31,6 @@ void main()
         texCoord = vTEXCOORD;
     #endif
 
-    vec4 fragPosition = vertexTransform * vec4(vertexPosition, 1.0);
+    vec4 fragPosition = vertexTransform * GetScaledPositionOs(vertexPosition);
     gl_Position = g_matWorldToProjection * fragPosition;
 }

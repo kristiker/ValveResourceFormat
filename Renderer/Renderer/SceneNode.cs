@@ -14,7 +14,7 @@ namespace ValveResourceFormat.Renderer
         /// <summary>
         /// Gets or sets the world transform. Setting this also updates <see cref="BoundingBox"/>.
         /// </summary>
-        public Matrix4x4 Transform
+        public virtual Matrix4x4 Transform
         {
             get => transform;
             set
