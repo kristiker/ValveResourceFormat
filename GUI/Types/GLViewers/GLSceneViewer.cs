@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -32,7 +32,7 @@ namespace GUI.Types.GLViewers
         private bool ShowSolidBackground;
 
         private bool showStaticOctree;
-        private bool showDynamicOctree;
+        private bool showDynamicBounds;
         private bool showVisDebug;
         private bool showPhysicsTraces;
         private PhysicsTraceDebugRenderer? physicsTraceRenderer;
@@ -116,7 +116,7 @@ namespace GUI.Types.GLViewers
                 });
 
                 UiControl.AddCheckBox("Show Static Octree", showStaticOctree, (v) => showStaticOctree = v);
-                UiControl.AddCheckBox("Show Dynamic Octree", showDynamicOctree, (v) => showDynamicOctree = v);
+                UiControl.AddCheckBox("Show Dynamic Bounds", showDynamicBounds, (v) => showDynamicBounds = v);
                 UiControl.AddCheckBox("Show Tool Materials", Scene.ShowToolsMaterials, (v) =>
                 {
                     Scene.ShowToolsMaterials = v;
@@ -223,7 +223,7 @@ namespace GUI.Types.GLViewers
             }
 
             Scene.StaticOctree.DebugRenderer = new(Scene.StaticOctree, Scene.RendererContext, false);
-            Scene.DynamicOctree.DebugRenderer = new(Scene.DynamicOctree, Scene.RendererContext, true);
+            Scene.DynamicNodeSet.DebugRenderer = new(Scene.DynamicNodeSet, Scene.RendererContext);
         }
 
         /// <summary>Places the camera far enough out to see the given bounds, looking at their center.</summary>
@@ -580,9 +580,9 @@ namespace GUI.Types.GLViewers
                     Scene.StaticOctree.DebugRenderer.Render();
                 }
 
-                if (showDynamicOctree && Scene.DynamicOctree.DebugRenderer != null)
+                if (showDynamicBounds && Scene.DynamicNodeSet.DebugRenderer != null)
                 {
-                    Scene.DynamicOctree.DebugRenderer.Render();
+                    Scene.DynamicNodeSet.DebugRenderer.Render();
                 }
 
                 if (Scene.OcclusionDebugEnabled && Scene.OcclusionDebug != null)

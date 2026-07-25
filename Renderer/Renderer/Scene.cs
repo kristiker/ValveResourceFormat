@@ -1,4 +1,4 @@
-global using DepthOnlyDrawBuckets = System.Collections.Generic.Dictionary<ValveResourceFormat.Renderer.DepthOnlyProgram, System.Collections.Generic.List<ValveResourceFormat.Renderer.MeshBatchRenderer.Request>>;
+﻿global using DepthOnlyDrawBuckets = System.Collections.Generic.Dictionary<ValveResourceFormat.Renderer.DepthOnlyProgram, System.Collections.Generic.List<ValveResourceFormat.Renderer.MeshBatchRenderer.Request>>;
 
 using System.Diagnostics;
 using System.Linq;
@@ -138,8 +138,8 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets the octree used to spatially partition static scene nodes.</summary>
         public Octree StaticOctree { get; }
 
-        /// <summary>Gets the octree used to spatially partition dynamic scene nodes.</summary>
-        public Octree DynamicOctree { get; }
+        /// <summary>Gets the flat spatial set holding dynamic scene nodes.</summary>
+        public DynamicNodeSet DynamicNodeSet { get; } = new();
 
         /// <summary>Gets or sets whether materials flagged as tools-only are rendered.</summary>
         public bool ShowToolsMaterials { get; set; }
@@ -211,7 +211,6 @@ namespace ValveResourceFormat.Renderer
         {
             RendererContext = context;
             StaticOctree = new(sizeHint);
-            DynamicOctree = new(sizeHint);
 
             LightingInfo = new(this);
         }
@@ -250,12 +249,17 @@ namespace ValveResourceFormat.Renderer
         /// <param name="dynamic">When <see langword="true"/>, the node is placed in the dynamic octree; otherwise the static octree.</param>
         public void Add(SceneNode node, bool dynamic)
         {
-            var (nodeList, octree) = dynamic
-                ? (dynamicNodes, DynamicOctree)
-                : (staticNodes, StaticOctree);
+            if (dynamic)
+            {
+                dynamicNodes.Add(node);
+                DynamicNodeSet.Dirty = true;
+            }
+            else
+            {
+                staticNodes.Add(node);
+                StaticOctree.Dirty = true;
+            }
 
-            nodeList.Add(node);
-            octree.Dirty = true;
             parallelUpdateNodesDirty = true;
         }
 
@@ -266,12 +270,17 @@ namespace ValveResourceFormat.Renderer
         /// <param name="dynamic">When <see langword="true"/>, removes from the dynamic partition; otherwise the static partition.</param>
         public void Remove(SceneNode node, bool dynamic)
         {
-            var (nodeList, octree) = dynamic
-                ? (dynamicNodes, DynamicOctree)
-                : (staticNodes, StaticOctree);
+            if (dynamic)
+            {
+                dynamicNodes.Remove(node);
+                DynamicNodeSet.Dirty = true;
+            }
+            else
+            {
+                staticNodes.Remove(node);
+                StaticOctree.Dirty = true;
+            }
 
-            nodeList.Remove(node);
-            octree.Dirty = true;
             parallelUpdateNodesDirty = true;
         }
 
@@ -337,7 +346,7 @@ namespace ValveResourceFormat.Renderer
             transformDataCpu = [];
 
             StaticOctree.Clear();
-            DynamicOctree.Clear();
+            DynamicNodeSet.Clear();
 
             RendererContext.MaterialLoader.Clear();
             RendererContext.MeshBufferCache.Clear();
@@ -405,12 +414,6 @@ namespace ValveResourceFormat.Renderer
         /// <param name="updateContext">Per-frame context data including camera and timestep.</param>
         public void Update(Scene.UpdateContext updateContext)
         {
-            // Captured before the threaded pass below, which moves these nodes
-            foreach (var node in dynamicNodes)
-            {
-                node.BoundingBoxBeforeUpdate = node.BoundingBox;
-            }
-
             using (new GLDebugGroup("Poses (threaded)"))
             {
                 UpdateNodesParallel(updateContext);
@@ -437,23 +440,14 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            // A separate pass from the updates above: nothing reads the octrees until draw call
-            // collection, so relocating late costs nothing and keeps the two costs tellable apart
-            using (new GLDebugGroup("Octree Relocate"))
+            // Every node, not just the roots: an attached child moves with its parent and the set does
+            // not care which. Nothing reads it before draw call collection, so one flat pass here
+            // replaces the relocation each node used to do as it was updated.
+            using (new GLDebugGroup("Bounds Refresh"))
             {
                 foreach (var node in dynamicNodes)
                 {
-                    if (node.Parent != null)
-                    {
-                        continue;
-                    }
-
-                    var oldBox = node.BoundingBoxBeforeUpdate;
-
-                    if (node.LayerEnabled && !oldBox.Equals(node.BoundingBox))
-                    {
-                        DynamicOctree.Update(node, oldBox);
-                    }
+                    DynamicNodeSet.Update(node);
                 }
             }
 
@@ -462,7 +456,7 @@ namespace ValveResourceFormat.Renderer
                 FlushSkinningTransforms();
             }
 
-            if (StaticOctree.Dirty || DynamicOctree.Dirty)
+            if (StaticOctree.Dirty || DynamicNodeSet.Dirty)
             {
                 // Indirect draw commands bake node ids, so recreate them only after reindexing
                 var staticDirty = StaticOctree.Dirty;
@@ -1025,7 +1019,7 @@ namespace ValveResourceFormat.Renderer
                 CullResults.RemoveRange(StaticCount, CullResults.Count - StaticCount);
             }
 
-            DynamicOctree.Root.Query(frustum, CullResults);
+            DynamicNodeSet.Query(frustum, CullResults);
             return CullResults;
         }
 
@@ -1344,7 +1338,7 @@ namespace ValveResourceFormat.Renderer
 
             if (includeDynamic)
             {
-                DynamicOctree.Root.Query(frustum, CulledShadowNodes);
+                DynamicNodeSet.Query(frustum, CulledShadowNodes);
             }
 
             foreach (var node in CulledShadowNodes)
@@ -1841,8 +1835,15 @@ namespace ValveResourceFormat.Renderer
 
             LightingInfo.ClearBarnShadowCache();
 
-            var octree = nodeType == NodeType.Static ? StaticOctree : DynamicOctree;
-            octree.Dirty = true;
+            if (nodeType == NodeType.Static)
+            {
+                StaticOctree.Dirty = true;
+            }
+            else
+            {
+                DynamicNodeSet.Dirty = true;
+            }
+
             return true;
         }
 
@@ -1880,19 +1881,19 @@ namespace ValveResourceFormat.Renderer
                 StaticOctree.Dirty = false;
             }
 
-            if (DynamicOctree.Dirty)
+            if (DynamicNodeSet.Dirty)
             {
-                DynamicOctree.Clear();
+                DynamicNodeSet.Clear();
 
                 foreach (var node in dynamicNodes)
                 {
                     if (node.LayerEnabled)
                     {
-                        DynamicOctree.Insert(node);
+                        DynamicNodeSet.Insert(node);
                     }
                 }
 
-                DynamicOctree.Dirty = false;
+                DynamicNodeSet.Dirty = false;
             }
         }
 
@@ -1977,7 +1978,7 @@ namespace ValveResourceFormat.Renderer
             foreach (var probe in sortedLightProbes)
             {
                 StaticOctree.Root.Query(probe.BoundingBox, nodes);
-                DynamicOctree.Root.Query(probe.BoundingBox, nodes); // TODO: This should actually be done dynamically
+                DynamicNodeSet.Query(probe.BoundingBox, nodes); // TODO: This should actually be done dynamically
 
                 foreach (var node in nodes)
                 {
@@ -2053,7 +2054,7 @@ namespace ValveResourceFormat.Renderer
                 }
 
                 StaticOctree.Root.Query(envMap.BoundingBox, nodes);
-                DynamicOctree.Root.Query(envMap.BoundingBox, nodes); // TODO: This should actually be done dynamically
+                DynamicNodeSet.Query(envMap.BoundingBox, nodes); // TODO: This should actually be done dynamically
 
                 foreach (var node in nodes)
                 {

@@ -168,11 +168,10 @@ namespace ValveResourceFormat.Renderer
         public virtual bool SupportsParallelUpdate => false;
 
         /// <summary>
-        /// World bounds as of the start of the frame, before <see cref="UpdateParallel"/> had a chance to
-        /// move them. The octree finds a node by the bounds it was inserted with, so relocating it needs
-        /// these rather than whatever this frame's pose has since produced.
+        /// This node's slot in the scene's <see cref="Scene.DynamicNodeSet"/>, or -1 when it is not in
+        /// one. Held here so refreshing its bounds is a direct store rather than a lookup.
         /// </summary>
-        internal AABB BoundingBoxBeforeUpdate { get; set; }
+        internal int DynamicSetIndex { get; set; } = -1;
 
         /// <summary>
         /// The CPU-only half of the per-frame update, run for every root node on the thread pool before
