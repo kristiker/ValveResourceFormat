@@ -438,11 +438,13 @@ namespace ValveResourceFormat.Renderer
 
             var maxId = nodes.Max(n => n.Id);
 
+            var identityTransform = Matrix4x4.Identity.To3x4();
+
             var instanceData = new ObjectDataStandard[maxId + 1];
             var transformData = new List<OpenTK.Mathematics.Matrix3x4>(capacity: (int)maxId + 2)
             {
                 // Reserve index 0 for identity transform
-                Matrix4x4.Identity.To3x4()
+                identityTransform
             };
 
             foreach (var node in nodes)
@@ -452,6 +454,13 @@ namespace ValveResourceFormat.Renderer
                 {
                     // Content can author out-of-range tints; the packed byte color can only represent [0, 1].
                     instanceTint = Vector4.Clamp(fragment.RenderMesh.Tint * fragment.DrawCall.TintColor * fragment.Tint, Vector4.Zero, Vector4.One);
+                }
+
+                var skinnedModel = node as ModelSceneNode;
+
+                if (skinnedModel is { BoneTransformCount: 0 })
+                {
+                    skinnedModel = null;
                 }
 
                 uint transformIndex;
@@ -465,26 +474,30 @@ namespace ValveResourceFormat.Renderer
                         transformData.Add(instanceTransform);
                     }
                 }
-                else if (node.Transform.IsIdentity)
+                else if (node.Transform.IsIdentity && skinnedModel == null)
                 {
                     transformIndex = 0; // Reuse identity transform at index 0
                 }
                 else
                 {
+                    // Skinned models always take their own slot, the shader finds their bones relative to it
                     transformIndex = (uint)transformData.Count;
                     transformData.Add(node.Transform.To3x4());
                 }
 
-                var boneTransformOffset = 0u;
-
-                if (node is ModelSceneNode { BoneTransformCount: > 0 } model)
+                if (skinnedModel != null)
                 {
-                    // Reserve a skinning matrix range so animated models read (and stream) bones
-                    // from the shared transform buffer, keyed per object
-                    boneTransformOffset = (uint)transformData.Count;
-                    CollectionsMarshal.SetCount(transformData, transformData.Count + model.BoneTransformCount);
-                    model.WriteBoneTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)boneTransformOffset, model.BoneTransformCount));
-                    model.BoneTransformOffset = boneTransformOffset;
+                    // Reserve a skinning matrix range so animated models read (and stream) bones from the
+                    // shared transform buffer, at the fixed offset from the object transform the shader expects
+                    var boneTransformOffset = transformIndex + ModelSceneNode.BoneTransformStart;
+
+                    CollectionsMarshal.SetCount(transformData, (int)boneTransformOffset + skinnedModel.BoneTransformCount);
+
+                    var transforms = CollectionsMarshal.AsSpan(transformData);
+                    transforms[(int)transformIndex + 1] = identityTransform; // empty space, not sure what for
+
+                    skinnedModel.WriteBoneTransforms(transforms.Slice((int)boneTransformOffset, skinnedModel.BoneTransformCount));
+                    skinnedModel.BoneTransformOffset = boneTransformOffset;
                 }
 
                 instanceData[node.Id] = new ObjectDataStandard
@@ -494,7 +507,6 @@ namespace ValveResourceFormat.Renderer
                     EnvMapVisibility = node.ShaderEnvMapVisibility,
                     VisibleLPV = (uint)(node.LightProbeBinding?.ShaderIndex ?? 0),
                     Identification = node.Id,
-                    BoneOffset = boneTransformOffset,
                 };
             }
 

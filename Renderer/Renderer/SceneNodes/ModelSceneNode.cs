@@ -67,6 +67,11 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <summary>Gets whether this model has animations loaded and a skeleton to animate.</summary>
         public bool IsAnimated { get; private set; }
 
+        /// <summary>Distance from an object's transform to its first skinning matrix in the scene transform buffer.
+        /// Kept in sync with <c>GetObjectBoneOffset</c> in instancing.slang, which derives the bone range from the
+        /// transform index alone rather than storing a second index per object.</summary>
+        internal const uint BoneTransformStart = 2;
+
         /// <summary>Gets the number of skinning matrix slots this model reserves in the scene transform buffer (the mesh-bone remapping table length).</summary>
         internal int BoneTransformCount => remappingTable.Length;
 
@@ -526,7 +531,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     var modelBoneIndex = remappingTable[i];
                     var modelBoneExists = modelBoneIndex < boneCount && modelBoneIndex != -1;
 
-                    // Caller may pass a rented buffer, so write identity for invalid remaps instead of leaking stale data into the shared buffer
                     dest[i] = modelBoneExists ? modelBones[modelBoneIndex].To3x4() : identity;
                 }
 
