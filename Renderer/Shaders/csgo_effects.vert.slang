@@ -19,17 +19,16 @@ uniform vec3 g_vColorTint = vec3(1.0); // SrgbRead(true)
 
 void main()
 {
-    mat4 skinTransform = GetSkinnedObjectToWorldMatrix();
-    vec4 fragPosition = skinTransform * GetScaledPositionOs(vPOSITION);
-    gl_Position = g_matWorldToProjection * fragPosition;
-    vFragPosition = fragPosition.xyz;
+    mat3x4 skinTransform = GetSkinnedObjectToWorldMatrix();
+    vec3 fragPosition = GetScaledPositionOs(vPOSITION) * skinTransform;
+    gl_Position = g_matWorldToProjection * vec4(fragPosition, 1.0);
+    vFragPosition = fragPosition;
 
     vec3 normal;
     vec4 tangent;
     GetOptionallyCompressedNormalTangent(normal, tangent);
 
-    mat3 normalTransform = mat3(skinTransform);
-    vNormalOut = safeNormalize(normalTransform * normal);
+    vNormalOut = TransformDirectionToWorld(skinTransform, normal);
 
     vTexCoordOut = vTEXCOORD;
 

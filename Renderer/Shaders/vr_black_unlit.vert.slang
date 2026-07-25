@@ -11,7 +11,7 @@ out vec3 vFragPosition;
 
 void main()
 {
-    vec4 fragPosition = GetSkinnedObjectToWorldMatrix() * GetScaledPositionOs(vPOSITION);
-    gl_Position = g_matWorldToProjection * fragPosition;
-    vFragPosition = fragPosition.xyz;
+    vec3 fragPosition = GetScaledPositionOs(vPOSITION) * GetSkinnedObjectToWorldMatrix();
+    gl_Position = g_matWorldToProjection * vec4(fragPosition, 1.0);
+    vFragPosition = fragPosition;
 }

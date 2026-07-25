@@ -49,7 +49,20 @@ vec4 GetScaledPositionOs(vec3 vPositionOs)
     return vec4(vPositionOs * GetObjectUniformScale(), 1.0);
 }
 
-mat4 getMatrix(uint boneIndex, uint objectBoneOffset)
+// Directions carry no translation, so they go through the same matrix with a w of zero. The matrices
+// are rotation plus translation, the scale having been left out of them, so no inverse transpose is
+// needed to keep a normal perpendicular.
+vec3 TransformDirectionToWorld(mat3x4 objectToWorld, vec3 vDirectionOs)
+{
+    // A bone animated to zero scale would zero the matrix it contributes, and only the vertices weighted
+    // to it collapse, so the triangles across that seam keep their area and still rasterize. normalize of
+    // a zero vector would hand them NaN and the lighting blows out. Those matrices are uploaded with an
+    // epsilon basis instead of zero, which is why this needs no guard:
+    // return vDirectionWs * inversesqrt(max(dot(vDirectionWs, vDirectionWs), 1e-8));
+    return normalize(vec4(vDirectionOs, 0.0) * objectToWorld);
+}
+
+mat3x4 getMatrix(uint boneIndex, uint objectBoneOffset)
 {
     // Issue #705 out of bounds bone index (model needs ApplyVBIBDefaults)
     // Model:  hlvr/models/props/xen/xen_villi_medium.vmdl
@@ -57,22 +70,22 @@ mat4 getMatrix(uint boneIndex, uint objectBoneOffset)
     // Falls back to the unskinned transform, identity would put the model at the world origin now
     // that the object transform lives in the bones. Scaled models get it applied twice here.
     if (boneIndex >= meshBoneCount) {
-        return CalculateObjectToWorldMatrix();
+        return GetObjectToWorldMatrix3x4();
     }
 
     boneIndex += objectBoneOffset + meshBoneOffset;
 
-    return UnpackMatrix4(transforms[boneIndex]);
+    return transforms[boneIndex];
 }
 
 // The full object to world matrix for this vertex: a blend of the object's skinning matrices when
-// animated, the plain object transform otherwise. There is no second matrix to compose with, the
-// CPU already folded the object transform into the bones.
-mat4 GetSkinnedObjectToWorldMatrix()
+// animated, the plain object transform otherwise. There is no second matrix to compose with, the CPU
+// already folded the object transform into the bones, so it never has to leave its packed form.
+mat3x4 GetSkinnedObjectToWorldMatrix()
 {
     if (!bAnimated)
     {
-        return CalculateObjectToWorldMatrix();
+        return GetObjectToWorldMatrix3x4();
     }
 
     uint objectBoneOffset = GetObjectBoneOffset();
@@ -82,7 +95,7 @@ mat4 GetSkinnedObjectToWorldMatrix()
         return getMatrix(vBLENDINDICES.x, objectBoneOffset);
     }
 
-    mat4 skinMatrix = mat4(0.0);
+    mat3x4 skinMatrix = mat3x4(0.0);
 
 
     skinMatrix += vBLENDWEIGHT.x * getMatrix(vBLENDINDICES.x, objectBoneOffset);

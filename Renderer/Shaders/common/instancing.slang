@@ -68,13 +68,11 @@ uint GetObjectBoneOffset()
     return objects[gl_BaseInstance].TransformIndex + 2u;
 }
 
-ObjectData_t GetObjectData()
+// The object to world matrix still packed. Positions and directions can be multiplied straight
+// against it, vec4(v, w) * m being the same three dot products UnpackMatrix4 feeds to a mat4.
+mat3x4 GetObjectToWorldMatrix3x4()
 {
     ObjectDataStandard objectData = objects[gl_BaseInstance];
-
-    ObjectData_t object;
-    object.transform = UnpackMatrix4(bIsInstancing ? transforms[objectData.TransformIndex + gl_InstanceID] : transform);
-    object.vTint = UnpackColor32(bIsInstancing ? objectData.TintAlpha : vTint);
 
     #if (S_SCENE_CUBEMAP_TYPE > 0)
         g_nEnvMapVisibility = objectData.EnvMapVisibility;
@@ -83,6 +81,15 @@ ObjectData_t GetObjectData()
     #if (D_BAKED_LIGHTING_FROM_PROBE > 0)
         g_nVisibleLPV = objectData.VisibleLPV;
     #endif
+
+    return bIsInstancing ? transforms[objectData.TransformIndex + gl_InstanceID] : transform;
+}
+
+ObjectData_t GetObjectData()
+{
+    ObjectData_t object;
+    object.transform = UnpackMatrix4(GetObjectToWorldMatrix3x4());
+    object.vTint = UnpackColor32(bIsInstancing ? objects[gl_BaseInstance].TintAlpha : vTint);
 
     return object;
 }

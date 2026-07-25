@@ -73,6 +73,10 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// uniform scale that the vertex shader applies to positions.</summary>
         internal const uint BoneTransformStart = 2;
 
+        /// <summary>Smallest basis a skinning matrix is uploaded with. Invisible at any camera distance, and
+        /// far enough from zero that squaring it in the shader's normalize stays well clear of underflow.</summary>
+        private const float MinimumBoneScale = 1e-5f;
+
         /// <summary>Gets the number of skinning matrix slots this model reserves in the scene transform buffer (the mesh-bone remapping table length).</summary>
         internal int BoneTransformCount => remappingTable.Length;
 
@@ -539,38 +543,33 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             var objectToWorld = Transform;
 
-            var scalePerAxis = new Vector3(
-                MathF.Sqrt((objectToWorld.M11 * objectToWorld.M11) + (objectToWorld.M12 * objectToWorld.M12) + (objectToWorld.M13 * objectToWorld.M13)),
-                MathF.Sqrt((objectToWorld.M21 * objectToWorld.M21) + (objectToWorld.M22 * objectToWorld.M22) + (objectToWorld.M23 * objectToWorld.M23)),
-                MathF.Sqrt((objectToWorld.M31 * objectToWorld.M31) + (objectToWorld.M32 * objectToWorld.M32) + (objectToWorld.M33 * objectToWorld.M33)));
+            if (!Matrix4x4.Decompose(objectToWorld, out var scalePerAxis, out var rotation, out var translation))
+            {
+                // A collapsed transform is how content hides a model, so keep the zero rather than falling
+                // back to one: the vertices fold onto a point and the rasterizer drops the triangles. Only a
+                // transform that is degenerate for some other reason, a mirrored one, keeps its size.
+                scalePerAxis = objectToWorld.GetDeterminant() == 0f ? Vector3.Zero : Vector3.One;
+                rotation = Quaternion.Identity;
+                translation = objectToWorld.Translation;
+            }
 
-            // The shader broadcasts one component and ignores any non uniformity, as Source 2 does. Which one
-            // does not matter for correctness as long as it is the one factored out below: the position
-            // multiply and the strip cancel exactly, whatever the scalar, so a non uniform transform still
-            // renders correctly through the leftovers left in the folded matrices.
+            // The shader broadcasts one component and ignores any non uniformity, the way Source 2 does
             var scale = scalePerAxis.Z;
 
             dest[0] = objectToWorld.To3x4();
-
-            if (scale != 0f)
-            {
-                // Strip the uniform scale, leaving rotation and translation for the fold below
-                var inverseScale = 1f / scale;
-                objectToWorld.M11 *= inverseScale; objectToWorld.M12 *= inverseScale; objectToWorld.M13 *= inverseScale;
-                objectToWorld.M21 *= inverseScale; objectToWorld.M22 *= inverseScale; objectToWorld.M23 *= inverseScale;
-                objectToWorld.M31 *= inverseScale; objectToWorld.M32 *= inverseScale; objectToWorld.M33 *= inverseScale;
-            }
 
             // The slot Source 2 keeps between the transform and the bones, holding a Transform rather than a
             // matrix: scale, rotation and translation each stay a field of their own, so the shader reads the
             // scale as one float instead of measuring a basis vector. Laid out as three vec4s, which puts the
             // scale at the same byte offset the Source 2 shaders read it from
-            var rotation = Quaternion.CreateFromRotationMatrix(objectToWorld);
-
             dest[1] = new OpenTK.Mathematics.Matrix3x4(
                 scalePerAxis.X, scalePerAxis.Y, scalePerAxis.Z, 0f,
                 rotation.X, rotation.Y, rotation.Z, rotation.W,
-                objectToWorld.M41, objectToWorld.M42, objectToWorld.M43, 0f);
+                translation.X, translation.Y, translation.Z, 0f);
+
+            // Rotation and translation only, the scale above rides on the vertex position instead
+            objectToWorld = Matrix4x4.CreateFromQuaternion(rotation);
+            objectToWorld.Translation = translation;
 
             var boneTransforms = dest[(int)BoneTransformStart..];
             var unskinned = objectToWorld.To3x4();
@@ -600,9 +599,23 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                         continue;
                     }
 
+                    var bone = modelBones[modelBoneIndex];
+
+                    // Content hides parts of a model by animating a bone to zero scale, which zeroes its
+                    // whole matrix. Only the vertices weighted to that bone collapse, so the triangles across
+                    // the seam keep their area and would carry a normalized zero length normal, a NaN, into
+                    // the lighting. An epsilon basis keeps them finite and collapses the geometry just the
+                    // same. Substituted on the way to the GPU rather than in the pose, so attachments and the
+                    // skeleton view still see the real transform and nothing compounds down a bone chain.
+                    if (((bone.M11 * bone.M11) + (bone.M12 * bone.M12) + (bone.M13 * bone.M13)) < MinimumBoneScale * MinimumBoneScale)
+                    {
+                        bone.M11 = MinimumBoneScale;
+                        bone.M22 = MinimumBoneScale;
+                        bone.M33 = MinimumBoneScale;
+                    }
+
                     // Scaling the position rather than the matrix moves the scale onto the bone translation,
                     // which is what conjugating the skinning matrix by the scale leaves behind
-                    var bone = modelBones[modelBoneIndex];
                     bone.M41 *= scale;
                     bone.M42 *= scale;
                     bone.M43 *= scale;

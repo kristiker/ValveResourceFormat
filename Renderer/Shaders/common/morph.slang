@@ -3,6 +3,8 @@
 #ifndef VRF_MORPH_INCLUDE
 #define VRF_MORPH_INCLUDE
 
+#include "animation.slang"
+
 #define F_MORPH_SUPPORTED 0 // most shaders
 #define bMorphed (morphVertexIdOffset != -1)
 
@@ -31,6 +33,13 @@ vec3 getMorphOffset()
     #endif
 
     return vec3(0, 0, 0);
+}
+
+// Object space position with its morph offset applied, then the instance scale, which the offset has
+// to go through as well since it is authored in the same space as the position.
+vec4 GetMorphedPositionOs(vec3 vPositionOs)
+{
+    return GetScaledPositionOs(vPositionOs + getMorphOffset());
 }
 
 #endif

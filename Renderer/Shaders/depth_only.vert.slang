@@ -20,7 +20,7 @@ void main()
 {
     // Falls back to the plain object transform when the draw is not animated, so the matrix and the
     // scale in GetScaledPositionOs below always agree on which path this vertex is taking
-    mat4 vertexTransform = GetSkinnedObjectToWorldMatrix();
+    mat3x4 vertexTransform = GetSkinnedObjectToWorldMatrix();
     vec3 vertexPosition = vPOSITION;
 
     #if (D_MORPHED == 1)
@@ -31,6 +31,6 @@ void main()
         texCoord = vTEXCOORD;
     #endif
 
-    vec4 fragPosition = vertexTransform * GetScaledPositionOs(vertexPosition);
-    gl_Position = g_matWorldToProjection * fragPosition;
+    vec3 fragPosition = GetScaledPositionOs(vertexPosition) * vertexTransform;
+    gl_Position = g_matWorldToProjection * vec4(fragPosition, 1.0);
 }
