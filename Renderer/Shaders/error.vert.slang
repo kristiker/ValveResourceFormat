@@ -12,7 +12,7 @@ out vec2 vTexCoordOut;
 
 void main(void) {
     vTexCoordOut = vTEXCOORD;
-    mat3x4 skinTransform = GetSkinnedObjectToWorldMatrix();
+    mat3x4 skinTransform = CalculateSkinTransform();
     vec3 fragPosition = GetScaledPositionOs(vPOSITION) * skinTransform;
     gl_Position = g_matWorldToProjection * vec4(fragPosition, 1.0);
 }

@@ -67,7 +67,7 @@ mat3x4 getMatrix(uint boneIndex, uint objectBoneOffset)
 }
 
 // The full object to world matrix for this vertex, blended from the bones when animated.
-mat3x4 GetSkinnedObjectToWorldMatrix()
+mat3x4 CalculateSkinTransform()
 {
     if (!bAnimated)
     {
@@ -82,7 +82,6 @@ mat3x4 GetSkinnedObjectToWorldMatrix()
     }
 
     mat3x4 skinMatrix = mat3x4(0.0);
-
 
     skinMatrix += vBLENDWEIGHT.x * getMatrix(vBLENDINDICES.x, objectBoneOffset);
     skinMatrix += vBLENDWEIGHT.y * getMatrix(vBLENDINDICES.y, objectBoneOffset);

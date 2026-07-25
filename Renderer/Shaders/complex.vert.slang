@@ -274,8 +274,8 @@ void main()
 {
     ObjectData_t object = GetObjectData();
 
-    mat3x4 skinTransform = GetSkinnedObjectToWorldMatrix();
-    vFragPosition = GetMorphedPositionOs(vPOSITION) * skinTransform;
+    mat3x4 skinTransform = CalculateSkinTransform();
+    vFragPosition = ApplyMorphOffset(vPOSITION) * skinTransform;
 
     vec3 normal;
     vec4 tangent;

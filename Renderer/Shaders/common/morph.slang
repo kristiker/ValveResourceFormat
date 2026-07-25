@@ -36,7 +36,7 @@ vec3 getMorphOffset()
 }
 
 // The morph offset is authored in object space, so it goes through the instance scale with the position.
-vec4 GetMorphedPositionOs(vec3 vPositionOs)
+vec4 ApplyMorphOffset(vec3 vPositionOs)
 {
     return GetScaledPositionOs(vPositionOs + getMorphOffset());
 }
