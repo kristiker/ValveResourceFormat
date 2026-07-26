@@ -180,7 +180,7 @@ namespace ValveResourceFormat.Renderer
 
         /// <summary>CPU mirror of <see cref="TransformBufferGpu"/>. Models fill their own slices of it
         /// off the render thread and the changed ranges go up together.</summary>
-        private OpenTK.Mathematics.Matrix3x4[] transformDataCpu = [];
+        private readonly List<OpenTK.Mathematics.Matrix3x4> transformDataCpu = [];
 
         /// <summary>Skinned models in ascending <see cref="ModelSceneNode.TransformSlot"/> order.</summary>
         private readonly List<ModelSceneNode> skinnedModels = [];
@@ -343,7 +343,7 @@ namespace ValveResourceFormat.Renderer
             parallelUpdateNodesDirty = true;
 
             skinnedModels.Clear();
-            transformDataCpu = [];
+            transformDataCpu.Clear();
 
             StaticOctree.Clear();
             DynamicNodeSet.Clear();
@@ -657,7 +657,7 @@ namespace ValveResourceFormat.Renderer
 
             if (nodes.Count == 0)
             {
-                transformDataCpu = [];
+                transformDataCpu.Clear();
                 return;
             }
 
@@ -666,11 +666,14 @@ namespace ValveResourceFormat.Renderer
             var identityTransform = Matrix4x4.Identity.To3x4();
 
             var instanceData = new ObjectDataStandard[maxId + 1];
-            var transformData = new List<OpenTK.Mathematics.Matrix3x4>(capacity: (int)maxId + 2)
-            {
-                // Reserve index 0 for identity transform
-                identityTransform
-            };
+            // Reused across rebuilds, so a scene that streams nodes in is not reallocating the whole
+            // transform table every time one arrives
+            var transformData = transformDataCpu;
+            transformData.Clear();
+            transformData.EnsureCapacity((int)maxId + 2);
+
+            // Reserve index 0 for identity transform
+            transformData.Add(identityTransform);
 
             foreach (var node in nodes)
             {
@@ -741,11 +744,8 @@ namespace ValveResourceFormat.Renderer
 
             InstanceBufferGpu.Create(instanceData, BufferUsageHint.StaticDraw);
 
-            // Kept as the CPU mirror the models write their skinning matrices into
-            transformDataCpu = [.. transformData];
-
             // Dynamic: animated models stream their skinning matrices into it every frame
-            TransformBufferGpu.Create(transformDataCpu.AsSpan(), BufferUsageHint.DynamicDraw);
+            TransformBufferGpu.Create(TransformMirror, BufferUsageHint.DynamicDraw);
 
             // Everything just went up in full, so nothing is outstanding
             foreach (var model in skinnedModels)
@@ -759,9 +759,13 @@ namespace ValveResourceFormat.Renderer
         /// Slices never overlap, so models can fill their own from the thread pool.
         /// </summary>
         internal Span<OpenTK.Mathematics.Matrix3x4> GetTransformSlice(uint slot, int length)
-            => slot != 0 && (int)slot + length <= transformDataCpu.Length
-                ? transformDataCpu.AsSpan((int)slot, length)
+            => slot != 0 && (int)slot + length <= transformDataCpu.Count
+                ? TransformMirror.Slice((int)slot, length)
                 : [];
+
+        /// <summary>The mirror as a span. Only valid until the list is resized, which happens on a
+        /// buffer rebuild and nowhere else.</summary>
+        private Span<OpenTK.Mathematics.Matrix3x4> TransformMirror => CollectionsMarshal.AsSpan(transformDataCpu);
 
         /// <summary>
         /// Streams every model that reposed this frame to the GPU, merging neighbours into single
@@ -770,7 +774,7 @@ namespace ValveResourceFormat.Renderer
         /// </summary>
         private void FlushSkinningTransforms()
         {
-            if (TransformBufferGpu == null || transformDataCpu.Length == 0)
+            if (TransformBufferGpu == null || transformDataCpu.Count == 0)
             {
                 return;
             }
@@ -788,7 +792,7 @@ namespace ValveResourceFormat.Renderer
                 var start = (int)model.TransformSlot;
                 var end = start + model.BoneTransformCount + (int)ModelSceneNode.BoneTransformStart;
 
-                if (start == 0 || end > transformDataCpu.Length)
+                if (start == 0 || end > transformDataCpu.Count)
                 {
                     continue; // no slot assigned yet, or stale between buffer rebuilds
                 }
@@ -823,7 +827,7 @@ namespace ValveResourceFormat.Renderer
 
             var slotSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
 
-            TransformBufferGpu.Update<OpenTK.Mathematics.Matrix3x4>(transformDataCpu.AsSpan(start, end - start), start * slotSize);
+            TransformBufferGpu.Update<OpenTK.Mathematics.Matrix3x4>(TransformMirror.Slice(start, end - start), start * slotSize);
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)
