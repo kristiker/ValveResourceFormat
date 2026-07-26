@@ -16,8 +16,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
     internal class RenderSprites : ParticleFunctionRenderer
     {
         private const string ShaderName = "vrf.particle_sprite";
-        // position 3, colour 4, uv 2, next-frame uv 2, frame blend 1
-        private const int VertexSize = 12;
+        // One set per particle, not per vertex: position 3, right 3, up 3, colour 4, uv rect 4,
+        // next-frame uv rect 4, frame blend 1.
+        private const int VertexSize = 22;
 
         // The shader keeps one sampler per layer, so this is a hard ceiling rather than a preference.
         private const int MaxTextureLayers = 5;
@@ -228,7 +229,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             GL.CreateVertexArrays(1, out int vao);
             GL.CreateBuffers(1, out vertexBufferHandle);
             GL.VertexArrayVertexBuffer(vao, 0, vertexBufferHandle, 0, stride);
-            GL.VertexArrayElementBuffer(vao, RendererContext.MeshBufferCache.QuadIndices.GLHandle);
+
+            // Every attribute advances once per particle; the corners come from gl_VertexID instead, so
+            // there is no per-vertex data and no index buffer.
+            GL.VertexArrayBindingDivisor(vao, 0, 1);
 
             // A driver is free to drop an attribute whose only use sits behind a uniform branch, in which
             // case GetAttribLocation reports -1 and binding it would raise a GL error.
@@ -246,11 +250,13 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 GL.VertexArrayAttribBinding(vao, location, 0);
             }
 
-            SetupAttribute("aVertexPosition", 3, 0);
-            SetupAttribute("aVertexColor", 4, 3);
-            SetupAttribute("aTexCoords", 2, 7);
-            SetupAttribute("aTexCoordsNextFrame", 2, 9);
-            SetupAttribute("aFrameBlend", 1, 11);
+            SetupAttribute("aPosition", 3, 0);
+            SetupAttribute("aRight", 3, 3);
+            SetupAttribute("aUp", 3, 6);
+            SetupAttribute("aVertexColor", 4, 9);
+            SetupAttribute("aUvRect", 4, 13);
+            SetupAttribute("aUvRectNextFrame", 4, 17);
+            SetupAttribute("aFrameBlend", 1, 21);
 
             return vao;
         }
@@ -312,21 +318,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             return QuadBasis(n, Vector3.Normalize(w), roll);
         }
 
-        // Writes one uv rectangle across the quad's four corners, at the given offset within each vertex.
-        // The quad winds top-left, bottom-left, bottom-right, top-right with v increasing downward.
-        private static void WriteQuadUv(float[] vertices, int offset, Vector2 min, Vector2 max)
-        {
-            vertices[offset + (VertexSize * 0) + 0] = min.X;
-            vertices[offset + (VertexSize * 0) + 1] = max.Y;
-            vertices[offset + (VertexSize * 1) + 0] = min.X;
-            vertices[offset + (VertexSize * 1) + 1] = min.Y;
-            vertices[offset + (VertexSize * 2) + 0] = max.X;
-            vertices[offset + (VertexSize * 2) + 1] = min.Y;
-            vertices[offset + (VertexSize * 3) + 0] = max.X;
-            vertices[offset + (VertexSize * 3) + 1] = max.Y;
-        }
-
-        /// <summary>Fills and uploads the quad buffer, returning the number of quads actually emitted.</summary>
+        /// <summary>Fills and uploads the instance buffer, returning the number of particles emitted.</summary>
         private int UpdateVertices(ParticleCollection particles, ParticleSystemRenderState systemRenderState, Camera camera)
         {
             var modelViewMatrix = camera.CameraViewMatrix;
@@ -362,7 +354,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     or ParticleOrientation.PARTICLE_ORIENTATION_SCREENALIGN_TO_PARTICLE_NORMAL;
 
             // Update vertex buffer
-            var rawVertices = ArrayPool<float>.Shared.Rent(particles.Count * VertexSize * 4);
+            var rawVertices = ArrayPool<float>.Shared.Rent(particles.Count * VertexSize);
 
             try
             {
@@ -429,36 +421,34 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         _ => particle.GetRotationMatrix() * particle.GetTransformationMatrix(radiusScale),
                     };
 
-                    // The centre offset shifts the corners before the model matrix scales them, so it is
-                    // measured in half-widths rather than world units.
-                    var tl = Vector4.Transform(new Vector4(centerOffset.X - 1, centerOffset.Y - 1, 0, 1), modelMatrix);
-                    var bl = Vector4.Transform(new Vector4(centerOffset.X - 1, centerOffset.Y + 1, 0, 1), modelMatrix);
-                    var br = Vector4.Transform(new Vector4(centerOffset.X + 1, centerOffset.Y + 1, 0, 1), modelMatrix);
-                    var tr = Vector4.Transform(new Vector4(centerOffset.X + 1, centerOffset.Y - 1, 0, 1), modelMatrix);
+                    // The corner map is corner.x * row0 + corner.y * row1 + translation, so the first two
+                    // rows are the card's axes with the radius already in them. Extracting them lets the
+                    // vertex shader expand the quad, instead of four Vector4.Transform calls here.
+                    var right = new Vector3(modelMatrix.M11, modelMatrix.M12, modelMatrix.M13);
+                    var up = new Vector3(modelMatrix.M21, modelMatrix.M22, modelMatrix.M23);
 
-                    var quadStart = i * VertexSize * 4;
-                    rawVertices[quadStart + 0] = tl.X;
-                    rawVertices[quadStart + 1] = tl.Y;
-                    rawVertices[quadStart + 2] = tl.Z;
-                    rawVertices[quadStart + (VertexSize * 1) + 0] = bl.X;
-                    rawVertices[quadStart + (VertexSize * 1) + 1] = bl.Y;
-                    rawVertices[quadStart + (VertexSize * 1) + 2] = bl.Z;
-                    rawVertices[quadStart + (VertexSize * 2) + 0] = br.X;
-                    rawVertices[quadStart + (VertexSize * 2) + 1] = br.Y;
-                    rawVertices[quadStart + (VertexSize * 2) + 2] = br.Z;
-                    rawVertices[quadStart + (VertexSize * 3) + 0] = tr.X;
-                    rawVertices[quadStart + (VertexSize * 3) + 1] = tr.Y;
-                    rawVertices[quadStart + (VertexSize * 3) + 2] = tr.Z;
+                    // The centre offset is measured in half-widths, so it folds into the origin along
+                    // those same axes rather than into the world position.
+                    var origin = new Vector3(modelMatrix.M41, modelMatrix.M42, modelMatrix.M43)
+                        + (centerOffset.X * right)
+                        + (centerOffset.Y * up);
 
                     var alphaScale = this.alphaScale.NextNumber(ref particle, systemRenderState);
-                    // Colors
-                    for (var j = 0; j < 4; ++j)
-                    {
-                        rawVertices[quadStart + (VertexSize * j) + 3] = particle.Color.X * colorFade;
-                        rawVertices[quadStart + (VertexSize * j) + 4] = particle.Color.Y * colorFade;
-                        rawVertices[quadStart + (VertexSize * j) + 5] = particle.Color.Z * colorFade;
-                        rawVertices[quadStart + (VertexSize * j) + 6] = particle.Alpha * alphaScale * colorFade * alphaFade;
-                    }
+
+                    var quadStart = i * VertexSize;
+                    rawVertices[quadStart + 0] = origin.X;
+                    rawVertices[quadStart + 1] = origin.Y;
+                    rawVertices[quadStart + 2] = origin.Z;
+                    rawVertices[quadStart + 3] = right.X;
+                    rawVertices[quadStart + 4] = right.Y;
+                    rawVertices[quadStart + 5] = right.Z;
+                    rawVertices[quadStart + 6] = up.X;
+                    rawVertices[quadStart + 7] = up.Y;
+                    rawVertices[quadStart + 8] = up.Z;
+                    rawVertices[quadStart + 9] = particle.Color.X * colorFade;
+                    rawVertices[quadStart + 10] = particle.Color.Y * colorFade;
+                    rawVertices[quadStart + 11] = particle.Color.Z * colorFade;
+                    rawVertices[quadStart + 12] = particle.Alpha * alphaScale * colorFade * alphaFade;
 
                     // UVs. Animated sheets emit the frame the particle is on plus the one after it, and
                     // how far between them it sits, so the fragment shader can cross-fade rather than step.
@@ -491,18 +481,20 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         uvNextMax = nextImage.UncroppedMax;
                     }
 
-                    WriteQuadUv(rawVertices, quadStart + 7, uvMin, uvMax);
-                    WriteQuadUv(rawVertices, quadStart + 9, uvNextMin, uvNextMax);
-
-                    for (var j = 0; j < 4; ++j)
-                    {
-                        rawVertices[quadStart + (VertexSize * j) + 11] = frameBlend;
-                    }
+                    rawVertices[quadStart + 13] = uvMin.X;
+                    rawVertices[quadStart + 14] = uvMin.Y;
+                    rawVertices[quadStart + 15] = uvMax.X;
+                    rawVertices[quadStart + 16] = uvMax.Y;
+                    rawVertices[quadStart + 17] = uvNextMin.X;
+                    rawVertices[quadStart + 18] = uvNextMin.Y;
+                    rawVertices[quadStart + 19] = uvNextMax.X;
+                    rawVertices[quadStart + 20] = uvNextMax.Y;
+                    rawVertices[quadStart + 21] = frameBlend;
 
                     i++;
                 }
 
-                GL.NamedBufferData(vertexBufferHandle, i * VertexSize * 4 * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
+                GL.NamedBufferData(vertexBufferHandle, i * VertexSize * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
 
                 return i;
             }
@@ -597,7 +589,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             // DRAW
             PerfStats.Active.Count(Counter.ParticleDraw);
-            GL.DrawElements(PrimitiveType.Triangles, quadCount * 6, DrawElementsType.UnsignedShort, 0);
+            GL.DrawArraysInstanced(PrimitiveType.TriangleStrip, 0, 4, quadCount);
 
             GL.Enable(EnableCap.CullFace);
         }
