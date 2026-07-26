@@ -81,13 +81,29 @@ Declare every combo as a `#define` at the top defaulting to 0, then guard each d
 Things worth knowing before you start:
 
 - **Constant buffer member names are gone in VCS 71.** Older versions carry an external constant buffer
-  block with member names; version 71 does not, so members come out as `_m0`, `_m1`. Decompile the same
-  combo with `--shader_backend hlsl` to read the `packoffset` of each member, and name them from how the
-  code uses them. Record the offsets in a comment so the guess is checkable.
-- **Vertex input names can be wrong.** They are assigned from a semantic priority list rather than by
-  SPIR-V location, so once several vertex streams are active the names rotate. Trust what the code does
-  with an input, not its name: an input that indexes `g_instanceBuffer` is the instance index whatever it
-  is called.
+  block with member names; version 71 does not, so members come out as `_m0`, `_m1`. Recover the real ones
+  from the DirectX build, which keeps them in its DXBC reflection chunk: run `--shader_cbuffers` on the
+  `_pc_` copy of the shader in `shaders_pc_dir.vpk`. It prints every buffer's members at their
+  `packoffset`, plus the real texture and sampler names. Both builds compile the same source, so the
+  offsets agree and the names transfer; bind points do not, because the two backends assign registers
+  independently.
+
+  Reflection is stripped per program and not consistently — a shader's vertex program may keep it while its
+  pixel program does not. When the program you want has none, try its sibling: a vertex program often
+  declares the pixel program's buffers too, which is how `spritecard`'s pixel buffers get their names.
+  Where no program keeps a chunk, fall back to `--shader_backend hlsl` for the offsets and name the members
+  from how the code uses them, recording the offsets in a comment so the guess stays checkable.
+
+  Applying real names by offset is also a cheap correctness check on the offsets themselves: if a name
+  lands on a member that reads absurdly in context, the *offset* is usually what is wrong, not the name.
+- **Vertex input names are the real semantic, but a semantic is not a meaning.** Names come from the
+  shader's attribute map, looked up per SPIR-V location, so `input_TEXCOORD7` really is TEXCOORD7 however
+  many streams are active. What the semantic does not tell you is what the data means. A `spritecard`
+  trail passes thirteen inputs, of which TEXCOORD3 to TEXCOORD6 are Catmull-Rom control points and
+  TEXCOORD7 carries three unrelated per-particle scalars that TEXCOORD3 held in the non-trail variants;
+  nothing in the names says so. Keep trusting what the code does with an input for its meaning, and use
+  the name to identify which stream it arrived on. A shader with no attribute map, or a location the map
+  does not cover, falls back to a positional `input_<location>` carrying no semantic at all.
 - **A combo may only change the vertex layout.** `D_COMPRESSED_NORMALS_AND_TANGENTS` produces identical
   code in every `depth_only` vertex variant that does not read the normal, and only shifts input locations.
 - **Transform buffer slots carry more than matrices.** Source 2 packs metadata into unused matrix slots,
