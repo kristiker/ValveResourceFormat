@@ -19,6 +19,7 @@ uniform int uBlendMode = 0; // PARTICLE_OUTPUT_BLEND_MODE_ALPHA
 uniform sampler2D uTexture;
 uniform float uOverbrightFactor;
 uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
+uniform float uDesaturation = 0.0; // m_flDesaturation
 // m_flSourceAlphaValueToMapToZero and m_flSourceAlphaValueToMapToOne. The real spritecard smoothsteps
 // between the two bounds rather than applying a linear scale and bias, and skips the remap unless the
 // range increases -- so x >= y disables it, which is the default here.
@@ -195,6 +196,10 @@ void main(void) {
         finalColor = mix(finalColor, uOutlineColor.rgb, outlineRamp);
         alpha = mix(alpha, uOutlineColor.a, outlineRamp);
     }
+
+    // Pulls the whole card toward its own luminance. Sits after the outline, so the overlay desaturates
+    // with everything else, and before the brightness below.
+    finalColor = mix(finalColor, vec3(GetLuma(finalColor)), uDesaturation);
 
     // spritecard shading: brightness from diffuse+selfillum, saturated before the alpha blend. Applied
     // after the outline so the overlay colour is lit the same way the sample is.

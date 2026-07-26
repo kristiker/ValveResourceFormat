@@ -57,6 +57,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly ParticleBlendMode blendMode = ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ALPHA;
         private readonly INumberProvider overbrightFactor = new LiteralNumberProvider(1);
         private readonly ParticleOrientation orientationType;
+        private readonly INumberProvider desaturation = new LiteralNumberProvider(0);
         private readonly INumberProvider diffuseAmount = new LiteralNumberProvider(1);
         private readonly INumberProvider selfIllumAmount = new LiteralNumberProvider(0);
         private readonly INumberProvider alphaMapToZero = new LiteralNumberProvider(0);
@@ -139,6 +140,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             animationType = parse.Enum<ParticleAnimationType>("m_nAnimationType", animationType);
             radiusScale = parse.NumberProvider("m_flRadiusScale", radiusScale);
             alphaScale = parse.NumberProvider("m_flAlphaScale", alphaScale);
+            desaturation = parse.NumberProvider("m_flDesaturation", desaturation);
             diffuseAmount = parse.NumberProvider("m_flDiffuseAmount", diffuseAmount);
             selfIllumAmount = parse.NumberProvider("m_flSelfIllumAmount", selfIllumAmount);
             alphaMapToZero = parse.NumberProvider("m_flSourceAlphaValueToMapToZero", alphaMapToZero);
@@ -529,6 +531,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             // TODO: This formula is a guess but still seems too bright compared to valve particles
             shader.SetUniform1("uOverbrightFactor", overbrightFactor.NextNumber(systemRenderState));
             shader.SetUniform1("uColorFactor", diffuseAmount.NextNumber(systemRenderState) + selfIllumAmount.NextNumber(systemRenderState));
+            shader.SetUniform1("uDesaturation", desaturation.NextNumber(systemRenderState));
 
             // x >= y disables the remap in the shader.
             var alphaRemapRange = hasAlphaRemap
