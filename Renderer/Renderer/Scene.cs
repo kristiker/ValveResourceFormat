@@ -197,6 +197,11 @@ namespace ValveResourceFormat.Renderer
         private int transformRingSlot;
         private int transformSlotBytes;
 
+        /// <summary>Whether any model writes transforms per frame. A scene with none, a 3D sky being the
+        /// usual one, keeps the table it was built with, so rotating slots would only buy it a fence to
+        /// wait on.</summary>
+        private bool transformRingNeeded;
+
         /// <summary>Nodes claimed at a time. Large enough to amortize the interlocked handoff, small
         /// enough that a few heavy skeletons landing together do not strand a thread at the end.</summary>
         private const int ParallelUpdateChunkSize = 16;
@@ -696,6 +701,7 @@ namespace ValveResourceFormat.Renderer
             }
 
             var nodes = AllNodes.ToList();
+            transformRingNeeded = false;
 
             if (nodes.Count == 0)
             {
@@ -774,6 +780,7 @@ namespace ValveResourceFormat.Renderer
                     CollectionsMarshal.SetCount(transformData, (int)transformIndex + skinningSlotCount);
 
                     skinnedModel.TransformSlot = transformIndex;
+                    transformRingNeeded = true;
                     skinnedModel.WriteSkinningTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)transformIndex, skinningSlotCount));
                 }
 
@@ -837,7 +844,7 @@ namespace ValveResourceFormat.Renderer
         /// </summary>
         private void AdvanceTransformRing()
         {
-            if (TransformBufferGpu == null || transformSlotBytes == 0)
+            if (TransformBufferGpu == null || transformSlotBytes == 0 || !transformRingNeeded)
             {
                 return;
             }

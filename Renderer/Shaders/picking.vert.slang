@@ -12,6 +12,8 @@ flat out uint meshletId;
 
 void main(void) {
     gl_Position = g_matWorldToProjection * vec4(ApplyUniformScale(vPOSITION) * CalculateSkinTransform(), 1.0);
-    sceneObjectId = gl_BaseInstance + gl_InstanceID;
+    // Resolved the same way the object data is, or an object list draw reports whichever object
+    // happened to sit next to the first one in the buffer
+    sceneObjectId = GetObjectIndex();
     meshletId = gl_DrawID;
 }
