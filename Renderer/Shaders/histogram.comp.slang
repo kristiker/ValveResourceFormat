@@ -44,15 +44,17 @@ void main()
         vec3 color = texelFetch(inputImage, ivec2(globalID.xy), 0).rgb;
         float luma = GetLuma(color);
 
-        // log2(0) = undefined
-        luma = max(luma, 0.005);
+        // Bin 0 collects pixels below the metering range, the reduction pass discards it so that
+        // near-black pixels don't drag the log-average down. log2(0) is also undefined.
+        uint destBin = 0u;
 
-        // Convert to log space and normalize
-        float logLuma = log2(luma);
-        float normalizedLogLuma = saturate((logLuma - logMinLuminance) / logLuminanceRange);
+        if (luma > exp2(logMinLuminance))
+        {
+            float logLuma = log2(luma);
+            float normalizedLogLuma = saturate((logLuma - logMinLuminance) / logLuminanceRange);
 
-        // Map to histogram bin
-        uint destBin = uint(normalizedLogLuma * 255.0);
+            destBin = uint(normalizedLogLuma * 254.0) + 1u;
+        }
 
         // Accumulate into shared histogram
         atomicAdd(localHistogram[destBin], 1u);
@@ -69,6 +71,7 @@ void main()
     }
 #else
     uint totalPixels = imageResolution.x * imageResolution.y;
+    uint meteredPixels = totalPixels - min(histogram[0], totalPixels);
 
     // sum up weighted bin values
     localHistogram[bin] = histogram[bin] * bin;
@@ -87,8 +90,8 @@ void main()
     if(bin == 0)
     {
         uint weightedSum = localHistogram[0];
-        float averageBin = totalPixels > 0u ? float(weightedSum) / float(totalPixels) : 0.0;
-        float logLuma = averageBin * (logLuminanceRange / 255.0) + logMinLuminance;
+        float averageBin = meteredPixels > 0u ? float(weightedSum) / float(meteredPixels) : 0.0;
+        float logLuma = max(averageBin - 1.0, 0.0) * (logLuminanceRange / 254.0) + logMinLuminance;
         outputLuminance = exp2(logLuma);
     }
 #endif

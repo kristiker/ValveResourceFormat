@@ -117,6 +117,54 @@ namespace ValveResourceFormat.Renderer.SceneEnvironment
             var denom = inputValue * (inputValue * ShoulderStrength + LinearStrength) + (ToeStrength * ToeDenom);
             return (num / denom) - (ToeNum / ToeDenom);
         }
+
+        /// <summary>
+        /// Inverts the tonemapping curve, including the white point normalization the shader applies
+        /// (<c>g_flWhitePointScale</c>, which is <c>1 / ApplyTonemapping(WhitePoint)</c>).
+        /// </summary>
+        /// <param name="displayValue">The desired post-tonemap value, in the 0-1 range the shader outputs.</param>
+        /// <returns>
+        /// The linear HDR value that tonemaps to <paramref name="displayValue"/>,
+        /// or <see cref="float.NaN"/> if this curve cannot be inverted.
+        /// </returns>
+        public readonly float InvertTonemapping(float displayValue)
+        {
+            // Solving ApplyTonemapping(x) = displayValue * ApplyTonemapping(WhitePoint) for x, after clearing
+            // the curve's denominator, leaves a quadratic in x with these coefficients. g is the curve's
+            // numerator/denominator ratio before the ToeNum/ToeDenom shift.
+            var g = (displayValue * ApplyTonemapping(WhitePoint)) + (ToeNum / ToeDenom);
+
+            var a = ShoulderStrength * (1f - g);
+            var b = LinearStrength * (LinearAngle - g);
+            var c = ToeStrength * (ToeNum - (g * ToeDenom));
+
+            float result;
+
+            if (a == 0f)
+            {
+                // No shoulder, so the curve is a straight line.
+                result = -c / b;
+            }
+            else
+            {
+                var discriminant = (b * b) - (4f * a * c);
+
+                if (discriminant < 0f)
+                {
+                    return float.NaN;
+                }
+
+                var root = MathF.Sqrt(discriminant);
+                result = (-b + root) / (2f * a);
+
+                if (result <= 0f)
+                {
+                    result = (-b - root) / (2f * a);
+                }
+            }
+
+            return (float.IsFinite(result) && result > 0f) ? result : float.NaN;
+        }
     }
 
     /// <summary>

@@ -39,6 +39,14 @@ namespace ValveResourceFormat.Renderer.PostProcess
         public float CurrentExposure { get; private set; } = 1.0f;
         /// <summary>Gets the target exposure value that <see cref="CurrentExposure"/> is adapting towards.</summary>
         public float TargetExposure { get; private set; }
+        /// <summary>
+        /// Gets the pre-tonemap scene luminance auto-exposure aims for, i.e. the value the active tonemap
+        /// curve maps to <see cref="MiddleGrey"/> on screen.
+        /// </summary>
+        public float ExposureTargetLuminance { get; private set; } = MiddleGrey;
+
+        /// <summary>The displayed luminance that auto-exposure places the scene's log-average on.</summary>
+        private const float MiddleGrey = 0.18f;
         /// <summary>Gets or sets the final linear tonemap scalar passed to the post-process shader.</summary>
         public float TonemapScalar { get; set; }
         /// <summary>Gets the bloom renderer used for the multi-pass Gaussian bloom effect.</summary>
@@ -259,8 +267,14 @@ namespace ValveResourceFormat.Renderer.PostProcess
                 return exposure;
             }
 
-            // Implement auto-exposure logic
-            var rawScalar = 0.18f / AverageLuminance;
+            // Middle grey is a property of the displayed image, so the target has to be pulled back through
+            // the tonemap curve. Aiming the pre-tonemap luminance straight at it under-exposes by however
+            // much the curve compresses there, which is up to a stop.
+            // ExposureBias is not compensated for, it is an artistic offset on top of this.
+            var targetLuminance = State.TonemapSettings.InvertTonemapping(MiddleGrey);
+            ExposureTargetLuminance = float.IsNaN(targetLuminance) ? MiddleGrey : targetLuminance;
+
+            var rawScalar = ExposureTargetLuminance / AverageLuminance;
             if (!float.IsFinite(rawScalar))
             {
                 return exposure;
