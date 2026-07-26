@@ -8,6 +8,7 @@ using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Renderer;
 using ValveResourceFormat.Renderer.Input;
 using ValveResourceFormat.Renderer.Materials;
+using ValveResourceFormat.Renderer.SceneNodes;
 using ValveResourceFormat.Renderer.Utils;
 using static ValveResourceFormat.Renderer.PickingTexture;
 
@@ -41,6 +42,7 @@ namespace GUI.Types.GLViewers
             Off,
             Stats,
             Timings,
+            Allocations,
         }
 
         private PerfDisplay perfDisplay;
@@ -56,7 +58,9 @@ namespace GUI.Types.GLViewers
 
         private readonly float[] frameTimes = new float[30];
         private int frameTimeNextId;
-        private string fpsText = string.Empty;
+
+        private readonly ValveResourceFormat.Renderer.TextRenderer.TextBuffer fpsText = new("FPS: 10000  CPU: 10000.0ms  GPU: 10000.0ms");
+        private readonly ValveResourceFormat.Renderer.TextRenderer.TextBuffer speedText = new("Speed: 100000.0 u/s");
         private int frametimeQuery1;
         private int frametimeQuery2;
 
@@ -137,7 +141,7 @@ namespace GUI.Types.GLViewers
                 }
 
                 perfDisplayComboBox = UiControl.AddSelection("Debug Performance", (_, i) => perfDisplay = (PerfDisplay)i);
-                perfDisplayComboBox.Items.AddRange([nameof(PerfDisplay.Off), nameof(PerfDisplay.Stats), nameof(PerfDisplay.Timings)]);
+                perfDisplayComboBox.Items.AddRange([nameof(PerfDisplay.Off), nameof(PerfDisplay.Stats), nameof(PerfDisplay.Timings), nameof(PerfDisplay.Allocations)]);
                 perfDisplayComboBox.SelectedIndex = (int)perfDisplay;
             }
 
@@ -246,16 +250,16 @@ namespace GUI.Types.GLViewers
             Picker?.Resize(w, h);
         }
 
-        protected override void OnMouseWheel(object? sender, MouseEventArgs e)
+        protected override void OnMouseWheel(int delta, Point location)
         {
-            base.OnMouseWheel(sender, e);
+            base.OnMouseWheel(delta, location);
 
             if (!Input.NoClip)
             {
                 return;
             }
 
-            var modifier = Input.OnMouseWheel(e.Delta);
+            var modifier = Input.OnMouseWheel(delta);
 
             if (Input.OrbitMode)
             {
@@ -342,18 +346,76 @@ namespace GUI.Types.GLViewers
 
             PostSceneLoad();
 
-            if (GLNativeWindow != null)
+            if (this is GLWorldViewer)
             {
-                // try to compile shaders?
-                Renderer.Camera.SetLocationPitchYaw(Vector3.UnitZ * 20_000f, -90, 0f);
-                Renderer.Camera.SetViewportSize(64, 64);
-                OnPaint(0f);
-                GLNativeWindow.Context.SwapBuffers();
+                PrewarmDrawCalls();
             }
 
             GuiContext.ClearCache();
             GuiContext.GLPostLoadAction?.Invoke(this);
             GuiContext.GLPostLoadAction = null;
+        }
+
+        /// <summary>
+        /// Draws the scene and shadows with culling disabled so the driver specializes every
+        /// (program, vertex layout, framebuffer) combination once.
+        /// </summary>
+        private void PrewarmDrawCalls()
+        {
+            Debug.Assert(MainFramebuffer != null);
+
+            Scene.SetupSceneShadows(Renderer.Camera, -1);
+            Renderer.RenderSceneShadows(new Scene.RenderContext
+            {
+                Camera = Renderer.Camera,
+                Framebuffer = MainFramebuffer,
+                Textures = Renderer.Textures,
+                Scene = Scene,
+            });
+
+            MainFramebuffer.Bind(FramebufferTarget.Framebuffer);
+            GL.Viewport(0, 0, MainFramebuffer.Width, MainFramebuffer.Height);
+            Scene.CollectSceneDrawCalls(Renderer.Camera, Frustum.CreateEmpty());
+            Renderer.DrawMainScene();
+
+            foreach (var particleNode in Scene.AllNodes.OfType<ParticleSceneNode>())
+            {
+                particleNode.Prewarm(Renderer.Camera);
+            }
+
+            if (SkyboxScene != null)
+            {
+                SkyboxScene.CollectSceneDrawCalls(Renderer.Camera, Frustum.CreateEmpty());
+                SkyboxScene.SetSceneBuffers();
+
+                var skyboxContext = new Scene.RenderContext
+                {
+                    Camera = Renderer.Camera,
+                    Framebuffer = MainFramebuffer,
+                    Textures = Renderer.Textures,
+                    Scene = SkyboxScene,
+                };
+
+                SkyboxScene.RenderOpaqueLayer(skyboxContext);
+                SkyboxScene.RenderTranslucentLayer(skyboxContext);
+
+                Scene.SetSceneBuffers();
+            }
+
+            OnPaint(0);
+        }
+
+        protected override void OnFirstPaint()
+        {
+            base.OnFirstPaint();
+
+            if (this is GLWorldViewer)
+            {
+                // Fixes compile stutters, but performance is lower!
+                // PrewarmDrawCalls();
+                // var elapsed = Stopwatch.GetElapsedTime(LastUpdate, Stopwatch.GetTimestamp());
+                // Log.Debug(GetType().Name, $"Prewarm time: {elapsed}");
+            }
         }
 
         protected override void OnUpdate(float frameTime)
@@ -409,7 +471,7 @@ namespace GUI.Types.GLViewers
             }
         }
 
-        protected void DrawLowerCornerText(string text, Color32 color, int lineFromBottom = 0)
+        protected void DrawLowerCornerText(ValveResourceFormat.Renderer.TextRenderer.TextMemory text, Color32 color, int lineFromBottom = 0)
         {
             Debug.Assert(MainFramebuffer != null);
 
@@ -457,6 +519,7 @@ namespace GUI.Types.GLViewers
 
             Renderer.PerfStats.Capture = perfDisplay == PerfDisplay.Stats;
             Renderer.PerfStats.Timings.Capture = perfDisplay == PerfDisplay.Timings;
+            Renderer.PerfStats.Allocations.Capture = perfDisplay == PerfDisplay.Allocations;
 
             Renderer.PerfStats.MarkFrameBegin();
             GL.BeginQuery(QueryTarget.TimeElapsed, frametimeQuery1);
@@ -563,11 +626,18 @@ namespace GUI.Types.GLViewers
                     GL.GetQueryObject(frametimeQuery, GetQueryObjectParam.QueryResultNoWait, out long gpuTime);
                     var gpuFrameTime = gpuTime / 1_000_000f;
 
-                    var fps = 1f / (frameTimes.Sum() / frameTimes.Length);
+                    var frameTimeSum = 0f;
+
+                    foreach (var time in frameTimes)
+                    {
+                        frameTimeSum += time;
+                    }
+
+                    var fps = 1f / (frameTimeSum / frameTimes.Length);
                     var cpuFrameTime = Stopwatch.GetElapsedTime(LastUpdate, currentTime).TotalMilliseconds;
 
                     lastFpsUpdate = currentTime;
-                    fpsText = $"FPS: {fps,-3:0}  CPU: {cpuFrameTime,-4:0.0}ms  GPU: {gpuFrameTime,-4:0.0}ms";
+                    fpsText.Format($"FPS: {fps,-3:0}  CPU: {cpuFrameTime,-4:0.0}ms  GPU: {gpuFrameTime,-4:0.0}ms");
                 }
 
                 DrawLowerCornerText(fpsText, Color32.White);
@@ -583,7 +653,7 @@ namespace GUI.Types.GLViewers
                     Y = 0.85f,
                     Scale = 12f,
                     Color = Color32.Yellow,
-                    Text = $"Speed: {Input.Velocity.AsVector2().Length():0.0} u/s",
+                    Text = speedText.Format($"Speed: {Input.Velocity.AsVector2().Length():0.0} u/s"),
                     CenterHorizontal = true,
                 }, Renderer.Camera);
             }
@@ -626,6 +696,10 @@ namespace GUI.Types.GLViewers
             else if (perfDisplay == PerfDisplay.Timings)
             {
                 Renderer.PerfStats.Timings.DisplayTimings(TextRenderer, Renderer.Camera);
+            }
+            else if (perfDisplay == PerfDisplay.Allocations)
+            {
+                Renderer.PerfStats.Allocations.DisplayAllocations(TextRenderer, Renderer.Camera);
             }
 
             TextRenderer.Render(Renderer.Camera, Renderer.ResolvedSceneDepth);
@@ -800,28 +874,28 @@ namespace GUI.Types.GLViewers
             }
         }
 
-        protected override void OnKeyDown(object? sender, KeyEventArgs e)
+        protected override void OnKeyDown(Keys keyData)
         {
             Debug.Assert(SelectedNodeRenderer != null);
 
-            if (e.KeyData == Keys.Delete)
+            if (keyData == Keys.Delete)
             {
                 SelectedNodeRenderer.DisableSelectedNodes();
                 return;
             }
 
-            if (e.KeyData == Keys.Escape)
+            if (keyData == Keys.Escape)
             {
                 SelectedNodeRenderer.SelectNode(null);
             }
 
-            if (e.KeyData == Keys.Tab && perfDisplayComboBox != null)
+            if (keyData == Keys.Tab && perfDisplayComboBox != null)
             {
                 // Cycle through the perf display modes (the callback updates perfDisplay)
                 perfDisplayComboBox.SelectedIndex = (perfDisplayComboBox.SelectedIndex + 1) % perfDisplayComboBox.Items.Count;
             }
 
-            base.OnKeyDown(sender, e);
+            base.OnKeyDown(keyData);
         }
 
 #if DEBUG

@@ -124,21 +124,9 @@ namespace ValveResourceFormat.Renderer
             public LightProbeType LightProbeType;
         }
 
-        private static readonly Queue<int> instanceBoundTextures = new(capacity: 4);
-
         private static void SetInstanceTexture(Shader shader, ReservedTextureSlots slot, int location, RenderTexture texture)
         {
-            var slotIndex = (int)slot;
-            instanceBoundTextures.Enqueue(slotIndex);
-            shader.SetTexture(slotIndex, location, texture);
-        }
-
-        private static void UnbindInstanceTextures()
-        {
-            while (instanceBoundTextures.TryDequeue(out var slot))
-            {
-                GL.BindTextureUnit(slot, 0);
-            }
+            shader.SetTexture((int)slot, location, texture);
         }
 
         private static void DrawBatch(List<Request> requests, Scene.RenderContext context)
@@ -252,16 +240,13 @@ namespace ValveResourceFormat.Renderer
                     material.Render(shader);
                 }
 
-                if (request.Call.VertexArrayObject == -1)
-                {
-                    request.Call.Material.Shader.EnsureLoaded();
-                    request.Call.UpdateVertexArrayObject();
-                }
+                var requestVao = request.Call.GetVertexArrayObject(shader!);
 
-                if (vao != request.Call.VertexArrayObject)
+                if (vao != requestVao)
                 {
-                    vao = request.Call.VertexArrayObject;
+                    vao = requestVao;
                     GL.BindVertexArray(vao);
+                    counters.Count(Counter.VaoChange);
                 }
 
                 Draw(shader!, ref uniforms, ref config, new(request.Mesh, request.Call, request.Node));
@@ -270,8 +255,6 @@ namespace ValveResourceFormat.Renderer
             if (vao > -1)
             {
                 material!.PostRender();
-                GL.BindVertexArray(0);
-                GL.UseProgram(0);
             }
         }
 
@@ -287,12 +270,18 @@ namespace ValveResourceFormat.Renderer
 
             if (config.IndirectDraw)
             {
-                if (request.Node is SceneAggregate agg && agg.IndirectDrawCount > 0 && agg.CompactionIndex >= 0)
+                if (request.Node is SceneAggregate agg && agg.IndirectDrawCount > 0)
                 {
-                    PerfStats.Active.CountIndirectDraw(agg);
+                    // Non-indirect draws below reset this program uniform
+                    if (uniforms.IsInstancing > -1)
+                    {
+                        GL.ProgramUniform1((uint)shader.Program, uniforms.IsInstancing, 1);
+                    }
+
+                    PerfStats.Active.CountIndirectDraw(agg.IndirectDrawCount);
 
                     var scene = agg.Scene;
-                    if (scene.CompactMeshletDraws)
+                    if (scene.CompactMeshletDraws && agg.CompactionIndex >= 0)
                     {
                         GL.MultiDrawElementsIndirectCount(
                             request.Call.PrimitiveType,
@@ -318,7 +307,7 @@ namespace ValveResourceFormat.Renderer
             if (config.LightProbeType == LightProbeType.IndividualProbes && uniforms.LPVIrradianceTexture != -1
                 && request.Node.LightProbeBinding is { } lightProbe)
             {
-                request.Node.Scene.LightingInfo.SetInstanceLightProbeTextures(shader, lightProbe, instanceBoundTextures);
+                request.Node.Scene.LightingInfo.SetInstanceLightProbeTextures(shader, lightProbe);
             }
 
             if (uniforms.AnimationData != -1)
@@ -391,8 +380,6 @@ namespace ValveResourceFormat.Renderer
                 request.Call.BaseVertex,
                 request.Node.Id
             );
-
-            UnbindInstanceTextures();
         }
     }
 }

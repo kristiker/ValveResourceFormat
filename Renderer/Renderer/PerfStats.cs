@@ -14,6 +14,7 @@ internal enum Counter
     DrawCall,
     MeshletDispatch,
     MaterialChange,
+    VaoChange,
     DirectionalShadowMap,
     BarnShadowMap,
     ShadowFaceSubmitted,
@@ -51,6 +52,9 @@ public class PerfStats
 
     /// <summary>Gets the CPU and GPU timings for the same frame. Captured independently of <see cref="Capture"/>.</summary>
     public Timings Timings { get; } = new();
+
+    /// <summary>Gets the managed allocation and GC statistics for the same frame. Captured independently of <see cref="Capture"/>.</summary>
+    public AllocStats Allocations { get; } = new();
 
     // Debug groups opened outside a marked frame are not timed.
     private bool timingFrame;
@@ -211,14 +215,14 @@ public class PerfStats
         counts[(int)Counter.DrawCall]++;
     }
 
-    internal void CountIndirectDraw(SceneAggregate aggregate)
+    internal void CountIndirectDraw(int indirectDrawCount)
     {
         if (!Counting)
         {
             return;
         }
 
-        counts[(int)Counter.MeshletDispatch] += aggregate.IndirectDrawCount;
+        counts[(int)Counter.MeshletDispatch] += indirectDrawCount;
     }
 
     /// <summary>Counts a light that passed frustum culling this frame.</summary>
@@ -399,6 +403,7 @@ public class PerfStats
         AddLine($"Triangles:        rendered {trianglesRendered:N0} of {totalTriangles:N0}", valueColor);
         AddLine($"Scene objects:    drawn {counts[(int)Counter.SceneObjectInView]:N0} of {totalSceneObjects:N0} scene objects in {counts[(int)Counter.DrawCall]:N0} draw calls and {counts[(int)Counter.MeshletDispatch]:N0} meshlet dispatches ({totalDrawCalls:N0} total draw calls)", valueColor);
         AddLine($"Materials:        {counts[(int)Counter.MaterialChange]:N0} changes between drawcalls, {totalMaterials:N0} total materials in scene", valueColor);
+        AddLine($"VAOs:             {counts[(int)Counter.VaoChange]:N0} binds this frame, {scene.RendererContext.MeshBufferCache.VertexArrayObjectCount:N0} cached", valueColor);
         AddLine($"Dynamic Lights:   in view {FormatLightCounts(lightsInView, totalLights)} out of total {FormatLightCounts(totalLights, totalLights)}", valueColor);
         AddLine($"Static Lights:    in view {FormatLightCounts(staticLightsInView, totalStaticLights)} out of total {FormatLightCounts(totalStaticLights, totalStaticLights)}", valueColor);
         AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMap]:N0} directional, {counts[(int)Counter.BarnShadowMap]:N0} barn, {counts[(int)Counter.ShadowFaceSubmitted]:N0} faces binned, {floatMetrics[(int)Metric.ShadowAtlasUsage]:0%} atlas utilization", valueColor);
@@ -416,6 +421,8 @@ public class PerfStats
 
         Timings.MarkFrameBegin();
         timingFrame = Timings.Capture;
+
+        Allocations.MarkFrameBegin();
 
         if (!Capture)
         {
@@ -498,6 +505,7 @@ public class PerfStats
         // Timed up to here, so that text rendering is still measured.
         timingFrame = false;
         Timings.MarkFrameEnd();
+        Allocations.MarkFrameEnd();
     }
 
     /// <summary>Begins a timing query for a debug group, or returns 0 if this frame is not being timed.</summary>
@@ -528,6 +536,7 @@ public class PerfStats
     public void Dispose()
     {
         Timings.Dispose();
+        Allocations.Dispose();
 
         foreach (var frame in triangleFrames)
         {

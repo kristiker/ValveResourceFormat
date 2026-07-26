@@ -43,8 +43,8 @@ namespace ValveResourceFormat.Renderer
             /// <summary>Gets or sets the scene being rendered.</summary>
             public required Scene Scene { get; set; }
 
-            /// <summary>Gets the camera providing view and projection matrices.</summary>
-            public required Camera Camera { get; init; }
+            /// <summary>Gets or sets the camera providing view and projection matrices.</summary>
+            public required Camera Camera { get; set; }
 
             /// <summary>Gets or sets the framebuffer that is the render target.</summary>
             public required Framebuffer Framebuffer { get; set; }
@@ -211,8 +211,8 @@ namespace ValveResourceFormat.Renderer
             EnableIndirectDraws = LightingInfo.LightingData.IsSkybox == 0u;
 
             // set render lists to their max capacity
-            CollectSceneDrawCalls(new Camera(RendererContext), Frustum.CreateEmpty());
-            SetupSceneShadows(new Camera(RendererContext), -1);
+            CollectSceneDrawCalls(new Camera(), Frustum.CreateEmpty());
+            SetupSceneShadows(new Camera(), -1);
         }
 
         /// <summary>
@@ -374,12 +374,6 @@ namespace ValveResourceFormat.Renderer
                 node.Update(updateContext);
             }
 
-            if (StaticOctree.Dirty)
-            {
-                // we disabled or enabled some static node
-                CreateIndirectDrawBuffers(true);
-            }
-
             foreach (var node in dynamicNodes)
             {
                 if (node.Parent != null)
@@ -398,9 +392,18 @@ namespace ValveResourceFormat.Renderer
 
             if (StaticOctree.Dirty || DynamicOctree.Dirty)
             {
+                // Indirect draw commands bake node ids, so recreate them only after reindexing
+                var staticDirty = StaticOctree.Dirty;
+
                 UpdateOctrees();
                 UpdateNodeIndices();
                 CreateInstanceTransformBuffers(deletePrevious: true);
+
+                if (staticDirty)
+                {
+                    // a static node was disabled, enabled, added, or removed
+                    CreateIndirectDrawBuffers(true);
+                }
             }
         }
 
@@ -536,17 +539,22 @@ namespace ValveResourceFormat.Renderer
                 var meshletDataGpu = new MeshletCullInfo[aggregateMeshletCount];
                 var indirectDrawsGpu = new DrawElementsIndirectCommand[aggregateMeshletCount];
 
+                // Commands are laid out by meshlet index, so each draw call multidraws its
+                // [FirstMeshlet, FirstMeshlet + NumMeshlets) range within the aggregate
                 var sceneDrawCount = 0;
                 var sceneMeshletCount = 0;
-                var aggregateIndex = 0;
+                var compactionRequestList = new List<uint>();
+
                 foreach (var agg in aggregateSceneNodes)
                 {
                     agg.IndirectDrawByteOffset = sceneMeshletCount * Unsafe.SizeOf<DrawElementsIndirectCommand>();
                     agg.IndirectDrawCount = agg.RenderMesh.Meshlets.Count;
-                    agg.CompactionIndex = aggregateIndex++;
+
+                    agg.CompactionIndex = compactionRequestList.Count / 2;
+                    compactionRequestList.Add((uint)agg.RenderMesh.Meshlets.Count);
+                    compactionRequestList.Add((uint)sceneMeshletCount);
 
                     var drawIndex = 0;
-                    var indirectDrawCount = 0;
                     foreach (var fragment in agg.Fragments)
                     {
                         var fragmentInstanceId = fragment.Id;
@@ -558,7 +566,9 @@ namespace ValveResourceFormat.Renderer
                         for (var drawMeshletIndex = start; drawMeshletIndex < stop; drawMeshletIndex++)
                         {
                             var meshlet = agg.RenderMesh.Meshlets[drawMeshletIndex];
-                            meshletDataGpu[sceneMeshletCount] = new MeshletCullInfo
+                            var commandIndex = sceneMeshletCount + drawMeshletIndex;
+
+                            meshletDataGpu[commandIndex] = new MeshletCullInfo
                             {
                                 Bounds = meshlet.PackedAABB,
                                 Cone = meshlet.CullingData,
@@ -586,7 +596,7 @@ namespace ValveResourceFormat.Renderer
 
                             // what is meshlet.VertexOffset used for?
 
-                            indirectDrawsGpu[sceneMeshletCount] = new DrawElementsIndirectCommand
+                            indirectDrawsGpu[commandIndex] = new DrawElementsIndirectCommand
                             {
                                 Count = count,
                                 InstanceCount = 1,
@@ -594,17 +604,12 @@ namespace ValveResourceFormat.Renderer
                                 BaseVertex = drawCall.BaseVertex,
                                 BaseInstance = fragmentInstanceId,
                             };
-
-                            sceneMeshletCount++;
-                            indirectDrawCount++;
                         }
 
                         drawIndex++;
                     }
 
-                    // can be smaller than serialized meshlets due to LoD filtering
-                    agg.IndirectDrawCount = indirectDrawCount;
-
+                    sceneMeshletCount += agg.RenderMesh.Meshlets.Count;
                     sceneDrawCount += agg.Fragments.Count;
                 }
 
@@ -620,22 +625,10 @@ namespace ValveResourceFormat.Renderer
                 CompactedDrawsGpu = new StorageBuffer(ReservedBufferSlots.CompactedDraws);
                 CompactedDrawsGpu.Create(indirectDrawsGpu, BufferUsageHint.DynamicDraw);
 
-                CompactedCountsGpu = StorageBuffer.Allocate<uint>(ReservedBufferSlots.CompactedCounts, aggregateSceneNodes.Count, BufferUsageHint.DynamicDraw);
-
-                // Create compaction requests (one per aggregate)
-                var compactionRequests = new uint[aggregateSceneNodes.Count * 2];
-                for (var i = 0; i < aggregateSceneNodes.Count; i++)
-                {
-                    var agg = aggregateSceneNodes[i];
-                    var startIndex = agg.IndirectDrawByteOffset / Unsafe.SizeOf<DrawElementsIndirectCommand>();
-                    var drawCount = agg.IndirectDrawCount;
-
-                    compactionRequests[i * 2 + 0] = (uint)drawCount;
-                    compactionRequests[i * 2 + 1] = (uint)startIndex;
-                }
+                CompactedCountsGpu = StorageBuffer.Allocate<uint>(ReservedBufferSlots.CompactedCounts, compactionRequestList.Count / 2, BufferUsageHint.DynamicDraw);
 
                 CompactionRequestsGpu = new StorageBuffer(ReservedBufferSlots.CompactionRequests);
-                CompactionRequestsGpu.Create(compactionRequests, BufferUsageHint.StaticDraw);
+                CompactionRequestsGpu.Create(compactionRequestList);
             }
 
             OcclusionDebug = new OcclusionDebugRenderer(this, RendererContext);
@@ -716,7 +709,16 @@ namespace ValveResourceFormat.Renderer
             [RenderPass.Outline] = [],
         };
 
-        private Dictionary<DepthOnlyProgram, List<MeshBatchRenderer.Request>> depthOnlyDraws { get; } = new()
+        /// <summary>
+        /// Draw calls for first-person layer geometry.
+        /// </summary>
+        private readonly Dictionary<RenderPass, List<MeshBatchRenderer.Request>> viewmodelRenderLists = new()
+        {
+            [RenderPass.Opaque] = [],
+            [RenderPass.Translucent] = [],
+        };
+
+        private DepthOnlyDrawBuckets depthOnlyDraws { get; } = new()
         {
             [DepthOnlyProgram.Static] = [],
             [DepthOnlyProgram.Animated] = [],
@@ -760,14 +762,18 @@ namespace ValveResourceFormat.Renderer
                 renderPass = RenderPass.Opaque;
             }
 
-            var queueList = renderLists[renderPass];
+            var isViewmodelLayer = request.Node.RenderAsViewmodel && viewmodelRenderLists.ContainsKey(renderPass);
+
+            var queueList = isViewmodelLayer
+                ? viewmodelRenderLists[renderPass]
+                : renderLists[renderPass];
 
             if (renderPass == RenderPass.Translucent)
             {
                 WantsSceneColor |= request.Call.Material.Shader.ReservedTexturesUsed.Contains("g_tSceneColor");
                 WantsSceneDepth |= request.Call.Material.Shader.ReservedTexturesUsed.Contains("g_tSceneDepth");
 
-                if (request.Call.Material.IsCs2Water)
+                if (!isViewmodelLayer && request.Call.Material.IsCs2Water)
                 {
                     queueList = renderLists[RenderPass.Water];
                 }
@@ -784,6 +790,11 @@ namespace ValveResourceFormat.Renderer
         public void CollectSceneDrawCalls(Camera camera, Frustum? cullFrustum = null)
         {
             foreach (var bucket in renderLists.Values)
+            {
+                bucket.Clear();
+            }
+
+            foreach (var bucket in viewmodelRenderLists.Values)
             {
                 bucket.Clear();
             }
@@ -889,8 +900,16 @@ namespace ValveResourceFormat.Renderer
                         Node = node,
                     };
 
-                    renderLists[RenderPass.Opaque].Add(customRender);
-                    renderLists[RenderPass.Translucent].Add(customRender);
+                    if (node.RenderAsViewmodel)
+                    {
+                        viewmodelRenderLists[RenderPass.Opaque].Add(customRender);
+                        viewmodelRenderLists[RenderPass.Translucent].Add(customRender);
+                    }
+                    else
+                    {
+                        renderLists[RenderPass.Opaque].Add(customRender);
+                        renderLists[RenderPass.Translucent].Add(customRender);
+                    }
 
                     if (node.IsSelected)
                     {
@@ -1140,8 +1159,8 @@ namespace ValveResourceFormat.Renderer
                 FrustumCullShader.SetUniform1("g_nDepthPyramidMaxMip", DepthPyramid.NumMipLevels - 1);
                 FrustumCullShader.SetUniform1("g_nDepthPyramidWidth", DepthPyramid.Width);
                 FrustumCullShader.SetUniform1("g_nDepthPyramidHeight", DepthPyramid.Height);
-                FrustumCullShader.SetUniform1("g_flDepthRangeMin", 0.05f);
-                FrustumCullShader.SetUniform1("g_flDepthRangeMax", 1.0f);
+                FrustumCullShader.SetUniform1("g_flDepthRangeMin", Renderer.DepthRange.Scene.Near);
+                FrustumCullShader.SetUniform1("g_flDepthRangeMax", Renderer.DepthRange.Scene.Far);
 
                 // Bind depth pyramid as texture for sampling
                 GL.ActiveTexture(TextureUnit.Texture0);
@@ -1152,17 +1171,29 @@ namespace ValveResourceFormat.Renderer
             DrawBoundsGpu.BindBufferBase();
             IndirectDrawsGpu.BindBufferBase();
 
+            var occlusionDebugEnabled = OcclusionDebugEnabled && OcclusionDebug != null;
+
             // Bind debug buffer for occluded bounds visualization
-            if (OcclusionDebugEnabled)
+            if (occlusionDebugEnabled)
             {
                 OcclusionDebug!.BindAndClearBuffer();
             }
-            FrustumCullShader.SetUniform1("g_bOcclusionDebugEnabled", OcclusionDebugEnabled);
+            FrustumCullShader.SetUniform1("g_bOcclusionDebugEnabled", occlusionDebugEnabled);
 
             var workGroups = (SceneMeshletCount + 63) / 64;
             GL.DispatchCompute(workGroups, 1, 1);
 
             GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
+
+            if (occlusionDebugEnabled)
+            {
+                // Converts occludedCount into a DrawArraysIndirectCommand on the GPU so
+                // OcclusionDebugRenderer.Render() can draw without a CPU readback/stall.
+                // The barrier above makes occludedCount visible to this dispatch; the
+                // CommandBarrierBit barrier in RenderOpaqueLayer covers its own output
+                // being visible to the later indirect draw.
+                OcclusionDebug!.DispatchFinalize();
+            }
         }
 
         /// <summary>
@@ -1355,6 +1386,34 @@ namespace ValveResourceFormat.Renderer
                 renderContext.RenderPass = RenderPass.Translucent;
                 MeshBatchRenderer.Render(renderLists[RenderPass.Translucent], renderContext);
             }
+        }
+
+        /// <summary>
+        /// Renders the opaque first-person viewmodel layer collected during <see cref="CollectSceneDrawCalls"/>.
+        /// Rendered before the main scene so its reserved near depth range can never be overtaken by world geometry.
+        /// </summary>
+        /// <param name="renderContext">The render context for this pass, expected to use the dedicated viewmodel camera and depth range.</param>
+        public void RenderViewmodelOpaqueLayer(RenderContext renderContext)
+        {
+            renderContext.RenderPass = RenderPass.Opaque;
+            MeshBatchRenderer.Render(viewmodelRenderLists[RenderPass.Opaque], renderContext);
+        }
+
+        /// <summary>
+        /// Renders the translucent first-person viewmodel layer collected during <see cref="CollectSceneDrawCalls"/>.
+        /// Rendered after the main scene (and 3D sky) translucent passes so it composites correctly on top of them.
+        /// </summary>
+        /// <param name="renderContext">The render context for this pass, expected to use the dedicated viewmodel camera and depth range.</param>
+        public void RenderViewmodelTranslucentLayer(RenderContext renderContext)
+        {
+            GL.DepthMask(false);
+            GL.Enable(EnableCap.Blend);
+
+            renderContext.RenderPass = RenderPass.Translucent;
+            MeshBatchRenderer.Render(viewmodelRenderLists[RenderPass.Translucent], renderContext);
+
+            GL.Disable(EnableCap.Blend);
+            GL.DepthMask(true);
         }
 
         /// <summary>Renders water draw calls collected during <see cref="CollectSceneDrawCalls"/>.</summary>
