@@ -27,6 +27,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly ParticleAnimationType animationType = ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE;
         private readonly INumberProvider minSize = new LiteralNumberProvider(0f);
         private readonly INumberProvider maxSize = new LiteralNumberProvider(5000f);
+        private readonly INumberProvider startFadeSize = new LiteralNumberProvider(100000000f);
+        private readonly INumberProvider endFadeSize = new LiteralNumberProvider(200000000f);
+        private readonly bool distanceAlpha;
 
         private readonly INumberProvider radiusScale = new LiteralNumberProvider(1f);
         private readonly INumberProvider alphaScale = new LiteralNumberProvider(1f);
@@ -105,6 +108,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             animationRate = parse.Float("m_flAnimationRate", animationRate);
             minSize = parse.NumberProvider("m_flMinSize", minSize);
             maxSize = parse.NumberProvider("m_flMaxSize", maxSize);
+            startFadeSize = parse.NumberProvider("m_flStartFadeSize", startFadeSize);
+            endFadeSize = parse.NumberProvider("m_flEndFadeSize", endFadeSize);
+            distanceAlpha = parse.Boolean("m_bDistanceAlpha", distanceAlpha);
             animationType = parse.Enum<ParticleAnimationType>("m_nAnimationType", animationType);
             radiusScale = parse.NumberProvider("m_flRadiusScale", radiusScale);
             alphaScale = parse.NumberProvider("m_flAlphaScale", alphaScale);
@@ -224,7 +230,8 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             return QuadBasis(n, Vector3.Normalize(w), roll);
         }
 
-        private void UpdateVertices(ParticleCollection particles, ParticleSystemRenderState systemRenderState, Camera camera)
+        /// <summary>Fills and uploads the quad buffer, returning the number of quads actually emitted.</summary>
+        private int UpdateVertices(ParticleCollection particles, ParticleSystemRenderState systemRenderState, Camera camera)
         {
             var modelViewMatrix = camera.CameraViewMatrix;
 
@@ -237,10 +244,14 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             modelViewRotation = Quaternion.Inverse(modelViewRotation);
             var billboardMatrix = Matrix4x4.CreateFromQuaternion(modelViewRotation);
 
-            // Screen-size clamps: m_flMinSize/m_flMaxSize are fractions of the screen a sprite may cover;
-            // tiny flashes rely on the minimum to stay visible at any camera distance.
+            // Distance-driven size and fade. All four bounds are fractions of the screen a sprite may
+            // cover, so they compare against radius / (distance * tan(fov/2)): the minimum keeps tiny
+            // flashes visible at any camera distance, and the two fade bounds dissolve a sprite that grows
+            // past them. The whole group is gated on m_bDistanceAlpha, as it is in the shader.
             var minScreenSize = minSize.NextNumber(systemRenderState);
             var maxScreenSize = maxSize.NextNumber(systemRenderState);
+            var startFadeScreenSize = startFadeSize.NextNumber(systemRenderState);
+            var endFadeScreenSize = endFadeSize.NextNumber(systemRenderState);
             var tanHalfFov = MathF.Tan(camera.GetFOV() * 0.5f);
 
             // Update vertex buffer
@@ -253,18 +264,33 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 {
                     var radiusScale = this.radiusScale.NextNumber(ref particle, systemRenderState);
 
-                    var distanceToCamera = Vector3.Distance(camera.Location, particle.Position);
-                    if (distanceToCamera > 1e-3f && tanHalfFov > 0f)
+                    // Scales rgb and alpha alike, matching the shader's fade of the whole vertex colour.
+                    var colorFade = 1f;
+
+                    if (distanceAlpha && tanHalfFov > 0f)
                     {
-                        var screenHalfHeight = distanceToCamera * tanHalfFov;
-                        var screenFraction = particle.Radius * radiusScale / screenHalfHeight;
-                        if (screenFraction < minScreenSize && screenFraction > 0f)
+                        var screenHalfHeight = Vector3.Distance(camera.Location, particle.Position) * tanHalfFov;
+                        var radius = particle.Radius * radiusScale;
+                        var fadeStart = startFadeScreenSize * screenHalfHeight;
+                        var fadeEnd = endFadeScreenSize * screenHalfHeight;
+
+                        if (radius > fadeStart)
                         {
-                            radiusScale *= minScreenSize / screenFraction;
+                            if (radius >= fadeEnd)
+                            {
+                                // Faded out entirely; emitting the quad would only cost overdraw.
+                                continue;
+                            }
+
+                            colorFade = 1f - ((radius - fadeStart) / (fadeEnd - fadeStart));
                         }
-                        else if (screenFraction > maxScreenSize)
+
+                        if (particle.Radius > 0f)
                         {
-                            radiusScale *= maxScreenSize / screenFraction;
+                            // Expressed back as a scale, because the corner transform takes one. Nested
+                            // min/max rather than a clamp: an inverted range has to resolve to the maximum
+                            // the way the shader's does, not throw.
+                            radiusScale = MathF.Min(MathF.Max(radius, minScreenSize * screenHalfHeight), maxScreenSize * screenHalfHeight) / particle.Radius;
                         }
                     }
 
@@ -305,10 +331,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     // Colors
                     for (var j = 0; j < 4; ++j)
                     {
-                        rawVertices[quadStart + (VertexSize * j) + 3] = particle.Color.X;
-                        rawVertices[quadStart + (VertexSize * j) + 4] = particle.Color.Y;
-                        rawVertices[quadStart + (VertexSize * j) + 5] = particle.Color.Z;
-                        rawVertices[quadStart + (VertexSize * j) + 6] = particle.Alpha * alphaScale;
+                        rawVertices[quadStart + (VertexSize * j) + 3] = particle.Color.X * colorFade;
+                        rawVertices[quadStart + (VertexSize * j) + 4] = particle.Color.Y * colorFade;
+                        rawVertices[quadStart + (VertexSize * j) + 5] = particle.Color.Z * colorFade;
+                        rawVertices[quadStart + (VertexSize * j) + 6] = particle.Alpha * alphaScale * colorFade;
                     }
 
                     // UVs
@@ -386,7 +412,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     i++;
                 }
 
-                GL.NamedBufferData(vertexBufferHandle, particles.Count * VertexSize * 4 * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
+                GL.NamedBufferData(vertexBufferHandle, i * VertexSize * 4 * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
+
+                return i;
             }
             finally
             {
@@ -401,8 +429,14 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 return;
             }
 
-            // Update vertex buffer
-            UpdateVertices(particleBag, systemRenderState, camera);
+            // Update vertex buffer. Fully faded particles are skipped, so this can be fewer than the
+            // live particle count.
+            var quadCount = UpdateVertices(particleBag, systemRenderState, camera);
+
+            if (quadCount == 0)
+            {
+                return;
+            }
 
             // Draw it. The translucent pass leaves blend/depth state to each custom draw, so enable blending and
             // stop depth writes here; otherwise sprites are opaque. The cable renderer instead draws opaque with depth writes.
@@ -446,7 +480,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             // DRAW
             PerfStats.Active.Count(Counter.ParticleDraw);
-            GL.DrawElements(PrimitiveType.Triangles, particleBag.Count * 6, DrawElementsType.UnsignedShort, 0);
+            GL.DrawElements(PrimitiveType.Triangles, quadCount * 6, DrawElementsType.UnsignedShort, 0);
 
             GL.Enable(EnableCap.CullFace);
         }
