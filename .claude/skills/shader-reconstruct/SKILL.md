@@ -47,8 +47,12 @@ Build the CLI first (`dotnet build CLI/CLI.csproj -c Debug`), it lands in `CLI/b
   agree; only bind points differ. Reflection is stripped per program, so if the one you want is missing, try
   the sibling program — a vertex program often declares the pixel program's buffers too. Failing that, fall
   back to `--shader_backend hlsl` for the offsets and name members from use.
-- **Vertex input names can be wrong.** They are assigned by semantic priority, not SPIR-V location, so
-  they rotate once several streams are active. Trust what the code does with an input over its name.
+- **Vertex input names are the real semantic, but a semantic is not a meaning.** They come from the
+  shader's attribute map, looked up per SPIR-V location, so `input_TEXCOORD7` really is TEXCOORD7 even
+  when a dozen streams are active. What the semantic does *not* tell you is what the data is: on a
+  spritecard trail, TEXCOORD3 through TEXCOORD6 are spline control points and TEXCOORD7 holds three
+  unrelated per-particle scalars. Read the code for that. A shader with no attribute map falls back to a
+  positional `input_<location>` with no semantic at all.
 - **Some combos only move vertex input locations** and leave the code identical.
 - **Transform buffer slots carry packed metadata**, not only matrices.
 - A combo being "inert" in the bytecode does not prove it does nothing; check the per-combo render state
