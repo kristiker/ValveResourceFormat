@@ -299,18 +299,6 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             return QuadBasis(n, Vector3.Normalize(w), roll);
         }
 
-        // A sequence either holds its last frame or loops back to the start.
-        private static int ResolveFrame(int frameId, int frameCount, bool clamp)
-        {
-            if (clamp)
-            {
-                return Math.Clamp(frameId, 0, frameCount - 1);
-            }
-
-            frameId %= frameCount;
-            return frameId < 0 ? frameId + frameCount : frameId;
-        }
-
         // Writes one uv rectangle across the quad's four corners, at the given offset within each vertex.
         // The quad winds top-left, bottom-left, bottom-right, top-right with v increasing downward.
         private static void WriteQuadUv(float[] vertices, int offset, Vector2 min, Vector2 max)
@@ -473,37 +461,16 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     {
                         var sequence = spriteSheetData.Sequences[particle.Sequence % spriteSheetData.Sequences.Length];
 
-                        var frame = 0f;
-
-                        if (sequence.Frames.Length > 1)
-                        {
-                            if (animationType == ParticleAnimationType.ANIMATION_TYPE_MANUAL_FRAMES)
-                            {
-                                frame = particle.ManualAnimationFrame;
-                            }
-                            else if (animateInFps)
-                            {
-                                frame = animationRate * particle.Age;
-                            }
-                            else
-                            {
-                                var animationTime = animationType switch
-                                {
-                                    ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE => particle.Age,
-                                    ParticleAnimationType.ANIMATION_TYPE_FIT_LIFETIME => particle.NormalizedAge,
-                                    _ => particle.Age,
-                                };
-
-                                frame = animationTime * animationRate * sequence.FramesPerSecond;
-                            }
-                        }
+                        var frame = sequence.Frames.Length > 1
+                            ? GetSheetFrame(ref particle, sequence.FramesPerSecond, animationRate, animationType, animateInFps)
+                            : 0f;
 
                         var frameId = (int)MathF.Floor(frame);
                         frameBlend = frame - frameId;
 
                         // TODO: Support more than one image per frame?
-                        var currentImage = sequence.Frames[ResolveFrame(frameId, sequence.Frames.Length, sequence.Clamp)].Images[0];
-                        var nextImage = sequence.Frames[ResolveFrame(frameId + 1, sequence.Frames.Length, sequence.Clamp)].Images[0];
+                        var currentImage = sequence.Frames[ResolveSheetFrame(frameId, sequence.Frames.Length, sequence.Clamp)].Images[0];
+                        var nextImage = sequence.Frames[ResolveSheetFrame(frameId + 1, sequence.Frames.Length, sequence.Clamp)].Images[0];
 
                         uvMin = currentImage.UncroppedMin;
                         uvMax = currentImage.UncroppedMax;

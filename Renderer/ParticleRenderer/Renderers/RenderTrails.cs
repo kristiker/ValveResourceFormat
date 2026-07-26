@@ -29,6 +29,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
         private readonly float animationRate = 0.1f;
         private readonly ParticleAnimationType animationType = ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE;
+        private readonly bool animateInFps;
 
         private readonly ParticleBlendMode blendMode = ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ALPHA;
         private readonly INumberProvider overbrightFactor = new LiteralNumberProvider(1);
@@ -101,6 +102,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             lengthFadeInTime = parse.Float("m_flLengthFadeInTime", lengthFadeInTime);
             ignoreDeltaTime = parse.Boolean("m_bIgnoreDT", ignoreDeltaTime);
             animationType = parse.Enum<ParticleAnimationType>("m_nAnimationType", animationType);
+            animateInFps = parse.Boolean("m_bAnimateInFPS", animateInFps);
             prevPositionSource = parse.ParticleField("m_nPrevPntSource", prevPositionSource);
         }
 
@@ -251,27 +253,17 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     Vector2 uvScale;
                     if (spriteSheetData != null && spriteSheetData.Sequences.Length > 0 && spriteSheetData.Sequences[0].Frames.Length > 0)
                     {
-                        var sequence = spriteSheetData.Sequences[0];
+                        var sequence = spriteSheetData.Sequences[particle.Sequence % spriteSheetData.Sequences.Length];
 
-                        var animationTime = animationType switch
-                        {
-                            ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE => particle.Age,
-                            ParticleAnimationType.ANIMATION_TYPE_FIT_LIFETIME => particle.NormalizedAge,
-                            _ => particle.Age,
-                        };
-                        var frame = animationTime * sequence.FramesPerSecond * animationRate;
+                        var frame = sequence.Frames.Length > 1
+                            ? GetSheetFrame(ref particle, sequence.FramesPerSecond, animationRate, animationType, animateInFps)
+                            : 0f;
 
-                        var currentFrame = sequence.Frames[(int)MathF.Floor(frame) % sequence.Frames.Length];
-                        var currentImage = currentFrame.Images[0]; // TODO: Support more than one image per frame?
+                        // TODO: Support more than one image per frame?
+                        var currentImage = sequence.Frames[ResolveSheetFrame((int)MathF.Floor(frame), sequence.Frames.Length, sequence.Clamp)].Images[0];
 
-                        // Lerp frame coords and size
-                        var subFrameTime = frame % 1.0f;
-                        var offset = Vector2.Lerp(currentImage.CroppedMin, currentImage.UncroppedMin, subFrameTime);
-                        var scale = Vector2.Lerp(currentImage.CroppedMax - currentImage.CroppedMin,
-                            currentImage.UncroppedMax - currentImage.UncroppedMin, subFrameTime);
-
-                        uvOffset = offset;
-                        uvScale = scale * new Vector2(finalTextureScaleU, finalTextureScaleV);
+                        uvOffset = currentImage.UncroppedMin;
+                        uvScale = (currentImage.UncroppedMax - currentImage.UncroppedMin) * new Vector2(finalTextureScaleU, finalTextureScaleV);
                     }
                     else
                     {
