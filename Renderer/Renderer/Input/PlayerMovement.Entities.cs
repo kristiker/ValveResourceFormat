@@ -184,6 +184,80 @@ public partial class PlayerMovement
     }
 
     /// <summary>
+    /// How far the player can reach to use something, from the eye. The engine's
+    /// <c>PLAYER_USE_RADIUS</c>.
+    /// </summary>
+    private const float UseRadius = 80f;
+
+    /// <summary>Gets the usable entity the player is currently aiming at, or null when out of reach.</summary>
+    public EntityInstance? UseTarget { get; private set; }
+
+    /// <summary>
+    /// Finds what the player is aiming at within reach, mirroring how the engine picks a use
+    /// target: a ray from the eye along the view, nearest hit wins. World geometry takes part in
+    /// that comparison, so a button behind a wall is not reachable through it.
+    /// </summary>
+    /// <returns>The usable entity, or <see langword="null"/> when nothing qualifies.</returns>
+    private EntityInstance? FindUseEntity()
+    {
+        var world = EntityWorld;
+
+        if (world == null || ActiveCamera == null)
+        {
+            return null;
+        }
+
+        var eye = EyePosition;
+        var end = eye + (ActiveCamera.Forward * UseRadius);
+
+        // Seed the search with the world, so solid geometry can win the nearest-hit comparison
+        var nearestDistance = float.MaxValue;
+
+        if (Physics != null)
+        {
+            var worldHit = Physics.TraceRay(eye, end);
+
+            if (worldHit.Hit)
+            {
+                nearestDistance = worldHit.Distance;
+            }
+        }
+
+        EntityInstance? nearest = null;
+
+        foreach (var brush in world.BrushEntities)
+        {
+            if (!brush.IsUsable || brush.Collider is not { } collider)
+            {
+                continue;
+            }
+
+            var hit = collider.TraceRay(eye, end);
+
+            if (hit.Hit && hit.Distance < nearestDistance)
+            {
+                nearestDistance = hit.Distance;
+                nearest = brush;
+            }
+        }
+
+        return nearest;
+    }
+
+    /// <summary>
+    /// Updates what the player is aiming at and presses it when the use key goes down.
+    /// </summary>
+    private void UpdateUse()
+    {
+        UseTarget = FindUseEntity();
+
+        if (UseTarget != null && Input.Pressed(TrackedKeys.E))
+        {
+            EntityWorld?.QueueInputOn(UseTarget, "Use", activator: Entity);
+        }
+    }
+
+    /// <summary>
     /// Runs the trigger overlap pass for the frame and clears the push accumulated for it. Touch is
     /// tested after movement has settled, so a volume entered and left within one frame still fires.
     /// </summary>

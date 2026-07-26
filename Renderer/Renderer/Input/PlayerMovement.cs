@@ -353,6 +353,9 @@ public partial class PlayerMovement
         EyePosition = Position + Vector3.UnitZ * BlendedEyeHeight;
         camera.Location = EyePosition;
         camera.Roll = float.DegreesToRadians(Effects.LandingRollDegrees);
+
+        // Aiming is resolved from the eye, so this has to come after EyePosition settles
+        UpdateUse();
     }
 
     /// <summary>

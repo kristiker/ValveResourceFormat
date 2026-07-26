@@ -178,6 +178,164 @@ namespace Tests
         }
 
         [Test]
+        public void DontMoveButtonStillFiresItsPressOutputs()
+        {
+            var world = new EntityWorld();
+
+            // 17409 = don't move | use activates | (a CS2-only bit), the dr_temple wall panel setup
+            var button = Spawn<LinearMover>(world, "func_button",
+                ("targetname", "panel"),
+                ("spawnflags", 17409),
+                ("speed", 0f),
+                ("wait", -1f),
+                ("movedir", "90 0 0"));
+
+            var listener = EntityIOTest.MakeProbe("listener");
+
+            button.Connections.Add(EntityIOTest.Connect("OnPressed", "listener", "Fired"));
+
+            world.Add(listener);
+            world.SpawnAll();
+
+            var poseBefore = button.CurrentTransform;
+
+            button.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(button.Travel, Is.EqualTo(Vector3.Zero), "the don't-move flag removes the stroke");
+                Assert.That(button.CurrentTransform, Is.EqualTo(poseBefore));
+                Assert.That(listener.Received.Select(r => r.Input), Is.EqualTo(pressed));
+            }
+        }
+
+        private static readonly string[] pressed = ["Fired"];
+
+        [Test]
+        public void ButtonWithNoWaitOnlyFiresOnce()
+        {
+            var world = new EntityWorld();
+
+            var button = Spawn<LinearMover>(world, "func_button",
+                ("targetname", "panel"),
+                ("spawnflags", 1), // don't move
+                ("wait", -1f),
+                ("movedir", "90 0 0"));
+
+            var listener = EntityIOTest.MakeProbe("listener");
+
+            button.Connections.Add(EntityIOTest.Connect("OnPressed", "listener", "Fired"));
+
+            world.Add(listener);
+            world.SpawnAll();
+
+            for (var i = 0; i < 5; i++)
+            {
+                button.AcceptInput("Use", string.Empty, null, null);
+                world.Tick(1f / 64f);
+            }
+
+            Assert.That(listener.Received, Has.Count.EqualTo(1), "a wait of -1 leaves the button down for good");
+        }
+
+        [Test]
+        public void ToggleButtonReleasesOnTheSecondPress()
+        {
+            var world = new EntityWorld();
+
+            var button = Spawn<LinearMover>(world, "func_button",
+                ("targetname", "panel"),
+                ("spawnflags", 1 | 32), // don't move, toggle
+                ("wait", -1f),
+                ("movedir", "90 0 0"));
+
+            world.SpawnAll();
+
+            button.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+            Assert.That(button.Position, Is.EqualTo(1f));
+
+            button.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+            Assert.That(button.Position, Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void LockedButtonRefusesThePressUntilUnlocked()
+        {
+            var world = new EntityWorld();
+
+            var button = Spawn<LinearMover>(world, "func_button",
+                ("targetname", "panel"),
+                ("spawnflags", 1 | 2048), // don't move, starts locked
+                ("wait", -1f),
+                ("movedir", "90 0 0"));
+
+            var listener = EntityIOTest.MakeProbe("listener");
+
+            button.Connections.Add(EntityIOTest.Connect("OnPressed", "listener", "Fired"));
+            button.Connections.Add(EntityIOTest.Connect("OnUseLocked", "listener", "Refused"));
+
+            world.Add(listener);
+            world.SpawnAll();
+
+            button.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+
+            button.AcceptInput("Unlock", string.Empty, null, null);
+            button.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+
+            Assert.That(listener.Received.Select(r => r.Input), Is.EqualTo(refusedThenFired));
+        }
+
+        private static readonly string[] refusedThenFired = ["Refused", "Fired"];
+
+        [Test]
+        public void DoorUseTogglesItOpenAndShut()
+        {
+            var world = new EntityWorld();
+
+            var door = Spawn<LinearMover>(world, "func_door",
+                ("targetname", "gate"),
+                ("speed", 1000f),
+                ("wait", -1f),
+                ("movedir", "270 0 0"));
+
+            // Doors size their stroke from geometry, which a headless test has none of
+            door.Collider = null;
+
+            world.SpawnAll();
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(door.IsUsable, Is.True);
+                Assert.That(door.Position, Is.EqualTo(0f));
+            }
+
+            door.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+            Assert.That(door.Position, Is.EqualTo(1f));
+
+            door.AcceptInput("Use", string.Empty, null, null);
+            world.Tick(1f / 64f);
+            Assert.That(door.Position, Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void MoveLinearIsNotUsable()
+        {
+            var world = new EntityWorld();
+
+            var mover = Spawn<LinearMover>(world, "func_movelinear", ("movedistance", 100f), ("speed", 50f));
+
+            world.SpawnAll();
+
+            Assert.That(mover.IsUsable, Is.False, "a platform must not swallow a press aimed past it");
+        }
+
+        [Test]
         public void FuncBrushSolidityOverridesTheEnabledState()
         {
             var world = new EntityWorld();

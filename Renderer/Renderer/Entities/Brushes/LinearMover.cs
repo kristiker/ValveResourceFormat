@@ -21,10 +21,30 @@ public sealed class LinearMover : MoverEntity
         Button,
     }
 
+    /// <summary>Button spawnflag: fire without physically moving. Common on flush wall panels.</summary>
+    private const int SF_BUTTON_DONTMOVE = 1;
+
+    /// <summary>Button spawnflag: stay pressed until used again, rather than returning after <c>wait</c>.</summary>
+    private const int SF_BUTTON_TOGGLE = 32;
+
+    /// <summary>Button spawnflag: starts locked, so use bounces off until something unlocks it.</summary>
+    private const int SF_BUTTON_LOCKED = 2048;
+
+    /// <summary>Door spawnflag: the player cannot open this door by using it.</summary>
+    private const int SF_DOOR_NO_USE = 256;
+
     private Vector3 travel;
 
     /// <summary>Gets which class this mover stands in for.</summary>
     public required MoverKind Kind { get; init; }
+
+    /// <inheritdoc/>
+    public override bool IsUsable => Kind switch
+    {
+        MoverKind.Button => true,
+        MoverKind.Door => !HasSpawnFlag(SF_DOOR_NO_USE),
+        _ => false,
+    };
 
     /// <summary>Gets a value indicating whether the stroke comes from the brush's own size.</summary>
     private bool StrokeFromGeometry => Kind is MoverKind.Door or MoverKind.Button;
@@ -42,6 +62,15 @@ public sealed class LinearMover : MoverEntity
 
         var direction = GetWorldDirection("movedir", Vector3.UnitZ);
         var distance = StrokeFromGeometry ? DoorTravelDistance(direction) : GetFloat("movedistance");
+
+        // A "don't move" button still runs the whole press cycle and fires its outputs; it just
+        // has nowhere to travel, which is how flush wall panels are built
+        if (Kind == MoverKind.Button && HasSpawnFlag(SF_BUTTON_DONTMOVE))
+        {
+            distance = 0f;
+        }
+
+        Locked = Kind == MoverKind.Button && HasSpawnFlag(SF_BUTTON_LOCKED);
 
         travel = direction * distance;
 
@@ -99,6 +128,45 @@ public sealed class LinearMover : MoverEntity
         }
     }
 
+    /// <summary>
+    /// Runs a use press, following the engine's rules for what a second press does.
+    /// </summary>
+    /// <param name="activator">Whoever pressed it, propagated to the outputs.</param>
+    private void Press(EntityInstance? activator)
+    {
+        if (Locked)
+        {
+            SendOutput("OnUseLocked", activator);
+            return;
+        }
+
+        // A press landing mid-stroke is swallowed rather than reversing the move
+        if (IsMoving)
+        {
+            return;
+        }
+
+        if (Kind == MoverKind.Door)
+        {
+            MoveTo(TargetPosition > 0f ? 0f : 1f);
+            return;
+        }
+
+        if (Position <= 0f)
+        {
+            SendOutput("OnPressed", activator);
+            MoveTo(1f);
+            return;
+        }
+
+        // Already pressed. A toggle button releases on the second press; anything else is either
+        // returning on its own wait or, at wait -1, a one-shot that stays down for good.
+        if (HasSpawnFlag(SF_BUTTON_TOGGLE))
+        {
+            MoveTo(0f);
+        }
+    }
+
     /// <inheritdoc/>
     public override bool AcceptInput(string input, string parameter, EntityInstance? activator, EntityInstance? caller)
     {
@@ -116,14 +184,7 @@ public sealed class LinearMover : MoverEntity
 
         if (InputIs(input, "Press") || InputIs(input, "Use"))
         {
-            if (Locked)
-            {
-                SendOutput("OnUseLocked", activator);
-                return true;
-            }
-
-            SendOutput("OnPressed", activator);
-            MoveTo(1f);
+            Press(activator);
             return true;
         }
 

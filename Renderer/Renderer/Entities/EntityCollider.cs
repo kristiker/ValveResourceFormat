@@ -119,6 +119,33 @@ public sealed class EntityCollider
     }
 
     /// <summary>
+    /// Traces a ray against this shape. Used by the player's reach test, which needs a point
+    /// query rather than the swept hull movement uses.
+    /// </summary>
+    /// <param name="from">Ray start in world space.</param>
+    /// <param name="to">Ray end in world space.</param>
+    /// <returns>The hit, in world space.</returns>
+    public Rubikon.TraceResult TraceRay(Vector3 from, Vector3 to)
+    {
+        if (IsEmpty || !MightHit(from, to, Vector3.Zero))
+        {
+            return new Rubikon.TraceResult();
+        }
+
+        var result = Shape.TraceRay(Vector3.Transform(from, inverseTransform), Vector3.Transform(to, inverseTransform));
+
+        if (!result.Hit)
+        {
+            return result;
+        }
+
+        result.HitPosition = Vector3.Transform(result.HitPosition, transform);
+        result.HitNormal = Vector3.Normalize(Vector3.TransformNormal(result.HitNormal, transform));
+
+        return result;
+    }
+
+    /// <summary>
     /// Tests a resting axis-aligned box for overlap with this shape.
     /// </summary>
     /// <param name="center">Box centre in world space.</param>

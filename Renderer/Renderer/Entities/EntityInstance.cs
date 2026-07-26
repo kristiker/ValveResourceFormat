@@ -131,6 +131,13 @@ public abstract class EntityInstance
     public virtual bool WantsThink => false;
 
     /// <summary>
+    /// Gets a value indicating whether the player can aim at this entity and press use on it. Only
+    /// entities that answer <c>Use</c> should say yes: the reach test picks the nearest usable
+    /// thing, so a non-usable one claiming otherwise would swallow the press.
+    /// </summary>
+    public virtual bool IsUsable => false;
+
+    /// <summary>
     /// Handles an input fired at this entity.
     /// </summary>
     /// <param name="input">The input name, matched case-insensitively.</param>

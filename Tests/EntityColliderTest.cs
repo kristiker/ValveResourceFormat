@@ -128,6 +128,46 @@ namespace Tests
         }
 
         [Test]
+        public void RayTraceFollowsTheEntityTransform()
+        {
+            var collider = LoadCollider();
+
+            var start = new Vector3(-1000, 0, ProbeHeight);
+            var end = new Vector3(1000, 0, ProbeHeight);
+
+            var atOrigin = collider.TraceRay(start, end);
+
+            Assert.That(atOrigin.Hit, Is.True, "the ray should cross the shape at its compiled position");
+
+            var offset = new Vector3(0, 700, 0);
+            collider.Transform = Matrix4x4.CreateTranslation(offset);
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(collider.TraceRay(start, end).Hit, Is.False, "the shape moved off the old ray");
+                Assert.That(collider.TraceRay(start + offset, end + offset).Hit, Is.True);
+                Assert.That(
+                    collider.TraceRay(start + offset, end + offset).Distance,
+                    Is.EqualTo(atOrigin.Distance).Within(1e-2f));
+            }
+        }
+
+        [Test]
+        public void RayTraceStopsShortOfAnOutOfReachShape()
+        {
+            var collider = LoadCollider();
+
+            // The shape's near face sits around x = -33, so a ray ending well before it must miss
+            var eye = new Vector3(-1000, 0, ProbeHeight);
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(collider.TraceRay(eye, eye + new Vector3(80, 0, 0)).Hit, Is.False);
+                Assert.That(collider.TraceRay(eye, eye + new Vector3(1000, 0, 0)).Hit, Is.True);
+            }
+        }
+
+        [Test]
         public void BroadphaseRejectsSweepsThatCannotReach()
         {
             var collider = LoadCollider();
