@@ -33,6 +33,12 @@ The binary name is `Source2Viewer-CLI`.
 | `--gltf_textures_adapt`      | Whether to perform any glTF spec adaptations on textures (e.g. split metallic map).                                                                             |
 | `--gltf_export_extras`       | Export additional Mesh properties into glTF extras                                                                                                              |
 | `--tools_asset_info_short`   | Whether to print only file paths for tools_asset_info files.                                                                                                    |
+| **Shaders**                  |                                                                                                                                                                 |
+| `--shader_list_combos`       | List every compiled variant of a shader with its combo values and bytecode hash.                                                                                |
+| `--shader_combo`             | Decompile the shader variant matching these combo values, example: "S_ALPHA_TEST=1,D_BLEND_WEIGHT_COUNT=4". A bare name means "=1", omitted combos stay at their minimum. |
+| `--shader_dump_all`          | Write every unique compiled variant of a shader to the output folder, along with a manifest.                                                                    |
+| `--shader_backend`           | Language to decompile shader bytecode to. Must be either 'glsl' or 'hlsl'. By default hlsl is attempted first, falling back to glsl.                            |
+| `--shader_clean`             | Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.                              |
 | **Other**                    |                                                                                                                                                                 |
 | `--threads`                  | If higher than 1, files will be processed concurrently.                                                                                                         |
 | `--version`                  | Show version information.                                                                                                                                       |
@@ -109,6 +115,36 @@ Export a model with only specific animations included:
 ```powershell
 ./Source2Viewer-CLI.exe -i "<game>/shaders_vulkan_dir.vpk" --vpk_decompile --vpk_extensions "vcs" --output "."
 ```
+
+### Decompile one variant of a shader
+
+A shader is compiled once per legal combination of its static (`S_`) and dynamic (`D_`) combos. List them to
+see which combinations exist and which of them share bytecode:
+
+```powershell
+./Source2Viewer-CLI.exe -i "<game>/shaders_vulkan_dir.vpk" -f "shaders/vfx/depth_only_vulkan_50_vs.vcs" --shader_list_combos
+```
+
+Then decompile the one you want. Static and dynamic combos can be mixed freely, anything you leave out stays
+at its minimum value:
+
+```powershell
+./Source2Viewer-CLI.exe -i "<game>/shaders_vulkan_dir.vpk" -f "shaders/vfx/depth_only_vulkan_50_vs.vcs" --shader_combo "S_ALPHA_TEST=1,D_BLEND_WEIGHT_COUNT=4" --shader_backend glsl
+```
+
+Asking for a combination the shader's rules forbid reports which combination was used instead.
+
+### Dump every variant of a shader
+
+`--shader_clean` renames the SPIR-V id derived identifiers that SPIRV-Cross generates. Those ids differ
+between variants even when the code is identical, so without it every variant looks different from every
+other one. With it, variants that compiled to the same code produce the same text and collapse into one file:
+
+```powershell
+./Source2Viewer-CLI.exe -i "<game>/shaders_vulkan_dir.vpk" -f "shaders/vfx/depth_only_vulkan_50_vs.vcs" --shader_dump_all --shader_backend glsl --shader_clean --output "depth_only"
+```
+
+The `manifest.tsv` written alongside maps every combo combination to the file it produced.
 
 ## Argument Stability
 

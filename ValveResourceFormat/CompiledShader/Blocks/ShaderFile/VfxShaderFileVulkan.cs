@@ -269,21 +269,32 @@ public class VfxShaderFileVulkan : VfxShaderFile
     /// Decompiles SPIR-V bytecode to HLSL or GLSL using SPIRV-Cross reflection, attempting multiple backends until successful.
     /// </remarks>
     public override string GetDecompiledFile()
+        => GetDecompiledFile(backend: null, SpirvReflectionOptions.Default);
+
+    /// <summary>
+    /// Decompiles SPIR-V bytecode to a specific target language.
+    /// </summary>
+    /// <param name="backend">The backend to use, or null to try HLSL and then fall back to GLSL.</param>
+    /// <param name="options">Controls how the decompiled source is post-processed.</param>
+    public string GetDecompiledFile(Backend? backend, SpirvReflectionOptions options)
     {
         using var buffer = new StringWriter(CultureInfo.InvariantCulture);
 
-        var backendsToTry = new[] { Backend.HLSL, Backend.GLSL, /* Backend.MSL, */ };
+        var backendsToTry = backend.HasValue
+            ? [backend.Value]
+            : new[] { Backend.HLSL, Backend.GLSL, /* Backend.MSL, */ };
+
         for (var i = 0; i < backendsToTry.Length; i++)
         {
-            var backend = backendsToTry[i];
-            var success = ShaderSpirvReflection.ReflectSpirv(this, backend, out var code);
+            var currentBackend = backendsToTry[i];
+            var success = ShaderSpirvReflection.ReflectSpirv(this, currentBackend, options, out var code);
             if (success)
             {
                 buffer.Write(code);
                 break;
             }
 
-            buffer.WriteLine($"// SPIR-V reflection failed for backend {backend}:");
+            buffer.WriteLine($"// SPIR-V reflection failed for backend {currentBackend}:");
 
             foreach (var line in code.AsSpan().EnumerateLines())
             {

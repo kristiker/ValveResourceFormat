@@ -155,6 +155,17 @@ public static partial class ShaderSpirvReflection
     /// <param name="code">The decompiled shader code.</param>
     /// <returns>True if decompilation succeeded, false otherwise.</returns>
     public static bool ReflectSpirv(VfxShaderFileVulkan vulkanSource, Backend backend, out string code)
+        => ReflectSpirv(vulkanSource, backend, SpirvReflectionOptions.Default, out code);
+
+    /// <summary>
+    /// Reflects and decompiles SPIR-V bytecode to a target shader language.
+    /// </summary>
+    /// <param name="vulkanSource">The Vulkan shader source containing SPIR-V bytecode.</param>
+    /// <param name="backend">The target shader language backend.</param>
+    /// <param name="reflectionOptions">Controls how the decompiled source is post-processed.</param>
+    /// <param name="code">The decompiled shader code.</param>
+    /// <returns>True if decompilation succeeded, false otherwise.</returns>
+    public static bool ReflectSpirv(VfxShaderFileVulkan vulkanSource, Backend backend, SpirvReflectionOptions reflectionOptions, out string code)
     {
         static bool Error(out string code, spvc_context context)
         {
@@ -262,9 +273,17 @@ public static partial class ShaderSpirvReflection
 
             code = ReplaceCommonPatterns(code);
 
-            buffer.WriteLine($"// {StringToken.VRF_GENERATOR}");
-            buffer.WriteLine(
-                $"// SPIR-V source ({vulkanSource.BytecodeSize} bytes), {backend} reflection with SPIRV-Cross by KhronosGroup");
+            if (reflectionOptions.HasAnyRewrite)
+            {
+                code = ShaderSourceNormalizer.Apply(code, GetConstantBufferNames(vulkanSource), reflectionOptions);
+            }
+
+            if (reflectionOptions.EmitGeneratorComment)
+            {
+                buffer.WriteLine($"// {StringToken.VRF_GENERATOR}");
+                buffer.WriteLine(
+                    $"// SPIR-V source ({vulkanSource.BytecodeSize} bytes), {backend} reflection with SPIRV-Cross by KhronosGroup");
+            }
 
             BuildComboComment(vulkanSource, buffer);
 
@@ -291,54 +310,49 @@ public static partial class ShaderSpirvReflection
             return;
         }
 
-        static string FormatComboEntry(VfxCombo combo, int value)
-            => value != 1 ? $"{combo.Name}={value}" : combo.Name;
+        var statics = VfxComboResolver.FormatStaticCombos(program, staticCombo.StaticComboId);
 
-        if (program.StaticComboArray.Length > 0)
+        if (statics.Length > 0)
         {
-            var parts = new List<string>();
-            var configGen = new ConfigMappingParams(program);
-            var state = configGen.GetConfigState(staticCombo.StaticComboId);
-
-            for (var i = 0; i < state.Length; i++)
-            {
-                if (state[i] == 0)
-                {
-                    continue;
-                }
-
-                parts.Add(FormatComboEntry(program.StaticComboArray[i], state[i]));
-            }
-
-            if (parts.Count > 0)
-            {
-                buffer.WriteLine($"// Static combos: {string.Join(", ", parts)}");
-            }
+            buffer.WriteLine($"// Static combos: {statics}");
         }
 
         var dynamicComboEntry = Array.Find(staticCombo.DynamicCombos, r => r.ShaderFileId == shaderFile.ShaderFileId);
-        var dynamicComboId = dynamicComboEntry?.DynamicComboId ?? 0;
+        var dynamics = VfxComboResolver.FormatDynamicCombos(program, dynamicComboEntry?.DynamicComboId ?? 0);
 
-        if (dynamicComboId != 0)
+        if (dynamics.Length > 0)
         {
-            var parts = new List<string>();
-            var state = program.GetDBlockConfig(dynamicComboId);
+            buffer.WriteLine($"// Dynamic combos: {dynamics}");
+        }
+    }
 
-            for (var i = 0; i < state.Length; i++)
+    /// <summary>
+    /// Gets the constant buffer names that SPIRV-Cross may have used to prefix flattened buffer members with.
+    /// </summary>
+    private static List<string> GetConstantBufferNames(VfxShaderFile shaderFile)
+    {
+        var program = shaderFile.ParentCombo?.ParentProgramData;
+        var names = new List<string> { "_Globals_" };
+
+        if (program is null)
+        {
+            return names;
+        }
+
+        foreach (var buffer in program.ExtConstantBufferDescriptions)
+        {
+            names.Add(buffer.Name);
+        }
+
+        foreach (var variable in program.VariableDescriptions)
+        {
+            if (variable.VfxType is VfxVariableType.Cbuffer)
             {
-                if (state[i] == 0)
-                {
-                    continue;
-                }
-
-                parts.Add(FormatComboEntry(program.DynamicComboArray[i], state[i]));
-            }
-
-            if (parts.Count > 0)
-            {
-                buffer.WriteLine($"// Dynamic combos: {string.Join(", ", parts)}");
+                names.Add(variable.Name);
             }
         }
+
+        return names;
     }
 
     private static void RenameResource(spvc_compiler compiler, spvc_resources resources, SpirvResourceType resourceType,

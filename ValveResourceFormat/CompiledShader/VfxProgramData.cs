@@ -617,6 +617,21 @@ namespace ValveResourceFormat.CompiledShader
             return dBlockConfigGen.GetConfigState(blockId);
         }
 
+        /// <summary>
+        /// Calculates the dynamic combo ID that a set of dynamic combo values maps to.
+        /// </summary>
+        /// <param name="configState">One value per entry in <see cref="DynamicComboArray"/>.</param>
+        /// <returns>The dynamic combo ID, which is not guaranteed to exist in any given static combo.</returns>
+        public long CalcDynamicComboIdFromValues(int[] configState)
+        {
+            if (dBlockConfigGen == null)
+            {
+                throw new InvalidOperationException("DBlock configuration generator is not initialized.");
+            }
+
+            return dBlockConfigGen.CalcStaticComboIdFromValues(configState);
+        }
+
         /*
         public long CalcStaticComboIdFromValues(int[] configState)
         {
