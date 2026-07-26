@@ -22,6 +22,13 @@ record struct ParticleDefinitionParser(KVObject Data, ILogger Logger)
     }
 
     /// <summary>
+    /// Returns a child parser for the nested object at <paramref name="k"/>, or <see langword="null"/> if
+    /// the key is absent, so that callers fall back to their own defaults for every field inside it.
+    /// </summary>
+    public readonly ParticleDefinitionParser? Object(string k)
+        => Data.ContainsKey(k) ? new ParticleDefinitionParser(Data.GetSubCollection(k), Logger) : null;
+
+    /// <summary>
     /// Returns an array of child parsers for the sub-collection array at <paramref name="k"/>, or an empty array if the key is absent.
     /// </summary>
     public readonly ParticleDefinitionParser[] Array(string k)

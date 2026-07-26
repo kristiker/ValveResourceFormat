@@ -24,12 +24,15 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private const int MaxTextureLayers = 5;
 
         private static readonly INumberProvider OneNumberProvider = new LiteralNumberProvider(1f);
+        private static readonly INumberProvider ZeroNumberProvider = new LiteralNumberProvider(0f);
 
         // Interpolated names would allocate on every draw, and this is per-frame renderer code.
         private static readonly string[] LayerTextureUniforms = ["uTexture", "uTextureLayer1", "uTextureLayer2", "uTextureLayer3", "uTextureLayer4"];
         private static readonly string[] LayerChannelsUniforms = ["uLayerChannels[0]", "uLayerChannels[1]", "uLayerChannels[2]", "uLayerChannels[3]", "uLayerChannels[4]"];
         private static readonly string[] LayerBlendModeUniforms = ["uLayerBlendMode[0]", "uLayerBlendMode[1]", "uLayerBlendMode[2]", "uLayerBlendMode[3]", "uLayerBlendMode[4]"];
         private static readonly string[] LayerBlendUniforms = ["uLayerBlend[0]", "uLayerBlend[1]", "uLayerBlend[2]", "uLayerBlend[3]", "uLayerBlend[4]"];
+        private static readonly string[] LayerUvTransformUniforms = ["uLayerUvTransform[0]", "uLayerUvTransform[1]", "uLayerUvTransform[2]", "uLayerUvTransform[3]", "uLayerUvTransform[4]"];
+        private static readonly string[] LayerUvRotationUniforms = ["uLayerUvRotation[0]", "uLayerUvRotation[1]", "uLayerUvRotation[2]", "uLayerUvRotation[3]", "uLayerUvRotation[4]"];
 
         /// <summary>One entry of m_vecTexturesInput: a texture plus how it folds into the layers below it.</summary>
         private sealed class TextureLayer(RenderTexture texture)
@@ -38,6 +41,13 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             public SpriteCardTextureChannel Channels { get; init; } = SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA;
             public ParticleTextureLayerBlendType BlendMode { get; init; } = ParticleTextureLayerBlendType.SPRITECARD_TEXTURE_BLEND_MULTIPLY;
             public INumberProvider Blend { get; init; } = OneNumberProvider;
+
+            // m_TextureControls. The scales are tiling divisors, so 1 leaves the card at its full extent.
+            public INumberProvider ScaleU { get; init; } = OneNumberProvider;
+            public INumberProvider ScaleV { get; init; } = OneNumberProvider;
+            public INumberProvider OffsetU { get; init; } = ZeroNumberProvider;
+            public INumberProvider OffsetV { get; init; } = ZeroNumberProvider;
+            public INumberProvider UvRotation { get; init; } = ZeroNumberProvider;
         }
 
         private readonly Shader shader;
@@ -146,11 +156,18 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     var layerTextureName = textureInput.Data.GetStringProperty("m_hTexture");
                     textureName ??= layerTextureName;
 
+                    var controls = textureInput.Object("m_TextureControls");
+
                     parsed.Add(new TextureLayer(rendererContext.MaterialLoader.GetTexture(layerTextureName, srgbRead: true))
                     {
                         Channels = textureInput.Enum("m_nTextureChannels", SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA),
                         BlendMode = textureInput.Enum("m_nTextureBlendMode", ParticleTextureLayerBlendType.SPRITECARD_TEXTURE_BLEND_MULTIPLY),
                         Blend = textureInput.NumberProvider("m_flTextureBlend", OneNumberProvider),
+                        ScaleU = controls?.NumberProvider("m_flFinalTextureScaleU", OneNumberProvider) ?? OneNumberProvider,
+                        ScaleV = controls?.NumberProvider("m_flFinalTextureScaleV", OneNumberProvider) ?? OneNumberProvider,
+                        OffsetU = controls?.NumberProvider("m_flFinalTextureOffsetU", ZeroNumberProvider) ?? ZeroNumberProvider,
+                        OffsetV = controls?.NumberProvider("m_flFinalTextureOffsetV", ZeroNumberProvider) ?? ZeroNumberProvider,
+                        UvRotation = controls?.NumberProvider("m_flFinalTextureUVRotation", ZeroNumberProvider) ?? ZeroNumberProvider,
                     });
                 }
 
@@ -550,6 +567,18 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 shader.SetUniform1(LayerChannelsUniforms[layer], (int)layers[layer].Channels);
                 shader.SetUniform1(LayerBlendModeUniforms[layer], (int)layers[layer].BlendMode);
                 shader.SetUniform1(LayerBlendUniforms[layer], layers[layer].Blend.NextNumber(systemRenderState));
+
+                // Offset in xy, tiling divisor in zw. The shader divides by the latter, so a zero would
+                // blow the uv up; the scales are authored as divisors and 1 is the untouched case.
+                var scaleU = layers[layer].ScaleU.NextNumber(systemRenderState);
+                var scaleV = layers[layer].ScaleV.NextNumber(systemRenderState);
+                shader.SetUniform4(LayerUvTransformUniforms[layer], new Vector4(
+                    layers[layer].OffsetU.NextNumber(systemRenderState),
+                    layers[layer].OffsetV.NextNumber(systemRenderState),
+                    scaleU == 0f ? 1f : scaleU,
+                    scaleV == 0f ? 1f : scaleV));
+
+                shader.SetUniform1(LayerUvRotationUniforms[layer], layers[layer].UvRotation.NextNumber(systemRenderState));
             }
 
             // TODO: This formula is a guess but still seems too bright compared to valve particles

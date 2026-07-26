@@ -22,8 +22,9 @@ uniform vec2 uFeatheringRange = vec2(0.0);
 #define PARTICLE_OUTPUT_BLEND_MODE_MOD2X 5
 uniform int uBlendMode = 0; // PARTICLE_OUTPUT_BLEND_MODE_ALPHA
 
+#include "common/particle_spritecard.slang"
+
 // One sampler per texture layer. Layer 0 is the base texture and keeps the plain name.
-#define MAX_TEXTURE_LAYERS 5
 uniform sampler2D uTexture;
 uniform sampler2D uTextureLayer1;
 uniform sampler2D uTextureLayer2;
@@ -102,6 +103,7 @@ in vec2 vTexCoordNextFrameOut;
 in float vFrameBlend;
 in vec4 vColor;
 in vec3 vFragPosition;
+in vec2 vUvCorner;
 
 out vec4 fragColor;
 
@@ -233,7 +235,9 @@ void main(void) {
 
     for (int i = 0; i < uLayerCount; ++i)
     {
-        vec4 layer = SampleLayer(i, vTexCoordOut);
+        // Layer 0's uv already went through its own transform and its sheet frame in the vertex shader.
+        // The extra layers have no sequence of their own, so they tile the raw texture.
+        vec4 layer = SampleLayer(i, i == 0 ? vTexCoordOut : ApplyLayerUvTransform(vUvCorner, i));
 
         // The sheet sequence belongs to the base texture, so only layer 0 cross-fades frames.
         if (i == 0 && uBlendFrames != 0)

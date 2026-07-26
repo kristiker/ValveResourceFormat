@@ -15,6 +15,7 @@ layout (location = 7) in float aFrameBlend;
 
 #include "common/utils.slang"
 #include "common/ViewConstants.slang"
+#include "common/particle_spritecard.slang"
 
 // m_bGammaCorrectVertexColors. Particle colours are authored in gamma space; without this they are used
 // as though they were already linear. Alpha is left alone.
@@ -25,12 +26,8 @@ out vec2 vTexCoordNextFrameOut;
 out float vFrameBlend;
 out vec4 vColor;
 out vec3 vFragPosition;
-
-// v runs opposite to the corner's y, so the rectangle's max lands on the -1 corner.
-vec2 UvFromRect(vec4 rect, vec2 unitCorner)
-{
-    return mix(vec2(rect.x, rect.w), vec2(rect.z, rect.y), unitCorner);
-}
+// The card's own corner in uv space, for the extra layers to transform at sample time.
+out vec2 vUvCorner;
 
 void main(void) {
     // 0 -> (-1,-1), 1 -> (-1,+1), 2 -> (+1,-1), 3 -> (+1,+1): a triangle strip over the quad.
@@ -44,8 +41,13 @@ void main(void) {
         vColor.rgb = SrgbGammaToLinear(vColor.rgb);
     }
 
-    vTexCoordOut = UvFromRect(aUvRect, unitCorner);
-    vTexCoordNextFrameOut = UvFromRect(aUvRectNextFrame, unitCorner);
+    // v runs opposite to the corner's y, so the rectangle's max lands on the -1 corner.
+    vUvCorner = vec2(unitCorner.x, 1.0 - unitCorner.y);
+
+    // Layer 0's transformed corner is then mapped into its sheet frame, for both frames.
+    vec2 baseCorner = ApplyLayerUvTransform(vUvCorner, 0);
+    vTexCoordOut = mix(aUvRect.xy, aUvRect.zw, baseCorner);
+    vTexCoordNextFrameOut = mix(aUvRectNextFrame.xy, aUvRectNextFrame.zw, baseCorner);
     vFrameBlend = aFrameBlend;
 
     vec3 positionWs = aPosition + (aRight * corner.x) + (aUp * corner.y);
