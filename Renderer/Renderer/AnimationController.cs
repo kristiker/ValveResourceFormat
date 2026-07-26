@@ -129,7 +129,11 @@ namespace ValveResourceFormat.Renderer
                 }
 
 
-                AnimationFrame = GetFrame();
+                // Taken from the sub-controller rather than asked for again. GetFrame would delegate
+                // straight back to it and re-run the blend and the per-bone interpolation that its own
+                // Update above already did, for the same frame at the same time.
+                AnimationFrame = subController.Handler.AnimationFrame;
+
                 updateHandler(ActiveAnimation, Frame);
                 forceUpdate = false;
 
