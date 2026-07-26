@@ -38,6 +38,17 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
         public float[] BoneSpheres { get; private set; } = [];
 
         /// <summary>
+        /// Gets the bones to pose, ordered so that a bone's parent always comes before it, with procedural
+        /// cloth subtrees left out. Posing can walk this flat rather than recursing the hierarchy.
+        /// </summary>
+        public int[] AnimatedBoneOrder { get; private set; } = [];
+
+        /// <summary>
+        /// Gets each bone's parent index, or -1 for a root. Paired with <see cref="AnimatedBoneOrder"/>.
+        /// </summary>
+        public int[] ParentIndices { get; private set; } = [];
+
+        /// <summary>
         /// Gets a bone by its <see cref="StringToken"/> hash.
         /// </summary>
         public Bone? this[uint hash]
@@ -177,6 +188,48 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
                 var hash = StringToken.Store(name);
                 boneHashToIndex[hash] = i;
             }
+
+            BuildAnimatedBoneOrder();
+        }
+
+        /// <summary>
+        /// Flattens the hierarchy into a parent-before-child ordering, so posing can walk an index array
+        /// instead of recursing. Built by descending from the roots rather than trusting the file's bone
+        /// order, and it drops procedural cloth roots the same way posing did when it recursed.
+        /// </summary>
+        private void BuildAnimatedBoneOrder()
+        {
+            ParentIndices = new int[Bones.Length];
+
+            for (var i = 0; i < Bones.Length; i++)
+            {
+                ParentIndices[i] = Bones[i].Parent?.Index ?? -1;
+            }
+
+            var order = new List<int>(Bones.Length);
+            var pending = new Stack<Bone>();
+
+            foreach (var root in Roots)
+            {
+                if (root.IsProceduralCloth)
+                {
+                    continue; // driven by the cloth simulation rather than the animation
+                }
+
+                pending.Push(root);
+
+                while (pending.TryPop(out var bone))
+                {
+                    order.Add(bone.Index);
+
+                    foreach (var child in bone.Children)
+                    {
+                        pending.Push(child);
+                    }
+                }
+            }
+
+            AnimatedBoneOrder = [.. order];
         }
     }
 }

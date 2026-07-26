@@ -108,36 +108,24 @@ namespace ValveResourceFormat.Renderer
                     return false;
                 }
 
-                // Pose calculation from AG2 clip
-                static void ComputePoseRecursive(Bone bone, Matrix4x4 parentTransform, SubController subController, Span<Matrix4x4> pose)
+                // Pose calculation from AG2 clip, over the flattened order so every bone's parent is
+                // already written by the time it is read
+                var parentIndices = Skeleton.ParentIndices;
+
+                foreach (var index in Skeleton.AnimatedBoneOrder)
                 {
-                    var remapIndex = subController.RemapTable[bone.Index];
+                    var remapIndex = subController.RemapTable[index];
 
                     if (remapIndex != -1)
                     {
                         // Bone is animated in sub-controller, use its pose
-                        pose[bone.Index] = subController.Handler.Pose[remapIndex];
-                    }
-                    else
-                    {
-                        // Bone is not animated, compute from parent + bind pose
-                        pose[bone.Index] = bone.BindPose * parentTransform;
-                    }
-
-                    foreach (var child in bone.Children)
-                    {
-                        ComputePoseRecursive(child, pose[bone.Index], subController, pose);
-                    }
-                }
-
-                foreach (var root in Skeleton.Roots)
-                {
-                    if (root.IsProceduralCloth)
-                    {
+                        Pose[index] = subController.Handler.Pose[remapIndex];
                         continue;
                     }
 
-                    ComputePoseRecursive(root, Transform, subController, Pose);
+                    // Bone is not animated, compute from parent + bind pose
+                    var parentIndex = parentIndices[index];
+                    Pose[index] = Skeleton.Bones[index].BindPose * (parentIndex < 0 ? Transform : Pose[parentIndex]);
                 }
 
 
@@ -178,15 +166,7 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            foreach (var root in Skeleton.Roots)
-            {
-                if (root.IsProceduralCloth)
-                {
-                    continue;
-                }
-
-                GetBoneMatricesRecursive(root, Transform, AnimationFrame, Pose);
-            }
+            GetBoneMatrices(Transform, AnimationFrame, Pose);
 
             ApplyInverseKinematics();
             return true;

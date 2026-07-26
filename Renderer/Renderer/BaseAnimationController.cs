@@ -56,6 +56,38 @@ namespace ValveResourceFormat.Renderer
         public virtual bool Update(float timeStep) => false;
 
         /// <summary>
+        /// Computes the world-space transform of every animated bone, walking
+        /// <see cref="Skeleton.AnimatedBoneOrder"/> so each bone's parent is already done. Produces the
+        /// same matrices as <see cref="GetBoneMatricesRecursive"/>, without chasing bone objects and their
+        /// child lists, which is most of what posing a skeleton costs.
+        /// </summary>
+        /// <param name="rootTransform">Transform to parent the root bones to.</param>
+        /// <param name="frame">The animation frame to pose from, or <see langword="null"/> for the bind pose.</param>
+        /// <param name="boneMatrices">The output array to store computed bone matrices.</param>
+        protected void GetBoneMatrices(Matrix4x4 rootTransform, Frame? frame, Span<Matrix4x4> boneMatrices)
+        {
+            var bones = Skeleton.Bones;
+            var parents = Skeleton.ParentIndices;
+
+            foreach (var index in Skeleton.AnimatedBoneOrder)
+            {
+                var boneTransform = bones[index].BindPose;
+
+                if (frame != null)
+                {
+                    var frameBone = frame.Bones[index];
+                    boneTransform = Matrix4x4.CreateScale(frameBone.Scale)
+                        * Matrix4x4.CreateFromQuaternion(frameBone.Angle)
+                        * Matrix4x4.CreateTranslation(frameBone.Position);
+                }
+
+                var parentIndex = parents[index];
+
+                boneMatrices[index] = boneTransform * (parentIndex < 0 ? rootTransform : boneMatrices[parentIndex]);
+            }
+        }
+
+        /// <summary>
         /// Recursively computes the world-space transformation matrix for each bone in the hierarchy.
         /// </summary>
         /// <param name="bone">The current bone to process.</param>
