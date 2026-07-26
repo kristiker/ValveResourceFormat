@@ -31,6 +31,11 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly INumberProvider endFadeSize = new LiteralNumberProvider(200000000f);
         private readonly bool distanceAlpha;
 
+        // m_flStartFadeDot/m_flEndFadeDot: the normal-aligned modes fade out as the card turns edge-on to
+        // the camera. The defaults span 1..2 against a value that never exceeds 1, so no fade by default.
+        private readonly float startFadeDot = 1f;
+        private readonly float endFadeDot = 2f;
+
         private readonly INumberProvider radiusScale = new LiteralNumberProvider(1f);
         private readonly INumberProvider alphaScale = new LiteralNumberProvider(1f);
         private readonly SpriteCardTextureChannel textureChannels = SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA;
@@ -111,6 +116,8 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             startFadeSize = parse.NumberProvider("m_flStartFadeSize", startFadeSize);
             endFadeSize = parse.NumberProvider("m_flEndFadeSize", endFadeSize);
             distanceAlpha = parse.Boolean("m_bDistanceAlpha", distanceAlpha);
+            startFadeDot = parse.Float("m_flStartFadeDot", startFadeDot);
+            endFadeDot = parse.Float("m_flEndFadeDot", endFadeDot);
             animationType = parse.Enum<ParticleAnimationType>("m_nAnimationType", animationType);
             radiusScale = parse.NumberProvider("m_flRadiusScale", radiusScale);
             alphaScale = parse.NumberProvider("m_flAlphaScale", alphaScale);
@@ -254,6 +261,13 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             var endFadeScreenSize = endFadeSize.NextNumber(systemRenderState);
             var tanHalfFov = MathF.Tan(camera.GetFOV() * 0.5f);
 
+            // Only the two normal-aligned modes fade by view angle, and only when the range can actually
+            // be entered: the value it tests is a dot product magnitude, so it never exceeds 1.
+            var viewAngleFadeActive = startFadeDot < 1f
+                && endFadeDot > startFadeDot
+                && orientationType is ParticleOrientation.PARTICLE_ORIENTATION_ALIGN_TO_PARTICLE_NORMAL
+                    or ParticleOrientation.PARTICLE_ORIENTATION_SCREENALIGN_TO_PARTICLE_NORMAL;
+
             // Update vertex buffer
             var rawVertices = ArrayPool<float>.Shared.Rent(particles.Count * VertexSize * 4);
 
@@ -266,6 +280,20 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
                     // Scales rgb and alpha alike, matching the shader's fade of the whole vertex colour.
                     var colorFade = 1f;
+
+                    // The view-angle fade touches alpha only, unlike the size fade below.
+                    var alphaFade = 1f;
+
+                    if (viewAngleFadeActive)
+                    {
+                        var toCamera = camera.Location - particle.Position;
+
+                        if (toCamera.LengthSquared() > 1e-12f)
+                        {
+                            var facing = MathF.Abs(Vector3.Dot(Vector3.Normalize(particle.Normal), Vector3.Normalize(toCamera)));
+                            alphaFade = 1f - MathUtils.Smoothstep(startFadeDot, endFadeDot, facing);
+                        }
+                    }
 
                     if (distanceAlpha && tanHalfFov > 0f)
                     {
@@ -334,7 +362,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         rawVertices[quadStart + (VertexSize * j) + 3] = particle.Color.X * colorFade;
                         rawVertices[quadStart + (VertexSize * j) + 4] = particle.Color.Y * colorFade;
                         rawVertices[quadStart + (VertexSize * j) + 5] = particle.Color.Z * colorFade;
-                        rawVertices[quadStart + (VertexSize * j) + 6] = particle.Alpha * alphaScale * colorFade;
+                        rawVertices[quadStart + (VertexSize * j) + 6] = particle.Alpha * alphaScale * colorFade * alphaFade;
                     }
 
                     // UVs
