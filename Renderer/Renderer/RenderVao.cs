@@ -59,7 +59,13 @@ namespace ValveResourceFormat.Renderer
             }
 
             shader.EnsureLoaded();
-            var vao = meshBuffers.GetVertexArrayObject(vertexBuffers, shader, inputSignature, indexBuffer, debugLabel);
+
+            // Material-agnostic shaders (depth only, picking, outline) bind a fixed set of attributes
+            // resolved by semantic name, so build their VAOs from the vertex buffer layout alone. This keeps
+            // creation deterministic instead of baking in whichever material's input signature got there first.
+            var effectiveSignature = shader.IgnoreMaterialData ? default : inputSignature;
+
+            var vao = meshBuffers.GetVertexArrayObject(vertexBuffers, shader, effectiveSignature, indexBuffer, debugLabel);
 
             if (primaryProgram == -1)
             {

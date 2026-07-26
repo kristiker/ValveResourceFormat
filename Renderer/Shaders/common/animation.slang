@@ -1,4 +1,4 @@
-#version 460
+﻿#version 460
 
 #ifndef VRF_ANIMATION_INCLUDE
 #define VRF_ANIMATION_INCLUDE
@@ -33,7 +33,7 @@ float GetObjectUniformScale()
     }
 
     // The slot before the bones holds a Transform, where scale is a field rather than a matrix basis
-    return transforms[objects[gl_BaseInstance].TransformIndex + 1u][0].z;
+    return transforms[objects[GetObjectIndex()].TransformIndex + 1u][0].z;
 }
 
 vec4 ApplyUniformScale(vec3 vPositionOs)

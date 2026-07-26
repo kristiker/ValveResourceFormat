@@ -1,5 +1,6 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Renderer.World;
 
@@ -16,21 +17,89 @@ namespace ValveResourceFormat.Renderer
 #if DEBUG
         [DebuggerDisplay("{Node.DebugName,nq}")]
 #endif
-        public record struct Request(RenderableMesh Mesh, DrawCall? Call, float DistanceFromCamera, int RenderOrder, SceneNode Node);
-        record struct BatchRequest(RenderableMesh Mesh, DrawCall Call, SceneNode Node);
+        public record struct Request(RenderableMesh Mesh, DrawCall? Call, float DistanceFromCamera, int RenderOrder, SceneNode Node)
+        {
+            /// <summary>
+            /// Opportunistic instancing state: 0 or 1 = drawn individually, above 1 = head of an instanced
+            /// group with that many instances, -1 = consumed by a preceding group head.
+            /// </summary>
+            public int InstanceCount { get; set; }
 
-        /// <summary>Compares two requests by shader pipeline sort ID, placing custom-render nodes at the boundary.</summary>
+            /// <summary>Offset of this group's first entry in the per-frame object index list (valid when <see cref="InstanceCount"/> is above 1).</summary>
+            public int ObjectIndexOffset { get; set; }
+        }
+
+        record struct BatchRequest(RenderableMesh Mesh, DrawCall Call, SceneNode Node, int InstanceCount, int ObjectIndexOffset);
+
+        /// <summary>Values of the nInstancingMode shader uniform. Must match instancing.slang.</summary>
+        private static class InstancingMode
+        {
+            /// <summary>Single draw; transform and tint come from per-draw uniforms.</summary>
+            public const int None = 0;
+            /// <summary>Aggregate with sequential instance transforms starting at the object's transform index.</summary>
+            public const int Aggregate = 1;
+            /// <summary>gl_BaseInstance offsets into the per-frame object index list; one object per instance.</summary>
+            public const int ObjectList = 2;
+        }
+
+        /// <summary>Compares two requests by shader pipeline sort ID, placing custom-render nodes at the boundary.
+        /// Ties are broken by geometry identity so that identical draws end up adjacent for opportunistic instancing.</summary>
         public static int CompareCustomPipeline(Request a, Request b)
         {
             const int CustomRenderSortId = 500 * -RenderMaterial.PerShaderSortIdRange;
 
             return (a.Call, b.Call) switch
             {
-                ({ }, { }) => b.Call.Material.SortId - a.Call.Material.SortId,
+                ({ }, { }) => ComparePipelineThenGeometry(a.Call, b.Call),
                 (null, { }) => b.Call.Material.SortId - CustomRenderSortId,
                 ({ }, null) => CustomRenderSortId - a.Call.Material.SortId,
                 (null, null) => 0,
             };
+        }
+
+        private static int ComparePipelineThenGeometry(DrawCall a, DrawCall b)
+        {
+            var comparison = b.Material.SortId - a.Material.SortId;
+
+            return comparison != 0 ? comparison : CompareGeometryIdentity(a, b);
+        }
+
+        private static int CompareGeometryIdentity(DrawCall a, DrawCall b)
+        {
+            var comparison = a.IndexBuffer.Handle.CompareTo(b.IndexBuffer.Handle);
+
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = a.BaseVertex.CompareTo(b.BaseVertex);
+
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = a.StartIndex.CompareTo(b.StartIndex);
+
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            return a.IndexCount.CompareTo(b.IndexCount);
+        }
+
+        /// <summary>Compares two requests by geometry identity first, then by shader pipeline sort ID. Used for
+        /// passes drawn with a shared material-agnostic shader, where identical geometry from different
+        /// materials can be merged into one instanced draw.</summary>
+        public static int CompareGeometryThenPipeline(Request a, Request b)
+        {
+            Debug.Assert(a.Call != null && b.Call != null);
+
+            var comparison = CompareGeometryIdentity(a.Call, b.Call);
+
+            return comparison != 0 ? comparison : b.Call.Material.SortId - a.Call.Material.SortId;
         }
 
         /// <summary>Compares two requests first by render order, then by shader pipeline sort ID.</summary>
@@ -71,6 +140,186 @@ namespace ValveResourceFormat.Renderer
             return req.Node is SceneAggregate { AnyChildrenVisible: false };
         }
 
+        /// <summary>Reused scratch for the per-frame object index list; only grows, never allocates in steady state.</summary>
+        private static uint[] instancingObjectIndices = new uint[4096];
+
+        /// <summary>Combined tint of a draw as it would be packed for the vTint uniform.</summary>
+        private static uint GetPackedDrawTint(RenderableMesh mesh, DrawCall call, SceneNode node)
+        {
+            var instanceTint = (node is SceneAggregate.Fragment fragment) ? fragment.Tint : Vector4.One;
+            var tint = Vector4.Clamp(mesh.Tint * call.TintColor * instanceTint, Vector4.Zero, Vector4.One);
+            return Color32.FromVector4(tint).PackedValue;
+        }
+
+        /// <summary>Whether a request can participate in an opportunistically instanced draw at all.</summary>
+        private static bool IsInstanceable(in Request request)
+        {
+            return request.Node.Id != 0
+                && request.Mesh.FlexStateManager == null // per-node morph composite textures cannot be shared
+                && request.Node is not SceneAggregate // uses the sequential instance transform path
+                && !request.Node.TransformBufferStale; // instanced draws read the gpu transform buffer
+        }
+
+        /// <summary>Whether two adjacent requests would issue GL-state-identical draws and can be merged into one
+        /// instanced draw. With <paramref name="crossMaterial"/> (material-agnostic replacement shader), material
+        /// identity and material-derived per-draw state are ignored so different skins of the same geometry merge.</summary>
+        private static bool CanJoinGroup(in Request head, in Request candidate, bool perInstanceCubemaps, bool perInstanceProbes, uint headTint, bool crossMaterial)
+        {
+            if (candidate.Call == null || !IsInstanceable(in candidate))
+            {
+                return false;
+            }
+
+            // uAnimationData is a group-wide uniform; the per-instance bone offset comes from object data.
+            // Instances of the same model share mesh bone layout, so this only splits mixed groups.
+            if (head.Mesh.IsAnimated != candidate.Mesh.IsAnimated)
+            {
+                return false;
+            }
+
+            if (head.Mesh.IsAnimated
+                && (head.Mesh.MeshBoneOffset != candidate.Mesh.MeshBoneOffset
+                    || head.Mesh.MeshBoneCount != candidate.Mesh.MeshBoneCount
+                    || head.Mesh.BoneWeightCount != candidate.Mesh.BoneWeightCount))
+            {
+                return false;
+            }
+
+            var a = head.Call!;
+            var b = candidate.Call;
+
+            if (!crossMaterial && !ReferenceEquals(a.Material, b.Material))
+            {
+                return false;
+            }
+
+            if (a.IndexBuffer.Handle != b.IndexBuffer.Handle
+                || a.IndexBuffer.Offset != b.IndexBuffer.Offset
+                || a.StartIndex != b.StartIndex
+                || a.IndexCount != b.IndexCount
+                || a.BaseVertex != b.BaseVertex
+                || a.IndexType != b.IndexType
+                || a.PrimitiveType != b.PrimitiveType)
+            {
+                return false;
+            }
+
+            // Same material implies the same input signature, so equal buffer bindings resolve to the same VAO
+            var aBuffers = a.VertexBuffers;
+            var bBuffers = b.VertexBuffers;
+
+            if (aBuffers.Length != bBuffers.Length)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < aBuffers.Length; i++)
+            {
+                if (aBuffers[i].Handle != bBuffers[i].Handle
+                    || aBuffers[i].Offset != bBuffers[i].Offset
+                    || aBuffers[i].ElementSizeInBytes != bBuffers[i].ElementSizeInBytes)
+                {
+                    return false;
+                }
+            }
+
+            // Tint is a group-wide uniform in the object list instancing mode (unused by material-agnostic shaders)
+            if (!crossMaterial && headTint != GetPackedDrawTint(candidate.Mesh, b, candidate.Node))
+            {
+                return false;
+            }
+
+            // Per-draw texture bindings must match across the group
+            if (perInstanceCubemaps)
+            {
+                var headEnvMap = head.Node.EnvMaps.Count > 0 ? head.Node.EnvMaps[0] : null;
+                var candidateEnvMap = candidate.Node.EnvMaps.Count > 0 ? candidate.Node.EnvMaps[0] : null;
+
+                if (!ReferenceEquals(headEnvMap, candidateEnvMap))
+                {
+                    return false;
+                }
+            }
+
+            if (perInstanceProbes && !ReferenceEquals(head.Node.LightProbeBinding, candidate.Node.LightProbeBinding))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Merges adjacent identical draws in the sorted opaque list into instanced draws. Group heads receive
+        /// the instance count and an offset into the object index list, consumed members are marked skipped.
+        /// The per-instance object indices are uploaded to <see cref="Scene.InstancingObjectIndicesGpu"/>.
+        /// </summary>
+        private static void GroupInstanceableDraws(List<Request> requests, Scene scene, bool crossMaterial = false)
+        {
+            var gpuBuffer = scene.InstancingObjectIndicesGpu;
+
+            if (gpuBuffer == null)
+            {
+                return;
+            }
+
+            // Per-draw texture bindings are material/lighting state; material-agnostic shaders have neither
+            var perInstanceCubemaps = !crossMaterial && scene.LightingInfo.CubemapType == CubemapType.IndividualCubemaps;
+            var perInstanceProbes = !crossMaterial && scene.LightingInfo.LightProbeType == LightProbeType.IndividualProbes;
+
+            var span = CollectionsMarshal.AsSpan(requests);
+            var indexCount = 0;
+
+            for (var i = 0; i < span.Length; i++)
+            {
+                ref var head = ref span[i];
+                head.InstanceCount = 0;
+
+                if (head.Call == null || !IsInstanceable(in head))
+                {
+                    continue;
+                }
+
+                var headTint = crossMaterial ? 0u : GetPackedDrawTint(head.Mesh, head.Call, head.Node);
+                var groupEnd = i + 1;
+
+                while (groupEnd < span.Length && CanJoinGroup(in head, in span[groupEnd], perInstanceCubemaps, perInstanceProbes, headTint, crossMaterial))
+                {
+                    groupEnd++;
+                }
+
+                var groupCount = groupEnd - i;
+
+                if (groupCount == 1)
+                {
+                    continue;
+                }
+
+                if (instancingObjectIndices.Length < indexCount + groupCount)
+                {
+                    Array.Resize(ref instancingObjectIndices, Math.Max(instancingObjectIndices.Length * 2, indexCount + groupCount));
+                }
+
+                head.InstanceCount = groupCount;
+                head.ObjectIndexOffset = indexCount;
+                instancingObjectIndices[indexCount++] = head.Node.Id;
+
+                for (var member = i + 1; member < groupEnd; member++)
+                {
+                    span[member].InstanceCount = -1;
+                    instancingObjectIndices[indexCount++] = span[member].Node.Id;
+                }
+
+                i = groupEnd - 1;
+            }
+
+            if (indexCount > 0)
+            {
+                // Orphaning upload: draws already queued against the previous contents keep their old data store
+                gpuBuffer.Create(instancingObjectIndices, indexCount * sizeof(uint));
+            }
+        }
+
         /// <summary>Sorts requests according to the active render pass and issues all draw calls.</summary>
         /// <param name="requests">Draw call requests to process.</param>
         /// <param name="context">Render context describing the current pass and scene state.</param>
@@ -79,6 +328,30 @@ namespace ValveResourceFormat.Renderer
             if (context.RenderPass == RenderPass.Opaque)
             {
                 requests.Sort(CompareCustomPipeline);
+
+                if (context.ReplacementShader == null)
+                {
+                    GroupInstanceableDraws(requests, context.Scene);
+                }
+            }
+            else if (context.RenderPass == RenderPass.DepthOnly)
+            {
+                // Shadow and depth prepass draws; the depth-only replacement shaders read
+                // per-instance transforms and bones through object data like material shaders do.
+                // With a material-agnostic shader the material is irrelevant to the draw, so sort by
+                // geometry and merge identical geometry across materials (e.g. skins of the same model).
+                var crossMaterial = context.ReplacementShader?.IgnoreMaterialData == true;
+
+                if (crossMaterial)
+                {
+                    requests.Sort(CompareGeometryThenPipeline);
+                }
+                else
+                {
+                    requests.Sort(CompareCustomPipeline);
+                }
+
+                GroupInstanceableDraws(requests, context.Scene, crossMaterial);
             }
             else if (context.RenderPass == RenderPass.OpaqueAggregate)
             {
@@ -104,7 +377,7 @@ namespace ValveResourceFormat.Renderer
             public int EnvmapTexture = -1;
             public int LPVIrradianceTexture = -1;
             public int Transform = -1;
-            public int IsInstancing = -1;
+            public int InstancingModeLocation = -1;
             public int Tint = -1;
             public int MeshId = -1;
             public int ShaderId = -1;
@@ -121,6 +394,7 @@ namespace ValveResourceFormat.Renderer
             public bool NeedsCubemapBinding;
             public int LightmapGameVersionNumber;
             public bool IndirectDraw;
+            public bool OpportunisticInstancing;
             public LightProbeType LightProbeType;
         }
 
@@ -141,6 +415,8 @@ namespace ValveResourceFormat.Renderer
                 LightmapGameVersionNumber = context.Scene.LightingInfo.LightmapGameVersionNumber,
                 LightProbeType = context.Scene.LightingInfo.LightProbeType,
                 IndirectDraw = context.Scene.DrawMeshletsIndirect && context.RenderPass < RenderPass.Opaque,
+                OpportunisticInstancing = (context.RenderPass == RenderPass.Opaque && context.ReplacementShader == null)
+                    || context.RenderPass == RenderPass.DepthOnly,
             };
 
             var counters = PerfStats.Active;
@@ -165,6 +441,11 @@ namespace ValveResourceFormat.Renderer
                     continue;
                 }
 
+                if (config.OpportunisticInstancing && request.InstanceCount == -1)
+                {
+                    continue; // drawn as part of a preceding instanced group
+                }
+
                 var requestMaterial = request.Call.Material;
 
                 if (material != requestMaterial)
@@ -186,7 +467,7 @@ namespace ValveResourceFormat.Renderer
                         {
                             AnimationData = shader.GetUniformLocation("uAnimationData"),
                             Transform = shader.GetUniformLocation("transform"),
-                            IsInstancing = shader.GetUniformLocation("bIsInstancing"),
+                            InstancingModeLocation = shader.GetUniformLocation("nInstancingMode"),
                             Tint = shader.GetUniformLocation("vTint"),
                         };
 
@@ -229,10 +510,11 @@ namespace ValveResourceFormat.Renderer
                         Debug.Assert(context.Scene.InstanceBufferGpu != null && context.Scene.TransformBufferGpu != null);
                         context.Scene.TransformBufferGpu.BindBufferBase();
                         context.Scene.InstanceBufferGpu.BindBufferBase();
+                        context.Scene.InstancingObjectIndicesGpu?.BindBufferBase();
 
                         if (config.IndirectDraw)
                         {
-                            GL.ProgramUniform1((uint)shader.Program, uniforms.IsInstancing, 1);
+                            GL.ProgramUniform1((uint)shader.Program, uniforms.InstancingModeLocation, InstancingMode.Aggregate);
                         }
                     }
 
@@ -249,7 +531,8 @@ namespace ValveResourceFormat.Renderer
                     counters.Count(Counter.VaoChange);
                 }
 
-                Draw(shader!, ref uniforms, ref config, new(request.Mesh, request.Call, request.Node));
+                var instancing = config.OpportunisticInstancing ? request.InstanceCount : 0;
+                Draw(shader!, ref uniforms, ref config, new(request.Mesh, request.Call, request.Node, instancing, request.ObjectIndexOffset));
             }
 
             if (vao > -1)
@@ -273,9 +556,9 @@ namespace ValveResourceFormat.Renderer
                 if (request.Node is SceneAggregate agg && agg.IndirectDrawCount > 0)
                 {
                     // Non-indirect draws below reset this program uniform
-                    if (uniforms.IsInstancing > -1)
+                    if (uniforms.InstancingModeLocation > -1)
                     {
-                        GL.ProgramUniform1((uint)shader.Program, uniforms.IsInstancing, 1);
+                        GL.ProgramUniform1((uint)shader.Program, uniforms.InstancingModeLocation, InstancingMode.Aggregate);
                     }
 
                     PerfStats.Active.CountIndirectDraw(agg.IndirectDrawCount);
@@ -357,15 +640,25 @@ namespace ValveResourceFormat.Renderer
             }
 
             var instanceCount = 1;
+            var baseInstance = request.Node.Id;
+            var instancingMode = InstancingMode.None;
 
             if (request.Node is SceneAggregate { InstanceTransforms.Count: > 0 } aggregate)
             {
                 instanceCount = aggregate.InstanceTransforms.Count;
+                instancingMode = instanceCount > 1 ? InstancingMode.Aggregate : InstancingMode.None;
+            }
+            else if (request.InstanceCount > 1)
+            {
+                instanceCount = request.InstanceCount;
+                baseInstance = (uint)request.ObjectIndexOffset;
+                instancingMode = InstancingMode.ObjectList;
+                PerfStats.Active.Count(Counter.InstancesBatched, instanceCount);
             }
 
-            if (uniforms.IsInstancing > -1)
+            if (uniforms.InstancingModeLocation > -1)
             {
-                GL.ProgramUniform1((uint)shader.Program, uniforms.IsInstancing, instanceCount > 1 ? 1 : 0);
+                GL.ProgramUniform1((uint)shader.Program, uniforms.InstancingModeLocation, instancingMode);
             }
 
             PerfStats.Active.CountDrawCall(request.Node);
@@ -377,7 +670,7 @@ namespace ValveResourceFormat.Renderer
                 request.Call.StartIndex,
                 instanceCount,
                 request.Call.BaseVertex,
-                request.Node.Id
+                baseInstance
             );
         }
     }

@@ -1,4 +1,4 @@
-namespace ValveResourceFormat.Renderer.Buffers;
+﻿namespace ValveResourceFormat.Renderer.Buffers;
 
 #pragma warning disable CA1069 // Enum values should not be duplicated
 
@@ -44,8 +44,8 @@ public enum ReservedBufferSlots
     CompactedCounts = 9,
     /// <summary>Compaction request descriptors SSBO slot.</summary>
     CompactionRequests = 10,
-    /// <summary>Compaction request counts SSBO slot.</summary>
-    Unused = 11,
+    /// <summary>Opportunistic instancing object index list SSBO slot.</summary>
+    InstancingObjectIndices = 11,
     /// <summary>Barn light constants SSBO slot.</summary>
     BarnLights = 12,
 

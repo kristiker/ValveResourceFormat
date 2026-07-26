@@ -5,7 +5,13 @@
 
 uniform mat3x4 transform;
 uniform uint vTint;
-uniform bool bIsInstancing = false;
+
+// Must match MeshBatchRenderer.InstancingMode
+#define INSTANCING_MODE_NONE 0
+#define INSTANCING_MODE_AGGREGATE 1
+#define INSTANCING_MODE_OBJECT_LIST 2
+
+uniform int nInstancingMode = INSTANCING_MODE_NONE;
 
 #if (S_SCENE_CUBEMAP_TYPE > 0)
     flat out uvec4 g_nEnvMapVisibility;
@@ -34,6 +40,11 @@ layout(std430, binding = 1) readonly buffer g_transformBuffer
     mat3x4 transforms[];
 };
 
+layout(std430, binding = 11) readonly buffer g_instancingObjectIndexBuffer
+{
+    uint instancingObjectIndices[];
+};
+
 struct ObjectData_t
 {
     vec4 vTint;
@@ -60,9 +71,22 @@ mat4 UnpackMatrix4(mat3x4 m)
     );
 }
 
+uint GetObjectIndex()
+{
+    if (nInstancingMode == INSTANCING_MODE_OBJECT_LIST)
+    {
+        // gl_BaseInstance is an offset into the per-frame object index list
+        return instancingObjectIndices[gl_BaseInstance + gl_InstanceID];
+    }
+
+    return gl_BaseInstance;
+}
+
+// The skinning matrices sit a fixed distance past the object's own transform, so an object list draw
+// finds each instance's bones from its own entry. Kept in sync with ModelSceneNode.BoneTransformStart.
 uint GetObjectBoneOffset()
 {
-    return objects[gl_BaseInstance].TransformIndex + 2u;
+    return objects[GetObjectIndex()].TransformIndex + 2u;
 }
 
 void SetObjectInterpolators(ObjectDataStandard objectData)
@@ -78,21 +102,33 @@ void SetObjectInterpolators(ObjectDataStandard objectData)
 
 mat3x4 CalculateObjectToWorldMatrix()
 {
-    ObjectDataStandard objectData = objects[gl_BaseInstance];
+    ObjectDataStandard objectData = objects[GetObjectIndex()];
 
     SetObjectInterpolators(objectData);
 
-    return bIsInstancing ? transforms[objectData.TransformIndex + gl_InstanceID] : transform;
+    if (nInstancingMode == INSTANCING_MODE_NONE)
+    {
+        return transform;
+    }
+
+    // An aggregate draws one object entry many times, each instance taking the next transform along.
+    // An object list draws many entries, each already pointing at its own.
+    if (nInstancingMode == INSTANCING_MODE_AGGREGATE)
+    {
+        return transforms[objectData.TransformIndex + gl_InstanceID];
+    }
+
+    return transforms[objectData.TransformIndex];
 }
 
 ObjectData_t GetObjectData()
 {
-    ObjectDataStandard objectData = objects[gl_BaseInstance];
+    ObjectDataStandard objectData = objects[GetObjectIndex()];
 
     SetObjectInterpolators(objectData);
 
     ObjectData_t object;
-    object.vTint = UnpackColor32(bIsInstancing ? objectData.TintAlpha : vTint);
+    object.vTint = UnpackColor32(nInstancingMode == INSTANCING_MODE_AGGREGATE ? objectData.TintAlpha : vTint);
 
     return object;
 }
