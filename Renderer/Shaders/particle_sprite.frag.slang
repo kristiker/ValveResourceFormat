@@ -21,20 +21,43 @@ uniform float uOverbrightFactor;
 uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
 uniform vec2 uAlphaRemapScaleBias = vec2(1.0, 0.0);
 
-// SpriteCardTextureChannel_t: how the sampled texel maps into colour/alpha. Defaults to MIX_RGBA
-// (colour from RGB, alpha from A). Colour-only modes take colour from a channel (or RGB) and drop the
-// texture alpha; coverage-only modes take colour from the particle and pull alpha from one channel. The
-// dual-texture MASK / *_RGBALPHA modes need a second texture the renderer does not bind, so they fall
-// through to straight RGBA.
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGB    0
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_A      2
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_R      9
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_G      10
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_B      11
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_RALPHA 12
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_GALPHA 13
-#define SPRITECARD_TEXTURE_CHANNEL_MIX_BALPHA 14
+// The spritecard layer chain. Each texture layer is folded into an accumulator that starts at
+// vec4(1.0): the layer is first reduced to a masked colour/alpha pair by SpriteCardTextureChannel_t,
+// then combined with the accumulator by SpriteCardTextureBlendMode_t. The base texture IS layer 0, so
+// with a single layer MULTIPLY collapses to a straight sample -- which is why the mask modes read as
+// plain channel swizzles here even though they are really binary operators.
+//
+// The *_RGBALPHA and *MASK modes do not need a second texture: their "other" operand is the
+// accumulated result of the previous layers.
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGB            0
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA           1
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_A              2
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_A          3
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_ALPHAMASK  4
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_RGBMASK    5
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA_RGBALPHA  6
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_A_RGBALPHA     7
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_A_RGBALPHA 8
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_R              9
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_G              10
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_B              11
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_RALPHA         12
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_GALPHA         13
+#define SPRITECARD_TEXTURE_CHANNEL_MIX_BALPHA         14
 uniform int uTextureChannels = 1; // MIX_RGBA
+
+#define SPRITECARD_TEXTURE_BLEND_MULTIPLY   0
+#define SPRITECARD_TEXTURE_BLEND_MULTIPLY2X 1
+#define SPRITECARD_TEXTURE_BLEND_REPLACE    2
+#define SPRITECARD_TEXTURE_BLEND_ADD        3
+#define SPRITECARD_TEXTURE_BLEND_SUBTRACT   4
+#define SPRITECARD_TEXTURE_BLEND_AVERAGE    5
+#define SPRITECARD_TEXTURE_BLEND_LUMINANCE  6
+// Left at MULTIPLY until the per-layer texture inputs are parsed; with one layer that is the identity.
+uniform int uTextureBlendMode = 0; // MULTIPLY
+
+// The mask modes use Rec.601 weights, while the LUMINANCE blend below uses Rec.709 (GetLuma).
+const vec3 LUMA_601 = vec3(0.299, 0.587, 0.114);
 
 in vec2 vTexCoordOut;
 in vec4 vColor;
@@ -42,23 +65,77 @@ in vec3 vFragPosition;
 
 out vec4 fragColor;
 
-void main(void) {
-    vec4 color = texture(uTexture, vTexCoordOut);
-
-    switch (uTextureChannels)
+// Reduce (accumulator, layer) to a single colour/alpha pair. SUBTRACT zeroes the accumulator's
+// contribution in the modes that would otherwise pass it straight through, so that subtracting a
+// colour-only layer does not also subtract the alpha it never supplied.
+vec4 ApplyChannelMask(vec4 accum, vec4 layer, int maskMode, float sub)
+{
+    switch (maskMode)
     {
-        // todo: is this right?
-        // todo: support more modes
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGB: color = vec4(color.rgb, 1.0); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_R:   color = vec4(color.rrr, 1.0); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_G:   color = vec4(color.ggg, 1.0); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_B:   color = vec4(color.bbb, 1.0); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_A:      color = vec4(1.0, 1.0, 1.0, color.a); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_RALPHA: color = vec4(1.0, 1.0, 1.0, color.r); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_GALPHA: color = vec4(1.0, 1.0, 1.0, color.g); break;
-        case SPRITECARD_TEXTURE_CHANNEL_MIX_BALPHA: color = vec4(1.0, 1.0, 1.0, color.b); break;
-        default: break;
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGB:
+            return vec4(layer.rgb, mix(accum.a, 0.0, sub));
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_A:
+            return vec4(mix(accum.rgb, vec3(0.0), sub), layer.a);
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_A:
+            return vec4(layer.rgb, accum.a * layer.a);
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_ALPHAMASK:
+            return vec4(mix(accum.rgb, layer.rgb, layer.a), accum.a);
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_RGBMASK:
+            return vec4(mix(accum.rgb, layer.rgb, dot(layer.rgb, LUMA_601)), accum.a);
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA_RGBALPHA:
+            return vec4(layer.rgb, dot(layer.rgb, LUMA_601));
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_A_RGBALPHA:
+            return vec4(mix(accum.rgb, vec3(0.0), sub), dot(layer.rgb, LUMA_601));
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_A_RGBALPHA:
+            return vec4(accum.rgb, accum.a * dot(layer.rgb, LUMA_601));
+
+        // The single-channel modes keep their own channel and drop the rest under SUBTRACT.
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_R:
+            return vec4(layer.r, mix(vec3(layer.r, layer.r, accum.a), vec3(0.0), sub));
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_G:
+            return vec4(mix(layer.g, 0.0, sub), layer.g, mix(vec2(layer.g, accum.a), vec2(0.0), sub));
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_B:
+            return vec4(mix(vec2(layer.b), vec2(0.0), sub), layer.b, mix(accum.a, 0.0, sub));
+
+        // ...and the *ALPHA variants broadcast their channel into the alpha as well.
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_RALPHA:
+            return vec4(layer.r, mix(vec2(layer.r), vec2(0.0), sub), layer.r);
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_GALPHA:
+            return vec4(mix(layer.g, 0.0, sub), layer.g, mix(layer.g, 0.0, sub), layer.g);
+        case SPRITECARD_TEXTURE_CHANNEL_MIX_BALPHA:
+            return vec4(mix(vec2(layer.b), vec2(0.0), sub), layer.b, layer.b);
     }
+
+    return layer; // MIX_RGBA, and anything unrecognised
+}
+
+// Combine the masked layer into the accumulator.
+vec4 ApplyLayerBlend(vec4 accum, vec4 masked, int blendMode)
+{
+    switch (blendMode)
+    {
+        case SPRITECARD_TEXTURE_BLEND_MULTIPLY2X: return accum * masked * 2.0;
+        case SPRITECARD_TEXTURE_BLEND_REPLACE:    return masked;
+        case SPRITECARD_TEXTURE_BLEND_ADD:        return accum + masked;
+        case SPRITECARD_TEXTURE_BLEND_SUBTRACT:   return accum - masked;
+        case SPRITECARD_TEXTURE_BLEND_AVERAGE:    return (accum + masked) * 0.5;
+        case SPRITECARD_TEXTURE_BLEND_LUMINANCE:  return vec4(accum.rgb * GetLuma(masked.rgb), masked.a);
+    }
+
+    return accum * masked; // MULTIPLY, and anything unrecognised
+}
+
+void main(void) {
+    // Layer 0 is the base texture, folded into an accumulator of vec4(1.0). Extra layers will repeat
+    // this block with their own mask, blend and uv.
+    vec4 accum = vec4(1.0);
+
+    float sub = float(uTextureBlendMode == SPRITECARD_TEXTURE_BLEND_SUBTRACT);
+    vec4 layer = texture(uTexture, vTexCoordOut);
+    vec4 masked = ApplyChannelMask(accum, layer, uTextureChannels, sub);
+    accum = max(ApplyLayerBlend(accum, masked, uTextureBlendMode), vec4(0.0));
+
+    vec4 color = accum;
 
     // spritecard shading: brightness from diffuse+selfillum, saturated before the alpha blend.
     vec3 finalColor = vColor.rgb * color.rgb;
