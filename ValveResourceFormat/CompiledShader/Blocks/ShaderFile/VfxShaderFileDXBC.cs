@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 
 namespace ValveResourceFormat.CompiledShader;
@@ -36,12 +37,30 @@ public class VfxShaderFileDXBC : VfxShaderFile
         HashMD5 = hash;
     }
 
+    /// <summary>
+    /// Reads the reflection data out of this blob's <c>RDEF</c> chunk, if it still has one.
+    /// </summary>
+    /// <remarks>
+    /// This is the only place the original HLSL constant buffer member names survive, so it is what makes a
+    /// Vulkan decompile's <c>_m0</c> members nameable. See <see cref="DxbcReflection"/>.
+    /// </remarks>
+    public bool TryGetReflection([NotNullWhen(true)] out DxbcReflection? reflection)
+        => DxbcReflection.TryParse(Bytecode, out reflection);
+
     /// <inheritdoc/>
     /// <remarks>
-    /// DXBC decompilation is not supported. Showing hash for now is useful for finding shader from renderdoc.
+    /// DXBC decompilation is not supported. The hash is useful for finding the shader in renderdoc, and the
+    /// reflection listing recovers the real resource and constant buffer names when the blob kept them.
     /// </remarks>
     public override string GetDecompiledFile()
     {
-        return $"Shader hash: {new Guid(Bytecode.AsSpan(4, 16)).ToString()}\n\nDXBC decompilation is currently not supported.";
+        var header = $"Shader hash: {new Guid(Bytecode.AsSpan(4, 16))}\n\nDXBC decompilation is currently not supported.\n";
+
+        if (!TryGetReflection(out var reflection))
+        {
+            return header + "\nThis blob carries no RDEF chunk, so it has no reflection data to show.\n";
+        }
+
+        return header + "\n" + reflection.ToStringListing();
     }
 }
