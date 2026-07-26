@@ -131,6 +131,11 @@ def evaluate(expr, env):
     for name in sorted(env, key=len, reverse=True):
         text = re.sub(r"\b%s\b" % re.escape(name), str(env[name]), text)
     text = text.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
+
+    # Any identifier still standing after substitution was never defined, which the C preprocessor
+    # treats as 0. Matching that catches a macro used in an #if placed above its own #define.
+    text = re.sub(r"\b(?!and\b|or\b|not\b|True\b|False\b)[A-Za-z_]\w*\b", "0", text)
+
     try:
         return bool(eval(text))  # noqa: S307 - the expression comes from the local reconstruction
     except Exception as error:
@@ -166,7 +171,7 @@ def preprocess(lines, defines):
             # Derived helper defines (#define _NEEDS_UV (A || B)) still need to be in scope.
             parts = stripped.split(None, 2)
             if len(parts) == 3 and parts[1] not in env:
-                env[parts[1]] = evaluate(parts[2].split("//")[0].strip(), env)
+                env[parts[1]] = int(evaluate(parts[2].split("//")[0].strip(), env))
             continue
 
         if all(stack):
