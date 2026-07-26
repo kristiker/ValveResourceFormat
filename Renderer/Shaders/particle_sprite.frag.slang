@@ -19,7 +19,10 @@ uniform int uBlendMode = 0; // PARTICLE_OUTPUT_BLEND_MODE_ALPHA
 uniform sampler2D uTexture;
 uniform float uOverbrightFactor;
 uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
-uniform vec2 uAlphaRemapScaleBias = vec2(1.0, 0.0);
+// m_flSourceAlphaValueToMapToZero and m_flSourceAlphaValueToMapToOne. The real spritecard smoothsteps
+// between the two bounds rather than applying a linear scale and bias, and skips the remap unless the
+// range increases -- so x >= y disables it, which is the default here.
+uniform vec2 uAlphaRemapRange = vec2(1.0, 0.0);
 
 // The spritecard layer chain. Each texture layer is folded into an accumulator that starts at
 // vec4(1.0): the layer is first reduced to a masked colour/alpha pair by SpriteCardTextureChannel_t,
@@ -142,7 +145,13 @@ void main(void) {
     finalColor = saturate(finalColor * (uOverbrightFactor * uColorFactor));
 
     // Texture alpha remap, then the per-particle alpha.
-    float alpha = saturate(color.a * uAlphaRemapScaleBias.x + uAlphaRemapScaleBias.y);
+    float alpha = color.a;
+
+    if (uAlphaRemapRange.x < uAlphaRemapRange.y)
+    {
+        alpha = smoothstep(uAlphaRemapRange.x, uAlphaRemapRange.y, alpha);
+    }
+
     alpha *= vColor.a;
 
     bool isAdditive = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD;

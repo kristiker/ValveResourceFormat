@@ -40,6 +40,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly INumberProvider selfIllumAmount = new LiteralNumberProvider(0);
         private readonly INumberProvider alphaMapToZero = new LiteralNumberProvider(0);
         private readonly INumberProvider alphaMapToOne = new LiteralNumberProvider(1);
+        private readonly bool hasAlphaRemap;
         private int vertexBufferHandle;
 
 
@@ -106,6 +107,12 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             selfIllumAmount = parse.NumberProvider("m_flSelfIllumAmount", selfIllumAmount);
             alphaMapToZero = parse.NumberProvider("m_flSourceAlphaValueToMapToZero", alphaMapToZero);
             alphaMapToOne = parse.NumberProvider("m_flSourceAlphaValueToMapToOne", alphaMapToOne);
+
+            // The remap is a smoothstep, so the nominal (0, 1) range is not the identity. Only enable it
+            // where the effect actually authored a bound, otherwise every untouched particle would get an
+            // ease curve applied to its alpha.
+            hasAlphaRemap = parse.Data.ContainsKey("m_flSourceAlphaValueToMapToZero")
+                || parse.Data.ContainsKey("m_flSourceAlphaValueToMapToOne");
         }
 
         public override void SetWireframe(bool isWireframe)
@@ -404,12 +411,11 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             shader.SetUniform1("uOverbrightFactor", overbrightFactor.NextNumber(systemRenderState));
             shader.SetUniform1("uColorFactor", diffuseAmount.NextNumber(systemRenderState) + selfIllumAmount.NextNumber(systemRenderState));
 
-            var mapToZero = alphaMapToZero.NextNumber(systemRenderState);
-            var alphaRemapRange = alphaMapToOne.NextNumber(systemRenderState) - mapToZero;
-            var alphaRemapScaleBias = MathF.Abs(alphaRemapRange) > 0.0001f
-                ? new Vector2(1f / alphaRemapRange, -mapToZero / alphaRemapRange)
+            // x >= y disables the remap in the shader.
+            var alphaRemapRange = hasAlphaRemap
+                ? new Vector2(alphaMapToZero.NextNumber(systemRenderState), alphaMapToOne.NextNumber(systemRenderState))
                 : new Vector2(1f, 0f);
-            shader.SetUniform2("uAlphaRemapScaleBias", alphaRemapScaleBias);
+            shader.SetUniform2("uAlphaRemapRange", alphaRemapRange);
             shader.SetUniform1("uTextureChannels", (int)textureChannels);
 
             // Set every draw: the program is shared with every other sprite renderer, whatever their mode.
