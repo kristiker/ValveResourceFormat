@@ -200,13 +200,14 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             => QuadBasis(new Vector3(0f, -1f, 0f), new Vector3(1f, 0f, 0f), roll);
 
         // ALIGN_TO_PARTICLE_NORMAL: quad plane perpendicular to the particle normal, with the shader's canonical
-        // tangent frame (reference axis chosen away from the normal).
+        // tangent frame. The reference axis is world -Y once the normal tilts at all off horizontal, and world
+        // +Z only while it is nearly horizontal; either choice stays clear of the normal.
         private static Matrix4x4 ParticleNormalBasis(Vector3 normal, float roll)
         {
-            var reference = MathF.Abs(normal.Z) > 0.9f ? new Vector3(1f, 0f, 0f) : new Vector3(0f, 0f, 1f);
-            var tangent = Vector3.Normalize(Vector3.Cross(normal, reference));
-            var bitangent = Vector3.Cross(normal, tangent);
-            return QuadBasis(bitangent, tangent, roll);
+            var reference = MathF.Abs(normal.Z) > 0.1f ? new Vector3(0f, -1f, 0f) : new Vector3(0f, 0f, 1f);
+            var up = Vector3.Normalize(Vector3.Cross(normal, reference));
+            var right = Vector3.Cross(up, normal);
+            return QuadBasis(right, up, roll);
         }
 
         // SCREENALIGN_TO_PARTICLE_NORMAL: the quad's right edge follows the particle normal while it turns toward
