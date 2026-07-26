@@ -70,7 +70,14 @@ uniform int uTextureBlendMode = 0; // MULTIPLY
 // The mask modes use Rec.601 weights, while the LUMINANCE blend below uses Rec.709 (GetLuma).
 const vec3 LUMA_601 = vec3(0.299, 0.587, 0.114);
 
+// m_bBlendFramesSeq0 / m_bMaxLuminanceBlendingSequence0. Gated on a uniform rather than on vFrameBlend
+// so that the second fetch sits in draw-uniform control flow.
+uniform int uBlendFrames = 0;
+uniform int uMaxLuminanceFrameBlend = 0;
+
 in vec2 vTexCoordOut;
+in vec2 vTexCoordNextFrameOut;
+in float vFrameBlend;
 in vec4 vColor;
 in vec3 vFragPosition;
 
@@ -143,6 +150,25 @@ void main(void) {
 
     float sub = float(uTextureBlendMode == SPRITECARD_TEXTURE_BLEND_SUBTRACT);
     vec4 layer = texture(uTexture, vTexCoordOut);
+
+    if (uBlendFrames != 0)
+    {
+        vec4 nextFrame = texture(uTexture, vTexCoordNextFrameOut);
+
+        if (uMaxLuminanceFrameBlend != 0)
+        {
+            // Weighting each frame by the square root of its luminance keeps the brighter one dominant
+            // through the cross-fade, so a spark does not dim as it passes between frames.
+            float weight = (1.0 - vFrameBlend) * sqrt(max(0.001, GetLuma(layer.rgb)));
+            float nextWeight = vFrameBlend * sqrt(max(0.001, GetLuma(nextFrame.rgb)));
+            layer = ((layer * weight) + (nextFrame * nextWeight)) / (weight + nextWeight);
+        }
+        else
+        {
+            layer = mix(layer, nextFrame, vFrameBlend);
+        }
+    }
+
     vec4 masked = ApplyChannelMask(accum, layer, uTextureChannels, sub);
     accum = max(ApplyLayerBlend(accum, masked, uTextureBlendMode), vec4(0.0));
 
