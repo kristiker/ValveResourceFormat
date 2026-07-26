@@ -137,7 +137,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             GL.Enable(EnableCap.Blend);
             GL.DepthMask(false);
 
-            if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ADD)
+            // MOD2X adds like ADD does; spritecard has no blend state that scales the destination.
+            if (blendMode is ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ADD
+                or ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_MOD2X)
             {
                 GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
             }

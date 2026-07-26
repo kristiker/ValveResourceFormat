@@ -33,12 +33,12 @@ void main(void) {
     vec3 finalColor = uColor * color.rgb;
     float blendingFactor = uOverbrightFactor * GetLuma(finalColor.rgb);
 
-    // Additive and mod2x contributions fade with fog density instead of tinting toward the fog color.
-    if (uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_MOD2X)
-    {
-        finalColor = mix(vec3(0.5), finalColor, GetFogAttenuation(vFragPosition)); // fades toward the blend-neutral 0.5
-    }
-    else if (uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD)
+    // MOD2X composites like ADD -- see the note in particle_sprite.frag.slang.
+    bool isAdditive = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD
+        || uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_MOD2X;
+
+    // Additive contributions fade with fog density instead of tinting toward the fog color.
+    if (isAdditive)
     {
         finalColor *= GetFogAttenuation(vFragPosition);
     }

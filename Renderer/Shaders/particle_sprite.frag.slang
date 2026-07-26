@@ -176,15 +176,14 @@ void main(void) {
 
     alpha *= vColor.a;
 
-    bool isAdditive = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD;
-    bool isMod2x = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_MOD2X;
+    // MOD2X composites like ADD. The modulate-2x in spritecard is a texture combiner inside the layer
+    // chain (SPRITECARD_TEXTURE_BLEND_MULTIPLY2X above), not a framebuffer op: every blend state the
+    // shader ships with is an Add with a One destination, so it never scales what is behind it.
+    bool isAdditive = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD
+        || uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_MOD2X;
 
-    // Additive and mod2x contributions fade with fog density instead of tinting toward the fog color.
-    if (isMod2x)
-    {
-        alpha *= GetFogAttenuation(vFragPosition); // fades the output toward the blend-neutral 0.5
-    }
-    else if (isAdditive)
+    // Additive contributions fade with fog density instead of tinting toward the fog color.
+    if (isAdditive)
     {
         finalColor *= GetFogAttenuation(vFragPosition);
     }
@@ -193,15 +192,8 @@ void main(void) {
         ApplyFog(finalColor, vFragPosition);
     }
 
-    if (isMod2x)
-    {
-        fragColor = vec4(mix(vec3(0.5), finalColor, vec3(alpha)), alpha);
-    }
-    else
-    {
-        // Premultiplied alpha; additive keeps the color term and zeroes the blend weight.
-        fragColor = vec4(finalColor * alpha, isAdditive ? 0.0 : alpha);
-    }
+    // Premultiplied alpha; additive keeps the color term and zeroes the blend weight.
+    fragColor = vec4(finalColor * alpha, isAdditive ? 0.0 : alpha);
 
     if (g_iRenderMode == renderMode_Color)
     {

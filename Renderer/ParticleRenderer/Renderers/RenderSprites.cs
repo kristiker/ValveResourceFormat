@@ -486,15 +486,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             GL.Enable(EnableCap.Blend);
             GL.DepthMask(false);
 
-            if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_MOD2X)
-            {
-                GL.BlendFunc(BlendingFactor.DstColor, BlendingFactor.SrcColor);
-            }
-            else
-            {
-                // Premultiplied output; the shader zeroes the blend weight for additive.
-                GL.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
-            }
+            // Premultiplied output; the shader zeroes the blend weight for the additive modes, which turns
+            // this into a plain add. Spritecard ships no blend state that scales the destination -- MOD2X
+            // included -- so there is no mode here that darkens what is behind the particle either.
+            GL.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
 
             GL.Disable(EnableCap.CullFace);
 
