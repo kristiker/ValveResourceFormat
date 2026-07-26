@@ -49,17 +49,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             blendMode = parse.Enum<ParticleBlendMode>("m_nOutputBlendMode", blendMode);
 
-            var shaderParams = new Dictionary<string, byte>();
-            if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ADD)
-            {
-                shaderParams["F_ADDITIVE_BLEND"] = 1;
-            }
-            else if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_MOD2X)
-            {
-                shaderParams["F_MOD2X"] = 1;
-            }
-
-            shader = RendererContext.ShaderLoader.LoadShader(ShaderName, shaderParams);
+            // The blend mode is a runtime uniform, not a static combo, so every sprite renderer shares one
+            // compiled program regardless of m_nOutputBlendMode.
+            shader = RendererContext.ShaderLoader.LoadShader(ShaderName);
 
             // The same quad is reused for all particles
             vaoHandle = SetupQuadBuffer();
@@ -419,6 +411,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 : new Vector2(1f, 0f);
             shader.SetUniform2("uAlphaRemapScaleBias", alphaRemapScaleBias);
             shader.SetUniform1("uTextureChannels", (int)textureChannels);
+
+            // Set every draw: the program is shared with every other sprite renderer, whatever their mode.
+            shader.SetUniform1("uBlendMode", (int)blendMode);
 
             // DRAW
             PerfStats.Active.Count(Counter.ParticleDraw);

@@ -6,8 +6,15 @@
 
 // Render modes -- Switched on/off by code
 #define renderMode_Color 0
-#define F_MOD2X 0 // global_lit_underlord_fx, spritecard, tower_range, tower_range_halo
-#define F_ADDITIVE_BLEND 0
+
+// ParticleBlendMode_t, mirroring Renderer/ParticleRenderer/Enums/ParticleBlendMode.cs. Only ALPHA, ADD
+// and MOD2X get distinct treatment here; the remaining modes fall back to ALPHA, exactly as they do on
+// the CPU side when picking the GL blend function. This is a runtime uniform rather than a static combo
+// because the branch is uniform across the draw and the real spritecard drives it from a control word
+// too -- one compiled variant instead of three.
+#define PARTICLE_OUTPUT_BLEND_MODE_ADD   1
+#define PARTICLE_OUTPUT_BLEND_MODE_MOD2X 5
+uniform int uBlendMode = 0; // PARTICLE_OUTPUT_BLEND_MODE_ALPHA
 
 uniform sampler2D uTexture;
 uniform float uOverbrightFactor;
@@ -61,24 +68,32 @@ void main(void) {
     float alpha = saturate(color.a * uAlphaRemapScaleBias.x + uAlphaRemapScaleBias.y);
     alpha *= vColor.a;
 
-#if (F_ADDITIVE_BLEND == 1) || (F_MOD2X == 1)
-    // Additive and mod2x contributions fade with fog density instead of tinting toward the fog color.
-    #if F_MOD2X
-    alpha *= GetFogAttenuation(vFragPosition); // fades the output toward the blend-neutral 0.5
-    #else
-    finalColor *= GetFogAttenuation(vFragPosition);
-    #endif
-#else
-    ApplyFog(finalColor, vFragPosition);
-#endif
+    bool isAdditive = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD;
+    bool isMod2x = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_MOD2X;
 
-#if F_MOD2X
-    fragColor = vec4(mix(vec3(0.5), finalColor, vec3(alpha)), alpha);
-#else
-    // Premultiplied alpha; additive keeps the color term and zeroes the blend weight.
-    float blendWeight = (F_ADDITIVE_BLEND == 1) ? 0.0 : 1.0;
-    fragColor = vec4(finalColor * alpha, alpha * blendWeight);
-#endif
+    // Additive and mod2x contributions fade with fog density instead of tinting toward the fog color.
+    if (isMod2x)
+    {
+        alpha *= GetFogAttenuation(vFragPosition); // fades the output toward the blend-neutral 0.5
+    }
+    else if (isAdditive)
+    {
+        finalColor *= GetFogAttenuation(vFragPosition);
+    }
+    else
+    {
+        ApplyFog(finalColor, vFragPosition);
+    }
+
+    if (isMod2x)
+    {
+        fragColor = vec4(mix(vec3(0.5), finalColor, vec3(alpha)), alpha);
+    }
+    else
+    {
+        // Premultiplied alpha; additive keeps the color term and zeroes the blend weight.
+        fragColor = vec4(finalColor * alpha, isAdditive ? 0.0 : alpha);
+    }
 
     if (g_iRenderMode == renderMode_Color)
     {

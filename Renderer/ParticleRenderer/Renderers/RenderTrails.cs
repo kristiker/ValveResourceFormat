@@ -46,17 +46,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             blendMode = parse.Enum<ParticleBlendMode>("m_nOutputBlendMode", blendMode);
 
-            var shaderParams = new Dictionary<string, byte>();
-            if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ADD)
-            {
-                shaderParams["F_ADDITIVE_BLEND"] = 1;
-            }
-            else if (blendMode == ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_MOD2X)
-            {
-                shaderParams["F_MOD2X"] = 1;
-            }
-
-            shader = RendererContext.ShaderLoader.LoadShader(ShaderName, shaderParams);
+            // The blend mode is a runtime uniform, not a static combo, so every trail renderer shares one
+            // compiled program regardless of m_nOutputBlendMode.
+            shader = RendererContext.ShaderLoader.LoadShader(ShaderName);
 
             // The same quad is reused for all particles
             var (quadVao, quadBuffer) = SetupQuadBuffer();
@@ -166,6 +158,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             // TODO: This formula is a guess but still seems too bright compared to valve particles
             // also todo: pass all of these as vertex parameters (probably just color/alpha combined)
             shader.SetUniform1("uOverbrightFactor", (float)overbrightFactor.NextNumber(systemRenderState));
+
+            // Set every draw: the program is shared with every other trail renderer, whatever their mode.
+            shader.SetUniform1("uBlendMode", (int)blendMode);
 
             // The moved distance is converted back to a velocity (distance / dt) before scaling by
             // the trail-length attribute, unless the operator opts out of the delta-time division.
