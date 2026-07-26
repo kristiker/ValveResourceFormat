@@ -28,10 +28,15 @@ namespace Tests
 
         private static (UserInput Input, Camera RenderCamera) CreateHeadlessFpsInput(float spawnHeight)
         {
+            // The loader and context live as long as the input they back, which the caller keeps
+            // for the duration of the test; there is nothing here to dispose at.
+#pragma warning disable CA2000
             var context = new RendererContext(new GameFileLoader(null, null), NullLogger.Instance);
-            var renderer = new Renderer(context);
+#pragma warning restore CA2000
+            // Fully qualified: the sibling Tests.Renderer namespace shadows the type name here
+            var renderer = new ValveResourceFormat.Renderer.Renderer(context);
             var input = new UserInput(renderer);
-            var renderCamera = new Camera(context);
+            var renderCamera = new Camera();
 
             // Leave noclip into FPS movement; the spawn height decides grounded vs airborne
             input.Camera.Location = new Vector3(0, 0, spawnHeight);
