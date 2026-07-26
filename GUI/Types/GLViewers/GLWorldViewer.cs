@@ -36,6 +36,16 @@ namespace GUI.Types.GLViewers
         private WorldNodeLoader? LoadedWorldNode;
         public WorldLoader? LoadedWorld;
 
+        private GLViewerSliderControl? exposureSlider;
+        private Label? exposureLabel;
+        private bool userChangedExposure;
+        private float postLoadRefreshRemaining;
+        private float postLoadRefreshCooldown;
+
+        /// <summary>How long UI mirroring renderer state keeps refreshing once the scene starts rendering.</summary>
+        private const float PostLoadUiRefreshDuration = 2f;
+        private const float PostLoadUiRefreshInterval = 0.1f;
+
         public GLWorldViewer(VrfGuiContext vrfGuiContext, RendererContext rendererContext, World world, ResourceExtRefList? externalReferences = null)
             : base(vrfGuiContext, rendererContext)
         {
@@ -59,33 +69,69 @@ namespace GUI.Types.GLViewers
             cameraComboBox?.Dispose();
             savedCameraPositionsControl?.Dispose();
             entityInfoForm?.Dispose();
+            exposureSlider?.Dispose();
+            exposureLabel?.Dispose();
         }
 
         private void AddSceneExposureSlider()
         {
             Debug.Assert(UiControl != null);
 
-            var exposureLabel = new Label();
-            void UpdateExposureText(float exposure)
-            {
-                exposureLabel.Text = $"Exposure: {exposure:0.00}";
-            }
-
+            exposureLabel = new Label();
             UiControl.AddControl(exposureLabel);
 
-            var exposureSlider = UiControl.AddTrackBar((exposureAmount) =>
+            exposureSlider = UiControl.AddTrackBar((exposureAmount) =>
             {
                 var exposure = exposureAmount * 10;
-                UpdateExposureText(exposure);
+                DisplayExposure(exposure);
                 Renderer.Postprocess.CustomExposure = exposure;
 
                 // also set auto exposure to off for debugging, in case this is slowing things down
                 Renderer.Postprocess.State = Renderer.Postprocess.State with { ExposureSettings = Renderer.Postprocess.State.ExposureSettings with { AutoExposureEnabled = false } };
+
+                userChangedExposure = true;
             });
 
-            var sceneExposure = Renderer.Postprocess.CurrentExposure;
-            exposureSlider.Slider.Value = sceneExposure / 10;
-            UpdateExposureText(sceneExposure);
+            DisplayExposure(Renderer.Postprocess.CurrentExposure);
+        }
+
+        /// <remarks>
+        /// Assigning <see cref="Slider.Value"/> does not raise its ValueChanged, that only happens on user
+        /// interaction, so this does not set CustomExposure or switch auto exposure off.
+        /// </remarks>
+        private void DisplayExposure(float exposure)
+        {
+            Debug.Assert(exposureSlider != null && exposureLabel != null);
+
+            exposureSlider.Slider.Value = exposure / 10f;
+            exposureLabel.Text = $"Exposure: {exposure:0.00}";
+        }
+
+        /// <summary>
+        /// Refreshes UI that mirrors renderer state which only settles after a few frames of rendering,
+        /// at a lower rate than the render loop.
+        /// </summary>
+        private void RefreshPostLoadUi(float frameTime)
+        {
+            if (postLoadRefreshRemaining <= 0f)
+            {
+                return;
+            }
+
+            postLoadRefreshRemaining -= frameTime;
+            postLoadRefreshCooldown -= frameTime;
+
+            if (postLoadRefreshCooldown > 0f)
+            {
+                return;
+            }
+
+            postLoadRefreshCooldown = PostLoadUiRefreshInterval;
+
+            if (exposureSlider != null && !userChangedExposure)
+            {
+                DisplayExposure(Renderer.Postprocess.TonemapScalar);
+            }
         }
 
         private void OnGetOrSetPositionFromClipboardRequest(object? sender, bool isSetRequest)
@@ -233,6 +279,15 @@ namespace GUI.Types.GLViewers
 
             Input.MoveCamera(new Vector3(0, -150f, 0));
             Input.MoveCamera(new Vector3(0, 150f, 0), transition: true);
+
+            postLoadRefreshRemaining = PostLoadUiRefreshDuration;
+        }
+
+        protected override void OnUpdate(float frameTime)
+        {
+            base.OnUpdate(frameTime);
+
+            RefreshPostLoadUi(frameTime);
         }
 
         protected override void AddUiControls()
