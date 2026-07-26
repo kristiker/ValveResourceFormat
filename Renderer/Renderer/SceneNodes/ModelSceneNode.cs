@@ -101,7 +101,11 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <summary>Stand-in for the scene mirror while this model has no transform slot, so the bounding
         /// box a skinning write refreshes stays correct until it gets one.</summary>
         private OpenTK.Mathematics.Matrix3x4[]? skinningScratch;
-        private bool skinningTransformsDirty;
+
+        /// <summary>Ring slots still holding a pose older than this model's current one. The transform
+        /// buffer keeps several frames live at once, so a pose has to be written into every slot before
+        /// the model can go quiet, or rotating round to an unwritten slot would flick it back.</summary>
+        private int staleTransformSlots;
 
         /// <summary>Set once <see cref="UpdateParallel"/> has run for this frame, so <see cref="Update"/>
         /// knows whether it still has to evaluate the pose itself.</summary>
@@ -282,9 +286,18 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             UpdateAutoLod(context.Camera);
             var animationUpdated = AnimationController.Update(context.Timestep);
 
-            if (IsAnimated && (animationUpdated || transformDirty))
+            if (IsAnimated)
             {
-                ComputeSkinningTransforms();
+                if (animationUpdated || transformDirty)
+                {
+                    staleTransformSlots = Scene.TransformRingSlots;
+                }
+
+                if (staleTransformSlots > 0)
+                {
+                    ComputeSkinningTransforms();
+                    staleTransformSlots--;
+                }
             }
 
             transformDirty = false;
@@ -322,6 +335,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             else if (IsAnimated && transformDirty)
             {
                 // Moved after the threaded pass ran; the skinning matrices fold in the object transform
+                staleTransformSlots = Scene.TransformRingSlots - 1;
                 ComputeSkinningTransforms();
                 transformDirty = false;
             }
@@ -554,17 +568,6 @@ namespace ValveResourceFormat.Renderer.SceneNodes
             }
 
             WriteSkinningTransforms(slice);
-            skinningTransformsDirty = true;
-        }
-
-        /// <summary>
-        /// Reads and clears the flag saying this model reposed and its buffer range still needs sending.
-        /// </summary>
-        internal bool ConsumeSkinningTransformsDirty()
-        {
-            var dirty = skinningTransformsDirty;
-            skinningTransformsDirty = false;
-            return dirty;
         }
 
         /// <summary>

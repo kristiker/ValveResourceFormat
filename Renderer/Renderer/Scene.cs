@@ -182,11 +182,17 @@ namespace ValveResourceFormat.Renderer
         /// off the render thread and the changed ranges go up together.</summary>
         private readonly List<OpenTK.Mathematics.Matrix3x4> transformDataCpu = [];
 
-        /// <summary>Skinned models in ascending <see cref="ModelSceneNode.TransformSlot"/> order.</summary>
-        private readonly List<ModelSceneNode> skinnedModels = [];
+        /// <summary>
+        /// Frames of transform data the buffer holds at once. Models write straight into the mapped
+        /// storage, so a slot cannot be reused until the GPU has finished reading it; the fence below
+        /// enforces that at any count, and three is enough that the wait is normally already satisfied,
+        /// drivers queueing about that many frames ahead.
+        /// </summary>
+        internal const int TransformRingSlots = 3;
 
-        /// <summary>How many untouched slots are worth re-uploading to avoid splitting one call in two.</summary>
-        private const int MaxTransformUploadGap = 64;
+        private readonly IntPtr[] transformRingFences = new IntPtr[TransformRingSlots];
+        private int transformRingSlot;
+        private int transformSlotBytes;
 
         /// <summary>Nodes claimed at a time. Large enough to amortize the interlocked handoff, small
         /// enough that a few heavy skeletons landing together do not strand a thread at the end.</summary>
@@ -342,7 +348,6 @@ namespace ValveResourceFormat.Renderer
             parallelUpdateNodes.Clear();
             parallelUpdateNodesDirty = true;
 
-            skinnedModels.Clear();
             transformDataCpu.Clear();
 
             StaticOctree.Clear();
@@ -414,6 +419,12 @@ namespace ValveResourceFormat.Renderer
         /// <param name="updateContext">Per-frame context data including camera and timestep.</param>
         public void Update(Scene.UpdateContext updateContext)
         {
+            // Before anything writes: picks this frame's slot and makes sure the GPU is done with it
+            using (new GLDebugGroup("Transform Ring"))
+            {
+                AdvanceTransformRing();
+            }
+
             using (new GLDebugGroup("Poses (threaded)"))
             {
                 UpdateNodesParallel(updateContext);
@@ -451,10 +462,7 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            using (new GLDebugGroup("Transform Upload"))
-            {
-                FlushSkinningTransforms();
-            }
+
 
             if (StaticOctree.Dirty || DynamicNodeSet.Dirty)
             {
@@ -649,11 +657,10 @@ namespace ValveResourceFormat.Renderer
             {
                 InstanceBufferGpu?.Delete();
                 TransformBufferGpu?.Delete();
+                ResetTransformRing();
             }
 
             var nodes = AllNodes.ToList();
-
-            skinnedModels.Clear();
 
             if (nodes.Count == 0)
             {
@@ -723,10 +730,6 @@ namespace ValveResourceFormat.Renderer
 
                     skinnedModel.TransformSlot = transformIndex;
                     skinnedModel.WriteSkinningTransforms(CollectionsMarshal.AsSpan(transformData).Slice((int)transformIndex, skinningSlotCount));
-
-                    // Built here so it comes out in ascending slot order, which is what lets the
-                    // per-frame flush merge neighbouring models into one upload
-                    skinnedModels.Add(skinnedModel);
                 }
 
                 instanceData[node.Id] = new ObjectDataStandard
@@ -740,18 +743,75 @@ namespace ValveResourceFormat.Renderer
             }
 
             InstanceBufferGpu = new StorageBuffer(ReservedBufferSlots.Objects);
-            TransformBufferGpu = new StorageBuffer(ReservedBufferSlots.Transforms);
-
             InstanceBufferGpu.Create(instanceData, BufferUsageHint.StaticDraw);
 
-            // Dynamic: animated models stream their skinning matrices into it every frame
-            TransformBufferGpu.Create(TransformMirror, BufferUsageHint.DynamicDraw);
+            // Mapped for the buffer's lifetime and never uploaded to again: animated models write their
+            // skinning matrices into it directly, from the thread pool, into slices that never overlap.
+            transformSlotBytes = transformDataCpu.Count * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
+            TransformBufferGpu = StorageBuffer.AllocatePersistentWrite(ReservedBufferSlots.Transforms, transformSlotBytes * TransformRingSlots);
 
-            // Everything just went up in full, so nothing is outstanding
-            foreach (var model in skinnedModels)
+            // Every slot starts with the whole table, so the ones a model never writes to are still right
+            for (var slot = 0; slot < TransformRingSlots; slot++)
             {
-                model.ConsumeSkinningTransformsDirty();
+                TransformMirror.CopyTo(TransformBufferGpu.GetMappedSpan<OpenTK.Mathematics.Matrix3x4>(slot * transformSlotBytes, transformDataCpu.Count));
             }
+
+            BindTransformRingSlot();
+        }
+
+        /// <summary>Drops any outstanding fences, for when the buffer they guarded is going away.</summary>
+        private void ResetTransformRing()
+        {
+            for (var i = 0; i < transformRingFences.Length; i++)
+            {
+                if (transformRingFences[i] != IntPtr.Zero)
+                {
+                    GL.DeleteSync(transformRingFences[i]);
+                    transformRingFences[i] = IntPtr.Zero;
+                }
+            }
+
+            transformRingSlot = 0;
+        }
+
+        private void BindTransformRingSlot()
+        {
+            if (TransformBufferGpu == null)
+            {
+                return;
+            }
+
+            TransformBufferGpu.BindRangeOffset = transformRingSlot * transformSlotBytes;
+            TransformBufferGpu.BindRangeSize = transformSlotBytes;
+        }
+
+        /// <summary>
+        /// Moves to the next slot for this frame's writes, first fencing the one the previous frame
+        /// wrote, whose draws have since been submitted, and then waiting on whatever fence the slot
+        /// being moved to still carries.
+        /// </summary>
+        private void AdvanceTransformRing()
+        {
+            if (TransformBufferGpu == null || transformSlotBytes == 0)
+            {
+                return;
+            }
+
+            transformRingFences[transformRingSlot] = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, 0);
+
+            transformRingSlot = (transformRingSlot + 1) % TransformRingSlots;
+
+            var fence = transformRingFences[transformRingSlot];
+
+            if (fence != IntPtr.Zero)
+            {
+                // Only actually blocks when the GPU is more than a couple of frames behind
+                GL.ClientWaitSync(fence, ClientWaitSyncFlags.SyncFlushCommandsBit, long.MaxValue);
+                GL.DeleteSync(fence);
+                transformRingFences[transformRingSlot] = IntPtr.Zero;
+            }
+
+            BindTransformRingSlot();
         }
 
         /// <summary>
@@ -759,76 +819,14 @@ namespace ValveResourceFormat.Renderer
         /// Slices never overlap, so models can fill their own from the thread pool.
         /// </summary>
         internal Span<OpenTK.Mathematics.Matrix3x4> GetTransformSlice(uint slot, int length)
-            => slot != 0 && (int)slot + length <= transformDataCpu.Count
-                ? TransformMirror.Slice((int)slot, length)
+            => slot != 0 && (int)slot + length <= transformDataCpu.Count && TransformBufferGpu != null
+                ? TransformBufferGpu.GetMappedSpan<OpenTK.Mathematics.Matrix3x4>(
+                    (transformRingSlot * transformSlotBytes) + ((int)slot * Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>()), length)
                 : [];
 
         /// <summary>The mirror as a span. Only valid until the list is resized, which happens on a
         /// buffer rebuild and nowhere else.</summary>
         private Span<OpenTK.Mathematics.Matrix3x4> TransformMirror => CollectionsMarshal.AsSpan(transformDataCpu);
-
-        /// <summary>
-        /// Streams every model that reposed this frame to the GPU, merging neighbours into single
-        /// uploads. One <c>glNamedBufferSubData</c> per model costs milliseconds of driver time once
-        /// there are a few hundred of them, and animated models sit next to each other in the buffer.
-        /// </summary>
-        private void FlushSkinningTransforms()
-        {
-            if (TransformBufferGpu == null || transformDataCpu.Count == 0)
-            {
-                return;
-            }
-
-            var runStart = -1;
-            var runEnd = -1;
-
-            foreach (var model in skinnedModels)
-            {
-                if (!model.ConsumeSkinningTransformsDirty())
-                {
-                    continue;
-                }
-
-                var start = (int)model.TransformSlot;
-                var end = start + model.BoneTransformCount + (int)ModelSceneNode.BoneTransformStart;
-
-                if (start == 0 || end > transformDataCpu.Count)
-                {
-                    continue; // no slot assigned yet, or stale between buffer rebuilds
-                }
-
-                if (runStart < 0)
-                {
-                    (runStart, runEnd) = (start, end);
-                    continue;
-                }
-
-                // The mirror is current for every slot, so bridging a small gap re-sends data that is
-                // already correct. One call over a few stale slots beats two calls.
-                if (start - runEnd <= MaxTransformUploadGap)
-                {
-                    runEnd = Math.Max(runEnd, end);
-                    continue;
-                }
-
-                UploadTransformRange(runStart, runEnd);
-                (runStart, runEnd) = (start, end);
-            }
-
-            if (runStart >= 0)
-            {
-                UploadTransformRange(runStart, runEnd);
-            }
-        }
-
-        private void UploadTransformRange(int start, int end)
-        {
-            Debug.Assert(TransformBufferGpu != null);
-
-            var slotSize = Unsafe.SizeOf<OpenTK.Mathematics.Matrix3x4>();
-
-            TransformBufferGpu.Update<OpenTK.Mathematics.Matrix3x4>(TransformMirror.Slice(start, end - start), start * slotSize);
-        }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)
         {
@@ -2237,6 +2235,7 @@ namespace ValveResourceFormat.Renderer
                 lpvBuffer?.Dispose();
                 envMapBuffer?.Dispose();
                 parallelUpdateDone.Dispose();
+                ResetTransformRing();
                 LightingInfo.DisposeBarnLights();
             }
         }

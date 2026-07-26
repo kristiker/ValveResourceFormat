@@ -42,6 +42,47 @@ namespace ValveResourceFormat.Renderer.Buffers
             return buffer;
         }
 
+        /// <summary>
+        /// Allocates immutable storage that stays mapped for the buffer's lifetime, so the CPU can write
+        /// straight into memory the GPU reads with no upload step at all.
+        /// </summary>
+        /// <remarks>
+        /// Never read back through the mapping. It is typically write combined, where reads run orders of
+        /// magnitude slower than writes. Writes are also only ordered against the GPU by a fence, so the
+        /// caller is responsible for not overwriting a region the GPU has not finished reading.
+        /// </remarks>
+        /// <param name="bindingPoint">The reserved slot to bind the buffer to.</param>
+        /// <param name="sizeInBytes">Total size to allocate.</param>
+        public static StorageBuffer AllocatePersistentWrite(ReservedBufferSlots bindingPoint, int sizeInBytes)
+        {
+            const BufferStorageFlags Storage = BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit;
+            const BufferAccessMask Access = BufferAccessMask.MapWriteBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit;
+
+            var buffer = new StorageBuffer(bindingPoint) { Size = sizeInBytes };
+
+            GL.NamedBufferStorage(buffer.Handle, sizeInBytes, IntPtr.Zero, Storage);
+            buffer.PersistentPtr = GL.MapNamedBufferRange(buffer.Handle, IntPtr.Zero, sizeInBytes, Access);
+
+            return buffer;
+        }
+
+        /// <summary>
+        /// A window onto the mapped storage, for writing only. Empty when the buffer is not mapped.
+        /// </summary>
+        /// <param name="byteOffset">Offset into the buffer.</param>
+        /// <param name="count">Number of elements the window covers.</param>
+        public unsafe Span<T> GetMappedSpan<T>(int byteOffset, int count) where T : unmanaged
+        {
+            if (PersistentPtr == IntPtr.Zero)
+            {
+                return [];
+            }
+
+            Debug.Assert(byteOffset + (count * sizeof(T)) <= Size);
+
+            return new Span<T>((void*)(PersistentPtr + byteOffset), count);
+        }
+
         /// <summary>Uploads the contents of a list to this buffer, replacing any existing data.</summary>
         public void Create<T>(List<T> data) where T : struct
         {

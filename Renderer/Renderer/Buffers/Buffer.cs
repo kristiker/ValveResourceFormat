@@ -34,9 +34,22 @@ namespace ValveResourceFormat.Renderer.Buffers
 #endif
         }
 
-        /// <summary>Binds this buffer to its binding point using <c>glBindBufferBase</c>.</summary>
+        /// <summary>Size of the sub range this buffer binds, or 0 to bind all of it. Set when the buffer
+        /// holds several frames' worth of data and only one of them is being rendered from.</summary>
+        public int BindRangeSize { get; set; }
+
+        /// <summary>Offset of the sub range described by <see cref="BindRangeSize"/>.</summary>
+        public int BindRangeOffset { get; set; }
+
+        /// <summary>Binds this buffer, or its active sub range, to its binding point.</summary>
         public void BindBufferBase()
         {
+            if (BindRangeSize > 0)
+            {
+                GL.BindBufferRange((BufferRangeTarget)Target, BindingPoint, Handle, BindRangeOffset, BindRangeSize);
+                return;
+            }
+
             GL.BindBufferBase((BufferRangeTarget)Target, BindingPoint, Handle);
         }
 
