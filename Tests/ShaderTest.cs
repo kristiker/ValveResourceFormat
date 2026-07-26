@@ -494,6 +494,39 @@ namespace Tests
             Assert.That(code, Is.EqualTo(reference).IgnoreWhiteSpace, $"Spirv reflection output does not match reference.");
         }
 
+        private static IEnumerable<TestCaseData> Clamp01TestCases()
+        {
+            // The clamped expression routinely contains calls and their commas.
+            yield return new TestCaseData("clamp(x, 0.0, 1.0)", "saturate(x)");
+            yield return new TestCaseData("clamp(-x, 0.0, 1.0)", "saturate(-x)");
+            yield return new TestCaseData("clamp(dot(a, b), 0.0, 1.0)", "saturate(dot(a, b))");
+            yield return new TestCaseData("clamp(1.0 - dot(a.xy, a.xy), 0.0, 1.0)", "saturate(1.0 - dot(a.xy, a.xy))");
+            yield return new TestCaseData("clamp((f(a) - b) / (g(c, d) - b), 0.0, 1.0)", "saturate((f(a) - b) / (g(c, d) - b))");
+
+            // Both backends' spelling of the bounds, including the hlsl float suffix.
+            yield return new TestCaseData("clamp(x, 0.0f, 1.0f)", "saturate(x)");
+            yield return new TestCaseData("clamp(x, 0, 1)", "saturate(x)");
+            yield return new TestCaseData("clamp(x, vec3(0.0), vec3(1.0))", "saturate(x)");
+            yield return new TestCaseData("clamp(x, float4(0.0f, 0.0f, 0.0f, 0.0f), float4(1.0f, 1.0f, 1.0f, 1.0f))", "saturate(x)");
+
+            // Nested clamps need more than one pass, Replace resumes after the outer match.
+            yield return new TestCaseData("clamp(min(m, pow(clamp(x, 0.0, 1.0), e)), 0.0, 1.0)", "saturate(min(m, pow(saturate(x), e)))");
+
+            // Anything that is not a 0..1 clamp has to survive untouched.
+            yield return new TestCaseData("clamp(x, 0.0, 0.5)", "clamp(x, 0.0, 0.5)");
+            yield return new TestCaseData("clamp(x, 0.5, 1.0)", "clamp(x, 0.5, 1.0)");
+            yield return new TestCaseData("clamp(x, 10.0, 1.0)", "clamp(x, 10.0, 1.0)");
+            yield return new TestCaseData("clamp(x, 0.05, 1.0)", "clamp(x, 0.05, 1.0)");
+            yield return new TestCaseData("clamp(x, y, 1.0)", "clamp(x, y, 1.0)");
+            yield return new TestCaseData("unclamped(x, 0.0, 1.0)", "unclamped(x, 0.0, 1.0)");
+        }
+
+        [Test, TestCaseSource(nameof(Clamp01TestCases))]
+        public void TestClamp01Rewrite(string input, string expected)
+        {
+            Assert.That(ShaderSpirvReflection.ReplaceCommonPatterns(input), Is.EqualTo(expected));
+        }
+
         [Test]
         public void TestComboResolver()
         {

@@ -271,6 +271,10 @@ public class VfxShaderFileVulkan : VfxShaderFile
     public override string GetDecompiledFile()
         => GetDecompiledFile(backend: null, SpirvReflectionOptions.Default);
 
+    /// <inheritdoc/>
+    public override string GetDecompiledFile(SpirvReflectionOptions options)
+        => GetDecompiledFile(backend: null, options);
+
     /// <summary>
     /// Decompiles SPIR-V bytecode to a specific target language.
     /// </summary>

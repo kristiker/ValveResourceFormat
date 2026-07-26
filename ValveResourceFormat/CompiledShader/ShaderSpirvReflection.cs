@@ -800,7 +800,7 @@ public static partial class ShaderSpirvReflection
         """, RegexOptions.IgnorePatternWhitespace)]
     private static partial Regex Clamp01();
 
-    private static string ReplaceCommonPatterns(string code)
+    internal static string ReplaceCommonPatterns(string code)
     {
         // Replace() resumes after each match, so a clamp nested inside another one is skipped on the first
         // pass. Repeat until the code stops changing, one level of nesting gets folded per pass.
