@@ -81,21 +81,31 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
             // thirtieth of a second and a few degrees apart, where that costs under a tenth of a degree
             // and Slerp's acos and sines are most of what it takes to pose a model. Blending between
             // clips is the case that needs the real thing, and still uses it: see FrameBone.Blend.
-            for (var i = 0; i < frame1.Bones.Length; i++)
+            // Held in locals and written whole. FrameBone's members are auto properties behind an array
+            // property, so assigning the three of them in place costs three getters and three bounds
+            // checks a bone, which at this call rate is most of what the loop does.
+            var sourceBones1 = frame1.Bones;
+            var sourceBones2 = frame2.Bones;
+            var destinationBones = InterpolatedFrame.Bones;
+
+            for (var i = 0; i < sourceBones1.Length; i++)
             {
-                var frame1Bone = frame1.Bones[i];
-                var frame2Bone = frame2.Bones[i];
-                InterpolatedFrame.Bones[i].Position = Vector3.Lerp(frame1Bone.Position, frame2Bone.Position, t);
-                InterpolatedFrame.Bones[i].Angle = Quaternion.Lerp(frame1Bone.Angle, frame2Bone.Angle, t);
-                InterpolatedFrame.Bones[i].Scale = float.Lerp(frame1Bone.Scale, frame2Bone.Scale, t);
+                var frame1Bone = sourceBones1[i];
+                var frame2Bone = sourceBones2[i];
+
+                destinationBones[i] = new FrameBone(
+                    Vector3.Lerp(frame1Bone.Position, frame2Bone.Position, t),
+                    float.Lerp(frame1Bone.Scale, frame2Bone.Scale, t),
+                    Quaternion.Lerp(frame1Bone.Angle, frame2Bone.Angle, t));
             }
 
-            for (var i = 0; i < frame1.Datas.Length; i++)
-            {
-                var frame1Data = frame1.Datas[i];
-                var frame2Data = frame2.Datas[i];
+            var sourceDatas1 = frame1.Datas;
+            var sourceDatas2 = frame2.Datas;
+            var destinationDatas = InterpolatedFrame.Datas;
 
-                InterpolatedFrame.Datas[i] = float.Lerp(frame1Data, frame2Data, t);
+            for (var i = 0; i < sourceDatas1.Length; i++)
+            {
+                destinationDatas[i] = float.Lerp(sourceDatas1[i], sourceDatas2[i], t);
             }
 
             if (anim.HasMovementData())
