@@ -27,6 +27,11 @@ uniform sampler2D uTextureLayer4;
 uniform float uOverbrightFactor;
 uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
 uniform float uDesaturation = 0.0; // m_flDesaturation
+
+// The control point named by m_nHSVShiftControlPoint supplies a hue offset in turns plus saturation and
+// value scales. Disabled when the offset is 0 and both scales are 1, which is what an absent control
+// point resolves to.
+uniform vec3 uHsvShift = vec3(0.0, 1.0, 1.0);
 // m_flSourceAlphaValueToMapToZero and m_flSourceAlphaValueToMapToOne. The real spritecard smoothsteps
 // between the two bounds rather than applying a linear scale and bias, and skips the remap unless the
 // range increases -- so x >= y disables it, which is the default here.
@@ -138,6 +143,53 @@ vec4 ApplyChannelMask(vec4 accum, vec4 layer, int maskMode, float sub)
     return layer; // MIX_RGBA, and anything unrecognised
 }
 
+// Shifts the hue and scales saturation and value, going through HSV and back. Ported from the spritecard
+// pixel shader, which rolls its own conversion rather than using a library one.
+vec3 ApplyHsvShift(vec3 rgb)
+{
+    float valueMax = max(rgb.r, max(rgb.g, rgb.b));
+    float chroma = valueMax - min(rgb.r, min(rgb.g, rgb.b));
+
+    vec3 hsv = vec3(0.0, 0.0, valueMax);
+
+    if (chroma != 0.0)
+    {
+        vec3 distance = (vec3(valueMax) - rgb) / vec3(chroma);
+        vec3 delta = distance - distance.zxy;
+
+        // Which sixth of the hue wheel the largest channel puts us in.
+        if (rgb.r >= valueMax)      { hsv = vec3(delta.z,       chroma / valueMax, valueMax); }
+        else if (rgb.g >= valueMax) { hsv = vec3(delta.x + 2.0, chroma / valueMax, valueMax); }
+        else                        { hsv = vec3(delta.y + 4.0, chroma / valueMax, valueMax); }
+
+        hsv.x = fract(hsv.x * (1.0 / 6.0));
+    }
+
+    float hue = fract(hsv.x + uHsvShift.x);
+    vec2 satVal = saturate(hsv.yz * uHsvShift.yz);
+
+    if (satVal.x == 0.0)
+    {
+        return vec3(satVal.y);
+    }
+
+    float sector = hue * 6.0;
+    float index = floor(sector);
+    float f = sector - index;
+
+    float p = satVal.y * (1.0 - satVal.x);
+    float q = satVal.y * (1.0 - (satVal.x * f));
+    float t = satVal.y * (1.0 - (satVal.x * (1.0 - f)));
+
+    if (index == 0.0) { return vec3(satVal.y, t, p); }
+    if (index == 1.0) { return vec3(q, satVal.y, p); }
+    if (index == 2.0) { return vec3(p, satVal.y, t); }
+    if (index == 3.0) { return vec3(p, q, satVal.y); }
+    if (index == 4.0) { return vec3(t, p, satVal.y); }
+
+    return vec3(satVal.y, p, q);
+}
+
 // GLSL cannot return an opaque texture, so the per-layer choice happens at the fetch itself.
 vec4 SampleLayer(int layer, vec2 uv)
 {
@@ -228,6 +280,11 @@ void main(void) {
 
         finalColor = mix(finalColor, uOutlineColor.rgb, outlineRamp);
         alpha = mix(alpha, uOutlineColor.a, outlineRamp);
+    }
+
+    if (uHsvShift != vec3(0.0, 1.0, 1.0))
+    {
+        finalColor = ApplyHsvShift(finalColor);
     }
 
     // Pulls the whole card toward its own luminance. Sits after the outline, so the overlay desaturates

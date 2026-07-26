@@ -77,6 +77,8 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly INumberProvider overbrightFactor = new LiteralNumberProvider(1);
         private readonly ParticleOrientation orientationType;
         private readonly INumberProvider desaturation = new LiteralNumberProvider(0);
+        // -1 means no control point, so no shift.
+        private readonly int hsvShiftControlPoint = -1;
         private readonly INumberProvider diffuseAmount = new LiteralNumberProvider(1);
         private readonly INumberProvider selfIllumAmount = new LiteralNumberProvider(0);
         private readonly INumberProvider alphaMapToZero = new LiteralNumberProvider(0);
@@ -174,6 +176,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             radiusScale = parse.NumberProvider("m_flRadiusScale", radiusScale);
             alphaScale = parse.NumberProvider("m_flAlphaScale", alphaScale);
             desaturation = parse.NumberProvider("m_flDesaturation", desaturation);
+            hsvShiftControlPoint = parse.Int32("m_nHSVShiftControlPoint", hsvShiftControlPoint);
             diffuseAmount = parse.NumberProvider("m_flDiffuseAmount", diffuseAmount);
             selfIllumAmount = parse.NumberProvider("m_flSelfIllumAmount", selfIllumAmount);
             alphaMapToZero = parse.NumberProvider("m_flSourceAlphaValueToMapToZero", alphaMapToZero);
@@ -581,6 +584,11 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             shader.SetUniform1("uOverbrightFactor", overbrightFactor.NextNumber(systemRenderState));
             shader.SetUniform1("uColorFactor", diffuseAmount.NextNumber(systemRenderState) + selfIllumAmount.NextNumber(systemRenderState));
             shader.SetUniform1("uDesaturation", desaturation.NextNumber(systemRenderState));
+
+            // The control point carries (hue offset, saturation scale, value scale). Identity when absent.
+            shader.SetUniform3("uHsvShift", hsvShiftControlPoint >= 0
+                ? systemRenderState.GetControlPoint(hsvShiftControlPoint).Position
+                : new Vector3(0f, 1f, 1f));
 
             // x >= y disables the remap in the shader.
             var alphaRemapRange = hasAlphaRemap
