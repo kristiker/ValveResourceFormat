@@ -44,6 +44,8 @@ public enum ReservedBufferSlots
     CompactedCounts = 9,
     /// <summary>Compaction request descriptors SSBO slot.</summary>
     CompactionRequests = 10,
+    /// <summary>Compaction request counts SSBO slot.</summary>
+    Unused = 11,
     /// <summary>Barn light constants SSBO slot.</summary>
     BarnLights = 12,
 
