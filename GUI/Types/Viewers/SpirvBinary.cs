@@ -1,6 +1,7 @@
 using System.IO;
 using System.Threading.Tasks;
 using GUI.Utils;
+using ValveResourceFormat.CompiledShader;
 
 namespace GUI.Types.Viewers
 {
@@ -33,8 +34,8 @@ namespace GUI.Types.Viewers
                 stream.ReadExactly(input);
             }
 
-            var shaderFileVulkan = new ValveResourceFormat.CompiledShader.VfxShaderFileVulkan(input);
-            code = shaderFileVulkan.GetDecompiledFile();
+            var shaderFileVulkan = new VfxShaderFileVulkan(input);
+            code = shaderFileVulkan.GetDecompiledFile(SpirvReflectionOptions.Clean);
         }
 
         public ViewerContent GetContent()

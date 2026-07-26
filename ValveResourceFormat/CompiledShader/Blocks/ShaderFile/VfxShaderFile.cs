@@ -54,6 +54,12 @@ public abstract class VfxShaderFile : ShaderDataBlock
     public abstract string GetDecompiledFile();
 
     /// <summary>
+    /// Decompiles the shader to source code, post-processed as requested.
+    /// </summary>
+    /// <param name="options">Only honoured by platforms that decompile through SPIR-V reflection.</param>
+    public virtual string GetDecompiledFile(SpirvReflectionOptions options) => GetDecompiledFile();
+
+    /// <summary>
     /// Checks if the shader is empty.
     /// </summary>
     public bool IsEmpty()
