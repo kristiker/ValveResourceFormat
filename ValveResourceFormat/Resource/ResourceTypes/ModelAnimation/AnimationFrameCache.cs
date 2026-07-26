@@ -75,13 +75,18 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
             Debug.Assert(frame1.FrameIndex == frameIndex);
             Debug.Assert(frame2.FrameIndex == nextFrameIndex);
 
-            // Interpolate bone positions, angles and scale
+            // Interpolate bone positions, angles and scale.
+            // Quaternion.Lerp normalizes and takes the shortest arc, differing from Slerp only in sweeping
+            // at a non-constant angular rate. These two frames are adjacent within one animation, a
+            // thirtieth of a second and a few degrees apart, where that costs under a tenth of a degree
+            // and Slerp's acos and sines are most of what it takes to pose a model. Blending between
+            // clips is the case that needs the real thing, and still uses it: see FrameBone.Blend.
             for (var i = 0; i < frame1.Bones.Length; i++)
             {
                 var frame1Bone = frame1.Bones[i];
                 var frame2Bone = frame2.Bones[i];
                 InterpolatedFrame.Bones[i].Position = Vector3.Lerp(frame1Bone.Position, frame2Bone.Position, t);
-                InterpolatedFrame.Bones[i].Angle = Quaternion.Slerp(frame1Bone.Angle, frame2Bone.Angle, t);
+                InterpolatedFrame.Bones[i].Angle = Quaternion.Lerp(frame1Bone.Angle, frame2Bone.Angle, t);
                 InterpolatedFrame.Bones[i].Scale = float.Lerp(frame1Bone.Scale, frame2Bone.Scale, t);
             }
 
