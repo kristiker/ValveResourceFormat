@@ -40,9 +40,13 @@ Build the CLI first (`dotnet build CLI/CLI.csproj -c Debug`), it lands in `CLI/b
 
 ## Traps
 
-- **VCS 71 has no constant buffer member names.** Members come out as `_m0`. Re-decompile the same combo
-  with `--shader_backend hlsl` to read each member's `packoffset`, name them from use, and keep the
-  offsets in a comment.
+- **VCS 71 has no constant buffer member names,** so members come out as `_m0`. Get the real ones from the
+  DirectX build, whose reflection chunk keeps them:
+  `--shader_cbuffers` on the `_pc_` copy in `shaders_pc_dir.vpk` prints every buffer's members at their
+  `packoffset`, plus the real texture and sampler names. Both builds compile the same source so the offsets
+  agree; only bind points differ. Reflection is stripped per program, so if the one you want is missing, try
+  the sibling program — a vertex program often declares the pixel program's buffers too. Failing that, fall
+  back to `--shader_backend hlsl` for the offsets and name members from use.
 - **Vertex input names can be wrong.** They are assigned by semantic priority, not SPIR-V location, so
   they rotate once several streams are active. Trust what the code does with an input over its name.
 - **Some combos only move vertex input locations** and leave the code identical.

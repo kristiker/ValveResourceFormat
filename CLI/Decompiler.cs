@@ -141,6 +141,7 @@ namespace CLI
         /// <param name="shader_dump_all">Write every unique compiled variant of a shader to the --output folder, along with a manifest.</param>
         /// <param name="shader_backend">Language to decompile shader bytecode to. Must be either "glsl" or "hlsl". By default hlsl is attempted first, falling back to glsl.</param>
         /// <param name="shader_clean">Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.</param>
+        /// <param name="shader_cbuffers">Print the constant buffer and resource names a DirectX shader's reflection chunk retains. Only the "_pc_" build of a shader has them, the "_vulkan_" build stores no names at all.</param>
         /// <param name="tools_asset_info_short">Print only file paths for tools_asset_info files.</param>
         /// <param name="threads">If higher than 1, files are processed concurrently. Only used with --output or --test.</param>
         /// <param name="quiet">-q, When writing to --output or --vpk_create, only print errors and a summary. With the shader options, only print their output.</param>
@@ -186,6 +187,7 @@ namespace CLI
             bool shader_dump_all = false,
             [HideDefaultValue] string? shader_backend = default,
             bool shader_clean = false,
+            bool shader_cbuffers = false,
             bool tools_asset_info_short = false,
 
             int threads = 1,
@@ -307,6 +309,7 @@ namespace CLI
             ShaderCombo = shader_combo;
             ShaderDumpAll = shader_dump_all;
             ShaderClean = shader_clean;
+            ShaderCbuffers = shader_cbuffers;
 
             CollectStats = test;
             StatsWithLoader = test_loader;
@@ -515,7 +518,7 @@ namespace CLI
                 return 1;
             }
 
-            if (ShaderDumpAll && (ShaderCombo != null || ShaderListCombos))
+            if (ShaderDumpAll && (ShaderCombo != null || ShaderListCombos || ShaderCbuffers))
             {
                 Console.Error.WriteLine("Do not use --shader_dump_all with the other shader options.");
                 return 1;

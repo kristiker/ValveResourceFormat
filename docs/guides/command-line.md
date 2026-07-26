@@ -41,6 +41,7 @@ The binary name is `Source2Viewer-CLI`.
 | `--shader_dump_all`          | Write every unique compiled variant of a shader to the `--output` folder, along with a manifest.                                                                                                                                                                                                                 |
 | `--shader_backend`           | Language to decompile shader variants to, `"glsl"` or `"hlsl"`. By default hlsl is attempted first, falling back to glsl.                                                                                                                                                                                        |
 | `--shader_clean`             | Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.                                                                                                                                                                              |
+| `--shader_cbuffers`          | Print the constant buffer and resource names a DirectX shader's reflection chunk retains. Only the `_pc_` build of a shader has them.                                                                                                                                                                            |
 | `--tools_asset_info_short`   | Print only file paths for tools_asset_info files.                                                                                                                                                                                                                                                                |
 | **Other**                    |                                                                                                                                                                                                                                                                                                                  |
 | `--threads`                  | If higher than 1, files are processed concurrently. Only used with `--output` or `--test`.                                                                                                                                                                                                                       |
@@ -211,6 +212,18 @@ Pass a material together with one of these options to decompile the variants of 
 ```
 
 The `manifest.tsv` written alongside maps every combo combination to the file it produced. `--shader_backend` and `--shader_clean` also apply to `--shader_combo`.
+
+### Recovering constant buffer member names
+
+VCS 71 stores no constant buffer member names, so a decompiled Vulkan shader names them `_m0`, `_m1` and so on. The DirectX build of the same shader keeps the original HLSL names in its DXBC reflection chunk, and because both builds compile the same source their register offsets agree. So read the names off the `shaders_pc_dir.vpk` copy and apply them to the `shaders_vulkan_dir.vpk` decompile:
+
+```powershell
+./Source2Viewer-CLI.exe -i "<game>/shaders_pc_dir.vpk" -f "shaders/vfx/spritecard_pc_50_vs.vcs" --shader_cbuffers
+```
+
+Members are listed at their `packoffset`, in the same `cN.lane` form `--shader_backend hlsl` emits, so the two line up directly. Members the shader never reads are marked `(--)`; the reflection chunk lists everything the source declared, whereas a decompile only shows what a given variant actually touches.
+
+Two caveats. Reflection is stripped per program rather than per shader, so a shader's vertex program may keep it while its pixel program does not, but a program often declares buffers it barely uses, so the vertex program's chunk may still name the pixel program's buffers. And bind points are not transferable: the DirectX and Vulkan backends assign registers independently, so only names and offsets carry over.
 
 ## Argument Stability
 

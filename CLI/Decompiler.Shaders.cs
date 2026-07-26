@@ -16,8 +16,9 @@ namespace CLI
         private bool ShaderListCombos;
         private bool ShaderDumpAll;
         private bool ShaderClean;
+        private bool ShaderCbuffers;
         private Backend? ShaderBackend;
-        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos || ShaderDumpAll;
+        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos || ShaderDumpAll || ShaderCbuffers;
         private string ShaderSourceExtension => ShaderBackend == Backend.GLSL ? "glsl" : "hlsl";
 
         // Materials in the same package share a loader, so their shaders are only loaded once
@@ -34,6 +35,11 @@ namespace CLI
             if (ShaderListCombos)
             {
                 ListShaderCombos(shader, staticState);
+            }
+
+            if (ShaderCbuffers)
+            {
+                PrintShaderReflection(shader);
             }
 
             if (ShaderCombo != null)
@@ -132,6 +138,37 @@ namespace CLI
             }
 
             Stdout.WriteLine($"--- {count} variants across {shader.StaticComboEntries.Count} static combos, {uniqueHashes.Count} of them unique");
+        }
+
+        /// <summary>
+        /// Prints the real constant buffer and resource names out of a DirectX shader's reflection chunk.
+        /// </summary>
+        /// <remarks>
+        /// Reflection is stripped per program rather than per variant, but not consistently, so this walks the
+        /// variants until it finds one that kept its chunk instead of giving up on the first.
+        /// </remarks>
+        private void PrintShaderReflection(VfxProgramData shader)
+        {
+            var scanned = 0;
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                scanned++;
+
+                if (variant.ShaderFile is VfxShaderFileDXBC dxbc && dxbc.TryGetReflection(out var reflection))
+                {
+                    Stdout.WriteLine($"// Read from variant 0x{variant.StaticComboId:x08} / 0x{variant.DynamicComboId:x04}," +
+                        $" the first of {scanned} scanned that kept its reflection chunk.");
+                    Stdout.WriteLine(reflection.ToStringListing());
+                    return;
+                }
+            }
+
+            ReportError(scanned == 0
+                ? "This shader has no compiled variants to read."
+                : $"None of the {scanned} variants retain an RDEF reflection chunk. Only DirectX builds carry one, " +
+                  "so check that this is the \"_pc_\" file rather than the \"_vulkan_\" or \"_pcgl_\" one. Failing that, " +
+                  "another program of the same shader may declare the same buffers and still have its chunk.");
         }
 
         /// <summary>
