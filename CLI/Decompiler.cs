@@ -22,6 +22,7 @@ using ValveResourceFormat.TextureDecoders;
 using ValveResourceFormat.ToolsAssetInfo;
 using ValveResourceFormat.Utils;
 using ValveResourceFormat.ValveFont;
+using Backend = Vortice.SpirvCross.Backend;
 
 namespace CLI
 {
@@ -61,6 +62,12 @@ namespace CLI
         private bool GltfExportAdaptTextures;
         private bool GltfExportExtras;
         private bool ToolsAssetInfoShort;
+        private string? ShaderCombo;
+        private Backend? ShaderBackend;
+        private bool ShaderListCombos;
+        private bool ShaderDumpAll;
+        private bool ShaderClean;
+        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos || ShaderDumpAll;
 
         // The options below are for collecting stats and testing exporting, this is mostly intended for VRF developers, not end users.
         private bool CollectStats;
@@ -116,6 +123,11 @@ namespace CLI
         /// <param name="gltf_textures_adapt">Whether to perform any glTF spec adaptations on textures (e.g. split metallic map).</param>
         /// <param name="gltf_export_extras">Export additional Mesh properties into glTF extras</param>
         /// <param name="tools_asset_info_short">Whether to print only file paths for tools_asset_info files.</param>
+        /// <param name="shader_combo">Decompile the shader variant matching these combo values, example: "S_ALPHA_TEST=1,D_BLEND_WEIGHT_COUNT=4". A bare name means "=1", omitted combos stay at their minimum.</param>
+        /// <param name="shader_backend">Language to decompile shader bytecode to. Must be either "glsl" or "hlsl". By default hlsl is attempted first, falling back to glsl.</param>
+        /// <param name="shader_list_combos">List every compiled variant of a shader with its combo values and bytecode hash.</param>
+        /// <param name="shader_dump_all">Write every unique compiled variant of a shader to the output folder, along with a manifest.</param>
+        /// <param name="shader_clean">Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.</param>
         /// <param name="stats">Collect stats on all input files and then print them. Use "-i steam" to scan all Steam libraries.</param>
         /// <param name="stats_with_loader">When using --stats, use GameFileLoader to load dependencies.</param>
         /// <param name="stats_print_files">When using --stats, print example file names for each stat.</param>
@@ -149,6 +161,12 @@ namespace CLI
             bool gltf_textures_adapt = false,
             bool gltf_export_extras = false,
             bool tools_asset_info_short = false,
+
+            string? shader_combo = default,
+            string? shader_backend = default,
+            bool shader_list_combos = false,
+            bool shader_dump_all = false,
+            bool shader_clean = false,
 
             bool stats = false,
             bool stats_with_loader = false,
@@ -184,6 +202,11 @@ namespace CLI
             GltfExportAdaptTextures = gltf_textures_adapt;
             GltfExportExtras = gltf_export_extras;
             ToolsAssetInfoShort = tools_asset_info_short;
+
+            ShaderCombo = shader_combo;
+            ShaderListCombos = shader_list_combos;
+            ShaderDumpAll = shader_dump_all;
+            ShaderClean = shader_clean;
 
             CollectStats = stats;
             StatsWithLoader = stats_with_loader;
@@ -246,6 +269,46 @@ namespace CLI
             if (!Decompile && (GltfExportFormat != null || GltfExportAnimations || GltfExportMaterials || GltfExportAdaptTextures || GltfExportExtras))
             {
                 Console.Error.WriteLine("Exporting to glTF requires specifying -d argument.");
+                return 1;
+            }
+
+            if (shader_backend != null)
+            {
+                ShaderBackend = shader_backend.ToUpperInvariant() switch
+                {
+                    "GLSL" => Backend.GLSL,
+                    "HLSL" => Backend.HLSL,
+                    _ => null,
+                };
+
+                if (ShaderBackend == null)
+                {
+                    Console.Error.WriteLine("Shader backend must be either 'glsl' or 'hlsl'.");
+                    return 1;
+                }
+            }
+
+            if (ShaderCombo != null && ShaderDumpAll)
+            {
+                Console.Error.WriteLine("Do not use --shader_combo with --shader_dump_all.");
+                return 1;
+            }
+
+            if (ShaderDumpAll && OutputFile == null)
+            {
+                Console.Error.WriteLine("--shader_dump_all requires an --output folder to write to.");
+                return 1;
+            }
+
+            if (ShaderClean && !HasShaderOptions)
+            {
+                Console.Error.WriteLine("--shader_clean requires --shader_combo or --shader_dump_all.");
+                return 1;
+            }
+
+            if (CollectStats && HasShaderOptions)
+            {
+                Console.Error.WriteLine("Do not use --stats with the shader options.");
                 return 1;
             }
 
@@ -631,6 +694,17 @@ namespace CLI
             {
                 resource.Read(stream);
 
+                // Shaders of version 70 and up are stored as resources, so they do not hit the magic based
+                // dispatch above. Route them to the shader handling when a shader option asked for it.
+                if (HasShaderOptions && resource.ResourceType == ResourceType.Shader)
+                {
+                    var shaderStream = resource.Reader!.BaseStream;
+                    shaderStream.Seek(0, SeekOrigin.Begin);
+                    ParseVCS(path, shaderStream, originalPath);
+
+                    return;
+                }
+
                 var extension = FileExtract.GetExtension(resource);
 
                 if (extension == null)
@@ -780,6 +854,26 @@ namespace CLI
             {
                 shader.Read(path, stream);
 
+                if (HasShaderOptions)
+                {
+                    if (ShaderListCombos)
+                    {
+                        ListShaderCombos(shader);
+                    }
+
+                    if (ShaderCombo != null)
+                    {
+                        DecompileShaderCombo(shader, path);
+                    }
+
+                    if (ShaderDumpAll)
+                    {
+                        DumpAllShaderCombos(shader, path);
+                    }
+
+                    return;
+                }
+
                 using var output = new IndentedTextWriter();
 
                 if (!CollectStats)
@@ -814,6 +908,170 @@ namespace CLI
             {
                 LogException(e, path, originalPath);
             }
+        }
+
+        /// <summary>
+        /// Prints every compiled variant of a shader, so that the combo values of each one can be looked up.
+        /// Variants sharing a hash contain identical bytecode.
+        /// </summary>
+        private static void ListShaderCombos(VfxProgramData shader)
+        {
+            Console.WriteLine("static_combo\tdynamic_combo\tshader_file\thash\tstatic_values\tdynamic_values");
+
+            var uniqueHashes = new HashSet<Guid>();
+            var count = 0;
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                uniqueHashes.Add(variant.ShaderFile.HashMD5);
+                count++;
+
+                Console.WriteLine(
+                    $"0x{variant.StaticComboId:x08}\t0x{variant.DynamicComboId:x04}\t{variant.ShaderFile.ShaderFileId}\t" +
+                    $"{variant.ShaderFile.HashMD5}\t{variant.StaticCombos}\t{variant.DynamicCombos}");
+            }
+
+            Console.WriteLine();
+            Console.WriteLine($"--- {count} variants across {shader.StaticComboEntries.Count} static combos, {uniqueHashes.Count} of them unique");
+        }
+
+        /// <summary>
+        /// Decompiles the single variant that the requested combo values select.
+        /// </summary>
+        private void DecompileShaderCombo(VfxProgramData shader, string path)
+        {
+            if (!VfxComboResolver.TryResolve(shader, ShaderCombo, out var staticComboId, out var dynamicComboId, out var error))
+            {
+                Console.Error.WriteLine(error);
+                return;
+            }
+
+            if (error.Length > 0)
+            {
+                Console.Error.WriteLine($"Warning: {error}");
+            }
+
+            var staticCombo = shader.StaticComboCache.Get(staticComboId);
+            var dynamicComboIndex = staticCombo.GetDynamicComboIndex(dynamicComboId);
+
+            if (dynamicComboIndex == -1)
+            {
+                var available = staticCombo.DynamicCombos.Select(c => VfxComboResolver.FormatDynamicCombos(shader, c.DynamicComboId));
+                Console.Error.WriteLine(
+                    $"Static combo 0x{staticComboId:x08} has no dynamic combo 0x{dynamicComboId:x04}, "
+                    + $"it was likely excluded by a combo rule. Available: {string.Join(" | ", available)}");
+                return;
+            }
+
+            var shaderFileId = staticCombo.DynamicCombos[dynamicComboIndex].ShaderFileId;
+
+            if (shaderFileId < 0 || shaderFileId >= staticCombo.ShaderFiles.Length)
+            {
+                Console.Error.WriteLine($"Dynamic combo 0x{dynamicComboId:x04} of static combo 0x{staticComboId:x08} has no bytecode.");
+                return;
+            }
+
+            var decompiled = DecompileShaderFile(staticCombo.ShaderFiles[shaderFileId]);
+
+            if (OutputFile == null)
+            {
+                Console.WriteLine(decompiled);
+                return;
+            }
+
+            var outputPath = GetOutputPath(Path.ChangeExtension(path, ShaderSourceExtension), useOutputAsDirectory: Directory.Exists(OutputFile));
+            DumpFile(outputPath, Encoding.UTF8.GetBytes(decompiled));
+        }
+
+        /// <summary>
+        /// Writes every unique variant of a shader to the output folder. Variants that compiled to identical
+        /// bytecode share one file, the manifest says which combos map to it.
+        /// </summary>
+        private void DumpAllShaderCombos(VfxProgramData shader, string path)
+        {
+            Debug.Assert(OutputFile != null);
+
+            var directory = Path.Combine(OutputFile, Path.GetFileNameWithoutExtension(path));
+            var baseName = Path.GetFileNameWithoutExtension(path);
+
+            // Two levels of deduplication: combos often share bytecode outright, and bytecode that only differs
+            // in SPIR-V id numbering decompiles to the same source once identifiers have been normalized.
+            var fileNamesByBytecode = new Dictionary<Guid, string>();
+            var fileNamesBySource = new Dictionary<string, string>(StringComparer.Ordinal);
+            var manifest = new StringBuilder();
+            var count = 0;
+
+            manifest.AppendLine("static_combo\tdynamic_combo\tfile\tstatic_values\tdynamic_values");
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                count++;
+
+                if (!fileNamesByBytecode.TryGetValue(variant.ShaderFile.HashMD5, out var fileName))
+                {
+                    var decompiled = DecompileShaderFile(variant.ShaderFile);
+                    var body = StripLeadingComments(decompiled);
+
+                    if (!fileNamesBySource.TryGetValue(body, out fileName))
+                    {
+                        fileName = $"{baseName}_{variant.StaticComboId:x08}_{variant.DynamicComboId:x04}.{ShaderSourceExtension}";
+                        fileNamesBySource.Add(body, fileName);
+
+                        DumpFile(Path.Combine(directory, fileName), Encoding.UTF8.GetBytes(decompiled));
+                    }
+
+                    fileNamesByBytecode.Add(variant.ShaderFile.HashMD5, fileName);
+                }
+
+                manifest.Append(CultureInfo.InvariantCulture, $"0x{variant.StaticComboId:x08}\t0x{variant.DynamicComboId:x04}\t{fileName}\t");
+                manifest.Append(variant.StaticCombos).Append('\t').AppendLine(variant.DynamicCombos);
+            }
+
+            DumpFile(Path.Combine(directory, "manifest.tsv"), Encoding.UTF8.GetBytes(manifest.ToString()));
+
+            Console.WriteLine($"--- {count} variants, {fileNamesByBytecode.Count} unique bytecodes, written as {fileNamesBySource.Count} unique files");
+        }
+
+        private string ShaderSourceExtension => ShaderBackend == Backend.GLSL ? "glsl" : "hlsl";
+
+        /// <summary>
+        /// Drops the header comments, which name the combo this variant belongs to and therefore differ
+        /// between variants that are otherwise identical.
+        /// </summary>
+        private static string StripLeadingComments(string decompiled)
+        {
+            var span = decompiled.AsSpan();
+            var offset = 0;
+
+            while (offset < span.Length)
+            {
+                var lineEnd = span[offset..].IndexOf('\n');
+                var line = (lineEnd == -1 ? span[offset..] : span.Slice(offset, lineEnd)).Trim();
+
+                if (line.Length > 0 && !line.StartsWith("//"))
+                {
+                    break;
+                }
+
+                if (lineEnd == -1)
+                {
+                    return string.Empty;
+                }
+
+                offset += lineEnd + 1;
+            }
+
+            return decompiled[offset..];
+        }
+
+        private string DecompileShaderFile(VfxShaderFile shaderFile)
+        {
+            if (shaderFile is VfxShaderFileVulkan vulkan)
+            {
+                return vulkan.GetDecompiledFile(ShaderBackend, ShaderClean ? SpirvReflectionOptions.Clean : SpirvReflectionOptions.Default);
+            }
+
+            return shaderFile.GetDecompiledFile();
         }
 
         private void ParseNAV(string path, Stream stream, string? originalPath)
@@ -993,7 +1251,8 @@ namespace CLI
                 return;
             }
 
-            if (OutputFile == null)
+            // The shader options do their own writing, so they take this path even when an output was given.
+            if (OutputFile == null || HasShaderOptions)
             {
                 Debug.Assert(package.Entries != null);
 
@@ -1034,7 +1293,7 @@ namespace CLI
                     Console.WriteLine("--- Files in package:");
                 }
 
-                var processVpkFiles = CollectStats || ShouldPrintBlockContents;
+                var processVpkFiles = CollectStats || ShouldPrintBlockContents || HasShaderOptions;
 
                 if (processVpkFiles)
                 {

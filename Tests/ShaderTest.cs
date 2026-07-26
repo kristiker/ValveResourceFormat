@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using NUnit.Framework;
 using ValveResourceFormat;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Utils;
+using Vortice.SpirvCross;
 using static ValveResourceFormat.CompiledShader.ShaderUtilHelpers;
 
 namespace Tests
@@ -490,6 +492,83 @@ namespace Tests
             var reference = File.ReadAllText(referencePath);
 
             Assert.That(code, Is.EqualTo(reference).IgnoreWhiteSpace, $"Spirv reflection output does not match reference.");
+        }
+
+        [Test]
+        public void TestComboResolver()
+        {
+            var path = Path.Combine(ShadersDir, "vcs69_downsample_depth_cs_vulkan_50_cs.vcs");
+            using var shader = new VfxProgramData();
+            shader.Read(path);
+
+            // D_OUTPUT_MIP0, D_REVERSE_DEPTH, D_RESAMPLE, D_MIP_COUNT (1..4), D_MSAA_DEPTH (0..3).
+            // The ids are mixed radix, so D_REVERSE_DEPTH is worth 2 and D_MIP_COUNT is worth 8 per step above its minimum.
+            const long ReverseDepthAndThreeMips = 2 + ((3 - 1) * 8);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(VfxComboResolver.TryResolve(shader, "D_REVERSE_DEPTH=1,D_MIP_COUNT=3", out var staticId, out var dynamicId, out var error), Is.True);
+                Assert.That(error, Is.Empty);
+                Assert.That(staticId, Is.Zero);
+                Assert.That(dynamicId, Is.EqualTo(ReverseDepthAndThreeMips));
+
+                // The values must survive the round trip back out of the id.
+                int[] expectedValues = [0, 1, 0, 3, 0];
+                Assert.That(shader.GetDBlockConfig(dynamicId), Is.EqualTo(expectedValues));
+                Assert.That(VfxComboResolver.FormatDynamicCombos(shader, dynamicId), Is.EqualTo("D_REVERSE_DEPTH, D_MIP_COUNT=3"));
+
+                // A bare name means =1.
+                Assert.That(VfxComboResolver.TryResolve(shader, "D_REVERSE_DEPTH,D_MIP_COUNT=3", out _, out var bareId, out _), Is.True);
+                Assert.That(bareId, Is.EqualTo(ReverseDepthAndThreeMips));
+
+                // An empty spec is every combo at its minimum, which is not zero for D_MIP_COUNT.
+                Assert.That(VfxComboResolver.TryResolve(shader, null, out var defaultStatic, out var defaultDynamic, out _), Is.True);
+                Assert.That(defaultStatic, Is.Zero);
+                Assert.That(defaultDynamic, Is.Zero);
+                Assert.That(shader.GetDBlockConfig(defaultDynamic)[3], Is.EqualTo(1));
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(VfxComboResolver.TryResolve(shader, "D_NOT_A_COMBO=1", out _, out _, out var unknownError), Is.False);
+                Assert.That(unknownError, Does.StartWith("Unknown combo 'D_NOT_A_COMBO'."));
+
+                // Zero is below D_MIP_COUNT's minimum of one.
+                Assert.That(VfxComboResolver.TryResolve(shader, "D_MIP_COUNT=0", out _, out _, out var rangeError), Is.False);
+                Assert.That(rangeError, Does.StartWith("Value 0 is out of range for combo 'D_MIP_COUNT' (1..4)"));
+            });
+        }
+
+        [Test]
+        public void TestSpirvReflectionNormalization()
+        {
+            if (!IsSpirvCrossAvailable())
+            {
+                Assert.Ignore("There are no native binaries for SPIR-V on arm linux yet.");
+                return;
+            }
+
+            var path = Path.Combine(ShadersDir, "vcs69_zstd5_npr_dummy_vulkan_50_vs.vcs");
+            using var shader = new VfxProgramData();
+            shader.Read(path);
+
+            var shaderFile = (VfxShaderFileVulkan)shader.GetStaticCombo(0).ShaderFiles[0];
+            var raw = shaderFile.GetDecompiledFile(Backend.HLSL, SpirvReflectionOptions.Default);
+            var clean = shaderFile.GetDecompiledFile(Backend.HLSL, SpirvReflectionOptions.Clean);
+
+            Assert.Multiple(() =>
+            {
+                // SPIR-V ids differ between combos even when the code is the same, so none may survive.
+                Assert.That(raw, Does.Match(@"\b_\d+\b"), "Expected the raw output to contain SPIR-V id derived names.");
+                Assert.That(clean, Does.Not.Match(@"\b_\d+(?:ident)?\b"));
+
+                Assert.That(raw, Does.Contain("PerViewConstantBuffer_t_1_g_matWorldToProjection"));
+                Assert.That(clean, Does.Contain("g_matWorldToProjection"));
+                Assert.That(clean, Does.Not.Contain("PerViewConstantBuffer_t_1_g_matWorldToProjection"));
+
+                // Rewriting must not drop or duplicate any statement.
+                Assert.That(clean.Count(c => c == ';'), Is.EqualTo(raw.Count(c => c == ';')));
+            });
         }
 
         [Test]
