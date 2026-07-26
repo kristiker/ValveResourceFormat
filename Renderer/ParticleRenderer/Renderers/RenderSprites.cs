@@ -19,10 +19,30 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         // position 3, colour 4, uv 2, next-frame uv 2, frame blend 1
         private const int VertexSize = 12;
 
+        // The shader keeps one sampler per layer, so this is a hard ceiling rather than a preference.
+        private const int MaxTextureLayers = 5;
+
+        private static readonly INumberProvider OneNumberProvider = new LiteralNumberProvider(1f);
+
+        // Interpolated names would allocate on every draw, and this is per-frame renderer code.
+        private static readonly string[] LayerTextureUniforms = ["uTexture", "uTextureLayer1", "uTextureLayer2", "uTextureLayer3", "uTextureLayer4"];
+        private static readonly string[] LayerChannelsUniforms = ["uLayerChannels[0]", "uLayerChannels[1]", "uLayerChannels[2]", "uLayerChannels[3]", "uLayerChannels[4]"];
+        private static readonly string[] LayerBlendModeUniforms = ["uLayerBlendMode[0]", "uLayerBlendMode[1]", "uLayerBlendMode[2]", "uLayerBlendMode[3]", "uLayerBlendMode[4]"];
+        private static readonly string[] LayerBlendUniforms = ["uLayerBlend[0]", "uLayerBlend[1]", "uLayerBlend[2]", "uLayerBlend[3]", "uLayerBlend[4]"];
+
+        /// <summary>One entry of m_vecTexturesInput: a texture plus how it folds into the layers below it.</summary>
+        private sealed class TextureLayer(RenderTexture texture)
+        {
+            public RenderTexture Texture { get; } = texture;
+            public SpriteCardTextureChannel Channels { get; init; } = SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA;
+            public ParticleTextureLayerBlendType BlendMode { get; init; } = ParticleTextureLayerBlendType.SPRITECARD_TEXTURE_BLEND_MULTIPLY;
+            public INumberProvider Blend { get; init; } = OneNumberProvider;
+        }
+
         private readonly Shader shader;
         private readonly RendererContext RendererContext;
         private readonly int vaoHandle;
-        private readonly RenderTexture texture;
+        private readonly TextureLayer[] layers;
 
         private readonly float animationRate = 0.1f;
         private readonly ParticleAnimationType animationType = ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE;
@@ -51,7 +71,6 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
         private readonly INumberProvider radiusScale = new LiteralNumberProvider(1f);
         private readonly INumberProvider alphaScale = new LiteralNumberProvider(1f);
-        private readonly SpriteCardTextureChannel textureChannels = SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA;
 
         private readonly bool animateInFps;
         private readonly ParticleBlendMode blendMode = ParticleBlendMode.PARTICLE_OUTPUT_BLEND_MODE_ALPHA;
@@ -88,11 +107,14 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             if (parse.Data.ContainsKey("m_hTexture"))
             {
+                // Legacy single-texture form; equivalent to one layer with every control at its default.
                 textureName = parse.Data.GetStringProperty("m_hTexture");
+                layers = [new TextureLayer(rendererContext.MaterialLoader.GetTexture(textureName, srgbRead: true))];
             }
             else
             {
-                // TODO: Support more than one texture
+                var parsed = new List<TextureLayer>();
+
                 foreach (var textureInput in parse.Array("m_vecTexturesInput"))
                 {
                     if (!textureInput.Boolean("m_bEnabled", true))
@@ -100,19 +122,30 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         continue;
                     }
 
-                    textureName = textureInput.Data.GetStringProperty("m_hTexture");
-                    textureChannels = textureInput.Enum("m_nTextureChannels", textureChannels);
-                    break;
-                }
-            }
+                    // A gradient layer synthesizes its texture from m_Gradient rather than loading one.
+                    if (textureInput.Boolean("m_bReplaceTextureWithGradient", false)
+                        || !textureInput.Data.ContainsKey("m_hTexture"))
+                    {
+                        continue;
+                    }
 
-            if (textureName == null)
-            {
-                texture = rendererContext.MaterialLoader.GetErrorTexture();
-            }
-            else
-            {
-                texture = rendererContext.MaterialLoader.GetTexture(textureName, srgbRead: true);
+                    if (parsed.Count == MaxTextureLayers)
+                    {
+                        break;
+                    }
+
+                    var layerTextureName = textureInput.Data.GetStringProperty("m_hTexture");
+                    textureName ??= layerTextureName;
+
+                    parsed.Add(new TextureLayer(rendererContext.MaterialLoader.GetTexture(layerTextureName, srgbRead: true))
+                    {
+                        Channels = textureInput.Enum("m_nTextureChannels", SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA),
+                        BlendMode = textureInput.Enum("m_nTextureBlendMode", ParticleTextureLayerBlendType.SPRITECARD_TEXTURE_BLEND_MULTIPLY),
+                        Blend = textureInput.NumberProvider("m_flTextureBlend", OneNumberProvider),
+                    });
+                }
+
+                layers = parsed.Count > 0 ? [.. parsed] : [new TextureLayer(rendererContext.MaterialLoader.GetErrorTexture())];
             }
 
 #if DEBUG
@@ -431,7 +464,8 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     var uvNextMax = Vector2.One;
                     var frameBlend = 0f;
 
-                    var spriteSheetData = texture.SpriteSheetData;
+                    // The sheet sequence comes from the base layer; extra layers ride its frame timing.
+                    var spriteSheetData = layers[0].Texture.SpriteSheetData;
                     if (spriteSheetData != null && spriteSheetData.Sequences.Length > 0 && spriteSheetData.Sequences[0].Frames.Length > 0)
                     {
                         var sequence = spriteSheetData.Sequences[particle.Sequence % spriteSheetData.Sequences.Length];
@@ -526,7 +560,22 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             shader.Use();
             GL.BindVertexArray(vaoHandle);
 
-            shader.SetTexture(RenderMaterial.TextureUnitStart, "uTexture", texture);
+            // Layer 0 keeps the plain uTexture name; the rest take a sampler each. Units past the layer
+            // count are never sampled, but they get layer 0's texture so no sampler is left unbound.
+            for (var layer = 0; layer < MaxTextureLayers; layer++)
+            {
+                var source = layer < layers.Length ? layers[layer] : layers[0];
+                shader.SetTexture(RenderMaterial.TextureUnitStart + layer, LayerTextureUniforms[layer], source.Texture);
+            }
+
+            shader.SetUniform1("uLayerCount", layers.Length);
+
+            for (var layer = 0; layer < layers.Length; layer++)
+            {
+                shader.SetUniform1(LayerChannelsUniforms[layer], (int)layers[layer].Channels);
+                shader.SetUniform1(LayerBlendModeUniforms[layer], (int)layers[layer].BlendMode);
+                shader.SetUniform1(LayerBlendUniforms[layer], layers[layer].Blend.NextNumber(systemRenderState));
+            }
 
             // TODO: This formula is a guess but still seems too bright compared to valve particles
             shader.SetUniform1("uOverbrightFactor", overbrightFactor.NextNumber(systemRenderState));
@@ -538,7 +587,6 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 ? new Vector2(alphaMapToZero.NextNumber(systemRenderState), alphaMapToOne.NextNumber(systemRenderState))
                 : new Vector2(1f, 0f);
             shader.SetUniform2("uAlphaRemapRange", alphaRemapRange);
-            shader.SetUniform1("uTextureChannels", (int)textureChannels);
 
             shader.SetUniform1("uGammaCorrectVertexColors", gammaCorrectVertexColors);
             shader.SetUniform1("uBlendFrames", blendFrames);

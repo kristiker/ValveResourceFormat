@@ -16,7 +16,14 @@
 #define PARTICLE_OUTPUT_BLEND_MODE_MOD2X 5
 uniform int uBlendMode = 0; // PARTICLE_OUTPUT_BLEND_MODE_ALPHA
 
+// One sampler per texture layer. Layer 0 is the base texture and keeps the plain name.
+#define MAX_TEXTURE_LAYERS 5
 uniform sampler2D uTexture;
+uniform sampler2D uTextureLayer1;
+uniform sampler2D uTextureLayer2;
+uniform sampler2D uTextureLayer3;
+uniform sampler2D uTextureLayer4;
+
 uniform float uOverbrightFactor;
 uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
 uniform float uDesaturation = 0.0; // m_flDesaturation
@@ -56,7 +63,12 @@ uniform vec4 uOutlineRanges = vec4(0.5, 0.7, 0.6, 0.8);
 #define SPRITECARD_TEXTURE_CHANNEL_MIX_RALPHA         12
 #define SPRITECARD_TEXTURE_CHANNEL_MIX_GALPHA         13
 #define SPRITECARD_TEXTURE_CHANNEL_MIX_BALPHA         14
-uniform int uTextureChannels = 1; // MIX_RGBA
+// Per-layer mask mode, blend mode and strength (m_nTextureChannels, m_nTextureBlendMode,
+// m_flTextureBlend). Every entry below uLayerCount is written by the renderer each draw.
+uniform int uLayerCount = 1;
+uniform int uLayerChannels[MAX_TEXTURE_LAYERS];
+uniform int uLayerBlendMode[MAX_TEXTURE_LAYERS];
+uniform float uLayerBlend[MAX_TEXTURE_LAYERS];
 
 #define SPRITECARD_TEXTURE_BLEND_MULTIPLY   0
 #define SPRITECARD_TEXTURE_BLEND_MULTIPLY2X 1
@@ -65,8 +77,6 @@ uniform int uTextureChannels = 1; // MIX_RGBA
 #define SPRITECARD_TEXTURE_BLEND_SUBTRACT   4
 #define SPRITECARD_TEXTURE_BLEND_AVERAGE    5
 #define SPRITECARD_TEXTURE_BLEND_LUMINANCE  6
-// Left at MULTIPLY until the per-layer texture inputs are parsed; with one layer that is the identity.
-uniform int uTextureBlendMode = 0; // MULTIPLY
 
 // The mask modes use Rec.601 weights, while the LUMINANCE blend below uses Rec.709 (GetLuma).
 const vec3 LUMA_601 = vec3(0.299, 0.587, 0.114);
@@ -128,6 +138,20 @@ vec4 ApplyChannelMask(vec4 accum, vec4 layer, int maskMode, float sub)
     return layer; // MIX_RGBA, and anything unrecognised
 }
 
+// GLSL cannot return an opaque texture, so the per-layer choice happens at the fetch itself.
+vec4 SampleLayer(int layer, vec2 uv)
+{
+    switch (layer)
+    {
+        case 1: return texture(uTextureLayer1, uv);
+        case 2: return texture(uTextureLayer2, uv);
+        case 3: return texture(uTextureLayer3, uv);
+        case 4: return texture(uTextureLayer4, uv);
+    }
+
+    return texture(uTexture, uv);
+}
+
 // Combine the masked layer into the accumulator.
 vec4 ApplyLayerBlend(vec4 accum, vec4 masked, int blendMode)
 {
@@ -145,33 +169,42 @@ vec4 ApplyLayerBlend(vec4 accum, vec4 masked, int blendMode)
 }
 
 void main(void) {
-    // Layer 0 is the base texture, folded into an accumulator of vec4(1.0). Extra layers will repeat
-    // this block with their own mask, blend and uv.
+    // Each layer is folded into an accumulator seeded to white. Layer 0 is the base texture, so with one
+    // layer and the default MULTIPLY this collapses to a straight sample.
     vec4 accum = vec4(1.0);
 
-    float sub = float(uTextureBlendMode == SPRITECARD_TEXTURE_BLEND_SUBTRACT);
-    vec4 layer = texture(uTexture, vTexCoordOut);
-
-    if (uBlendFrames != 0)
+    for (int i = 0; i < uLayerCount; ++i)
     {
-        vec4 nextFrame = texture(uTexture, vTexCoordNextFrameOut);
+        vec4 layer = SampleLayer(i, vTexCoordOut);
 
-        if (uMaxLuminanceFrameBlend != 0)
+        // The sheet sequence belongs to the base texture, so only layer 0 cross-fades frames.
+        if (i == 0 && uBlendFrames != 0)
         {
-            // Weighting each frame by the square root of its luminance keeps the brighter one dominant
-            // through the cross-fade, so a spark does not dim as it passes between frames.
-            float weight = (1.0 - vFrameBlend) * sqrt(max(0.001, GetLuma(layer.rgb)));
-            float nextWeight = vFrameBlend * sqrt(max(0.001, GetLuma(nextFrame.rgb)));
-            layer = ((layer * weight) + (nextFrame * nextWeight)) / (weight + nextWeight);
+            vec4 nextFrame = SampleLayer(0, vTexCoordNextFrameOut);
+
+            if (uMaxLuminanceFrameBlend != 0)
+            {
+                // Weighting each frame by the square root of its luminance keeps the brighter one
+                // dominant through the cross-fade, so a spark does not dim as it crosses a frame.
+                float weight = (1.0 - vFrameBlend) * sqrt(max(0.001, GetLuma(layer.rgb)));
+                float nextWeight = vFrameBlend * sqrt(max(0.001, GetLuma(nextFrame.rgb)));
+                layer = ((layer * weight) + (nextFrame * nextWeight)) / (weight + nextWeight);
+            }
+            else
+            {
+                layer = mix(layer, nextFrame, vFrameBlend);
+            }
         }
-        else
-        {
-            layer = mix(layer, nextFrame, vFrameBlend);
-        }
+
+        int blendMode = uLayerBlendMode[i];
+        float sub = float(blendMode == SPRITECARD_TEXTURE_BLEND_SUBTRACT);
+
+        vec4 masked = ApplyChannelMask(accum, layer, uLayerChannels[i], sub);
+        vec4 blended = ApplyLayerBlend(accum, masked, blendMode);
+
+        // m_flTextureBlend fades the layer's contribution back toward what was already there.
+        accum = max(mix(accum, blended, uLayerBlend[i]), vec4(0.0));
     }
-
-    vec4 masked = ApplyChannelMask(accum, layer, uTextureChannels, sub);
-    accum = max(ApplyLayerBlend(accum, masked, uTextureBlendMode), vec4(0.0));
 
     vec4 color = accum;
 
