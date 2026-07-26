@@ -13,24 +13,21 @@
 #define PARTICLE_OUTPUT_BLEND_MODE_MOD2X 5
 uniform int uBlendMode = 0; // PARTICLE_OUTPUT_BLEND_MODE_ALPHA
 
-uniform vec3 uColor;
 uniform sampler2D uTexture;
 
 in vec2 uv;
+in vec4 vColor;
 in vec3 vFragPosition;
 
-uniform vec2 uUvOffset;
-uniform vec2 uUvScale;
-
-uniform float uAlpha;
 uniform float uOverbrightFactor;
 
 out vec4 fragColor;
 
 void main(void) {
-    vec4 color = texture(uTexture, uUvOffset + uv * uUvScale);
+    // The sheet frame's offset and scale are already folded into the uv on the way in.
+    vec4 color = texture(uTexture, uv);
 
-    vec3 finalColor = uColor * color.rgb;
+    vec3 finalColor = vColor.rgb * color.rgb;
     float blendingFactor = uOverbrightFactor * GetLuma(finalColor.rgb);
 
     // MOD2X composites like ADD -- see the note in particle_sprite.frag.slang.
@@ -47,7 +44,7 @@ void main(void) {
         ApplyFog(finalColor, vFragPosition);
     }
 
-    fragColor = vec4(finalColor, uAlpha * color.a * blendingFactor);
+    fragColor = vec4(finalColor, vColor.a * color.a * blendingFactor);
 
     if (g_iRenderMode == renderMode_Color)
     {

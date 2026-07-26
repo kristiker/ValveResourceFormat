@@ -1,3 +1,4 @@
+using System.Buffers;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Serialization.KeyValues;
 
@@ -16,6 +17,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
     internal class RenderTrails : ParticleFunctionRenderer
     {
         private const string ShaderName = "vrf.particle_trail";
+
+        // position 3, colour 4, uv 2
+        private const int VertexSize = 9;
 
         private readonly Shader shader;
         private readonly RendererContext RendererContext;
@@ -107,29 +111,42 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
         private (int Vao, int Buffer) SetupQuadBuffer()
         {
-            var vertices = new[]
-            {
-                -1.0f, -1.0f, 0.0f,
-                -1.0f, 1.0f, 0.0f,
-                1.0f, -1.0f, 0.0f,
-                1.0f, 1.0f, 0.0f,
-            };
-
             GL.CreateVertexArrays(1, out int vao);
             GL.CreateBuffers(1, out int buffer);
-            GL.NamedBufferData(buffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
-            GL.VertexArrayVertexBuffer(vao, 0, buffer, 0, sizeof(float) * 3);
+            GL.VertexArrayVertexBuffer(vao, 0, buffer, 0, sizeof(float) * VertexSize);
+            GL.VertexArrayElementBuffer(vao, RendererContext.MeshBufferCache.QuadIndices.GLHandle);
 
-            var attributeLocation = GL.GetAttribLocation(shader.Program, "aVertexPosition");
-            GL.EnableVertexArrayAttrib(vao, attributeLocation);
-            GL.VertexArrayAttribFormat(vao, attributeLocation, 3, VertexAttribType.Float, false, 0);
-            GL.VertexArrayAttribBinding(vao, attributeLocation, 0);
+            void SetupAttribute(string name, int components, int offsetInFloats)
+            {
+                var location = GL.GetAttribLocation(shader.Program, name);
+
+                if (location < 0)
+                {
+                    return;
+                }
+
+                GL.EnableVertexArrayAttrib(vao, location);
+                GL.VertexArrayAttribFormat(vao, location, components, VertexAttribType.Float, false, sizeof(float) * offsetInFloats);
+                GL.VertexArrayAttribBinding(vao, location, 0);
+            }
+
+            SetupAttribute("aVertexPosition", 3, 0);
+            SetupAttribute("aVertexColor", 4, 3);
+            SetupAttribute("aTexCoords", 2, 7);
 
             return (vao, buffer);
         }
 
+        // The corner ring the shared quad index buffer expects, in the trail's own (width, length) space.
+        private static readonly Vector2[] QuadCorners = [new(-1f, -1f), new(-1f, 1f), new(1f, 1f), new(1f, -1f)];
+
         public override void Render(ParticleCollection particleBag, ParticleSystemRenderState systemRenderState, Camera camera)
         {
+            if (particleBag.Count == 0)
+            {
+                return;
+            }
+
             var particles = particleBag.Current;
 
             // The translucent pass leaves blend/depth state to each custom draw; enable blending and stop depth
@@ -170,98 +187,136 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 ? 1f
                 : 1f / particleBag.PreviousFrameTime;
 
-            // Todo: this could be adapted into renderropes without much difficulty
-            foreach (ref var particle in particles)
+            // Every trail goes into one buffer and one draw; a trail whose length collapses to zero simply
+            // does not contribute a quad.
+            var rawVertices = ArrayPool<float>.Shared.Rent(particleBag.Count * VertexSize * 4);
+            var quadCount = 0;
+
+            try
             {
-                var position = particle.Position;
-                var previousPosition = particle.GetVector(prevPositionSource);
-                // The trail extends from the particle back toward its previous position
-                var difference = previousPosition - position;
-                var direction = difference == Vector3.Zero ? Vector3.UnitY : Vector3.Normalize(difference);
-
-                var length = lengthScale * particle.TrailLength * difference.Length() * oneOverDt;
-
-                // The length fades in before clamping so clamped trails still reach full length on time
-                if (particle.Age < lengthFadeInTime)
+                // Todo: this could be adapted into renderropes without much difficulty
+                foreach (ref var particle in particles)
                 {
-                    length *= particle.Age / lengthFadeInTime;
-                }
+                    var position = particle.Position;
+                    var previousPosition = particle.GetVector(prevPositionSource);
+                    // The trail extends from the particle back toward its previous position
+                    var difference = previousPosition - position;
+                    var direction = difference == Vector3.Zero ? Vector3.UnitY : Vector3.Normalize(difference);
 
-                if (length <= 0f)
-                {
-                    continue;
-                }
+                    var length = lengthScale * particle.TrailLength * difference.Length() * oneOverDt;
 
-                // The engine clamps the full extent of the trail
-                length = Math.Clamp(length, minLength, maxLength);
-
-                Matrix4x4 modelMatrix;
-                if (orientationType == ParticleOrientation.PARTICLE_ORIENTATION_SCREEN_ALIGNED)
-                {
-                    // The quad's width axis stays perpendicular to the eye ray, its length axis follows the motion
-                    var widthAxis = Vector3.Cross(position - camera.Location, direction);
-                    widthAxis = widthAxis.LengthSquared() > 1e-12f
-                        ? Vector3.Normalize(widthAxis)
-                        : Vector3.Normalize(Vector3.Cross(direction, MathF.Abs(direction.Z) < 0.999f ? Vector3.UnitZ : Vector3.UnitX));
-                    var normal = Vector3.Cross(widthAxis, direction);
-
-                    var halfWidth = particle.Radius * 0.5f;
-                    var halfLength = length * 0.5f;
-                    var center = position + direction * halfLength;
-
-                    modelMatrix = new Matrix4x4(
-                        widthAxis.X * halfWidth, widthAxis.Y * halfWidth, widthAxis.Z * halfWidth, 0f,
-                        direction.X * halfLength, direction.Y * halfLength, direction.Z * halfLength, 0f,
-                        normal.X, normal.Y, normal.Z, 0f,
-                        center.X, center.Y, center.Z, 1f);
-                }
-                else
-                {
-                    // TODO: Other orientation types render as plain unstretched sprites here; the engine
-                    // still stretches them along the motion, constrained to the ground/normal plane
-                    modelMatrix = particle.GetTransformationMatrix();
-                }
-
-                // Position/Radius uniform
-                shader.SetUniform4x4("uModelMatrix", modelMatrix);
-
-                var spriteSheetData = texture.SpriteSheetData;
-                if (spriteSheetData != null && spriteSheetData.Sequences.Length > 0 && spriteSheetData.Sequences[0].Frames.Length > 0)
-                {
-                    var sequence = spriteSheetData.Sequences[0];
-
-                    var animationTime = animationType switch
+                    // The length fades in before clamping so clamped trails still reach full length on time
+                    if (particle.Age < lengthFadeInTime)
                     {
-                        ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE => particle.Age,
-                        ParticleAnimationType.ANIMATION_TYPE_FIT_LIFETIME => particle.NormalizedAge,
-                        _ => particle.Age,
-                    };
-                    var frame = animationTime * sequence.FramesPerSecond * animationRate;
+                        length *= particle.Age / lengthFadeInTime;
+                    }
 
-                    var currentFrame = sequence.Frames[(int)MathF.Floor(frame) % sequence.Frames.Length];
-                    var currentImage = currentFrame.Images[0]; // TODO: Support more than one image per frame?
+                    if (length <= 0f)
+                    {
+                        continue;
+                    }
 
-                    // Lerp frame coords and size
-                    var subFrameTime = frame % 1.0f;
-                    var offset = Vector2.Lerp(currentImage.CroppedMin, currentImage.UncroppedMin, subFrameTime);
-                    var scale = Vector2.Lerp(currentImage.CroppedMax - currentImage.CroppedMin,
-                        currentImage.UncroppedMax - currentImage.UncroppedMin, subFrameTime);
+                    // The engine clamps the full extent of the trail
+                    length = Math.Clamp(length, minLength, maxLength);
 
-                    shader.SetUniform2("uUvOffset", offset);
-                    shader.SetUniform2("uUvScale", scale * new Vector2(finalTextureScaleU, finalTextureScaleV));
+                    Matrix4x4 modelMatrix;
+                    if (orientationType == ParticleOrientation.PARTICLE_ORIENTATION_SCREEN_ALIGNED)
+                    {
+                        // The quad's width axis stays perpendicular to the eye ray, its length axis follows the motion
+                        var widthAxis = Vector3.Cross(position - camera.Location, direction);
+                        widthAxis = widthAxis.LengthSquared() > 1e-12f
+                            ? Vector3.Normalize(widthAxis)
+                            : Vector3.Normalize(Vector3.Cross(direction, MathF.Abs(direction.Z) < 0.999f ? Vector3.UnitZ : Vector3.UnitX));
+                        var normal = Vector3.Cross(widthAxis, direction);
+
+                        var halfWidth = particle.Radius * 0.5f;
+                        var halfLength = length * 0.5f;
+                        var center = position + direction * halfLength;
+
+                        modelMatrix = new Matrix4x4(
+                            widthAxis.X * halfWidth, widthAxis.Y * halfWidth, widthAxis.Z * halfWidth, 0f,
+                            direction.X * halfLength, direction.Y * halfLength, direction.Z * halfLength, 0f,
+                            normal.X, normal.Y, normal.Z, 0f,
+                            center.X, center.Y, center.Z, 1f);
+                    }
+                    else
+                    {
+                        // TODO: Other orientation types render as plain unstretched sprites here; the engine
+                        // still stretches them along the motion, constrained to the ground/normal plane
+                        modelMatrix = particle.GetTransformationMatrix();
+                    }
+
+                    var spriteSheetData = texture.SpriteSheetData;
+                    Vector2 uvOffset;
+                    Vector2 uvScale;
+                    if (spriteSheetData != null && spriteSheetData.Sequences.Length > 0 && spriteSheetData.Sequences[0].Frames.Length > 0)
+                    {
+                        var sequence = spriteSheetData.Sequences[0];
+
+                        var animationTime = animationType switch
+                        {
+                            ParticleAnimationType.ANIMATION_TYPE_FIXED_RATE => particle.Age,
+                            ParticleAnimationType.ANIMATION_TYPE_FIT_LIFETIME => particle.NormalizedAge,
+                            _ => particle.Age,
+                        };
+                        var frame = animationTime * sequence.FramesPerSecond * animationRate;
+
+                        var currentFrame = sequence.Frames[(int)MathF.Floor(frame) % sequence.Frames.Length];
+                        var currentImage = currentFrame.Images[0]; // TODO: Support more than one image per frame?
+
+                        // Lerp frame coords and size
+                        var subFrameTime = frame % 1.0f;
+                        var offset = Vector2.Lerp(currentImage.CroppedMin, currentImage.UncroppedMin, subFrameTime);
+                        var scale = Vector2.Lerp(currentImage.CroppedMax - currentImage.CroppedMin,
+                            currentImage.UncroppedMax - currentImage.UncroppedMin, subFrameTime);
+
+                        uvOffset = offset;
+                        uvScale = scale * new Vector2(finalTextureScaleU, finalTextureScaleV);
+                    }
+                    else
+                    {
+                        uvOffset = Vector2.Zero;
+                        uvScale = new Vector2(finalTextureScaleU, finalTextureScaleV);
+                    }
+
+                    var alpha = particle.Alpha * particle.AlphaAlternate;
+                    var quadStart = quadCount * VertexSize * 4;
+
+                    for (var corner = 0; corner < 4; corner++)
+                    {
+                        var offsetInQuad = quadStart + (VertexSize * corner);
+                        var localCorner = QuadCorners[corner];
+                        var world = Vector3.Transform(new Vector3(localCorner, 0f), modelMatrix);
+
+                        rawVertices[offsetInQuad + 0] = world.X;
+                        rawVertices[offsetInQuad + 1] = world.Y;
+                        rawVertices[offsetInQuad + 2] = world.Z;
+
+                        rawVertices[offsetInQuad + 3] = particle.Color.X;
+                        rawVertices[offsetInQuad + 4] = particle.Color.Y;
+                        rawVertices[offsetInQuad + 5] = particle.Color.Z;
+                        rawVertices[offsetInQuad + 6] = alpha;
+
+                        // The corner maps to [0,1] before the sheet frame's own offset and scale.
+                        var uv = uvOffset + (((localCorner * 0.5f) + new Vector2(0.5f)) * uvScale);
+                        rawVertices[offsetInQuad + 7] = uv.X;
+                        rawVertices[offsetInQuad + 8] = uv.Y;
+                    }
+
+                    quadCount++;
                 }
-                else
+
+                if (quadCount > 0)
                 {
-                    shader.SetUniform2("uUvOffset", Vector2.Zero);
-                    shader.SetUniform2("uUvScale", new Vector2(finalTextureScaleU, finalTextureScaleV));
+                    GL.NamedBufferData(bufferHandle, quadCount * VertexSize * 4 * sizeof(float), rawVertices, BufferUsageHint.DynamicDraw);
+
+                    PerfStats.Active.Count(Counter.ParticleDraw);
+                    GL.DrawElements(PrimitiveType.Triangles, quadCount * 6, DrawElementsType.UnsignedShort, 0);
                 }
-
-                // Color uniform
-                shader.SetUniform3("uColor", particle.Color);
-                shader.SetUniform1("uAlpha", particle.Alpha * particle.AlphaAlternate);
-
-                PerfStats.Active.Count(Counter.ParticleDraw);
-                GL.DrawArrays(PrimitiveType.TriangleStrip, 0, 4);
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(rawVertices);
             }
 
             GL.Enable(EnableCap.CullFace);
