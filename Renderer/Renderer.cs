@@ -598,6 +598,15 @@ public class Renderer
 
                 GrabFramebufferCopy(renderContext.Framebuffer, copyColor, copyDepth);
 
+                // These live on reserved units nothing else touches, so binding them once here is enough
+                // for the rest of the frame. Draws that go through MeshBatchRenderer rebind them anyway,
+                // but self-rendering nodes do not, and a translucent node can sort ahead of every material
+                // draw in the pass -- without this it would read whatever the unit held last frame.
+                foreach (var (slot, _, texture) in Textures)
+                {
+                    GL.BindTextureUnit((int)slot, texture.Handle);
+                }
+
                 if (generateDepthPyramid)
                 {
                     Debug.Assert(ResolvedSceneColor != null && ResolvedSceneDepth != null);
