@@ -1,4 +1,4 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -97,6 +97,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         private readonly int[] remappingTable;
         private bool transformDirty;
 
+
         /// <summary>Stand-in for the scene mirror while this model has no transform slot, so the bounding
         /// box a skinning write refreshes stays correct until it gets one.</summary>
         private OpenTK.Mathematics.Matrix3x4[]? skinningScratch;
@@ -177,6 +178,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
 
             LoadMeshes(model);
             UpdateBoundingBox();
+
             LoadAnimations(model, embeddedAnimationsOnly: isWorldPreview);
 
             SetCharacterEyeRenderParams();
@@ -653,19 +655,7 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                     boneTransforms[i] = (bone * objectToWorld).To3x4();
                 }
 
-                UpdateBoundingBox(); // Reset back to the mesh bbox
-                var meshBoundingBox = LocalBoundingBox;
-                var newBoundingBox = meshBoundingBox;
-
-                var first = true;
-                foreach (var matrix in modelBones)
-                {
-                    var bbox = meshBoundingBox.Transform(matrix);
-                    newBoundingBox = first ? bbox : newBoundingBox.Union(bbox);
-                    first = false;
-                }
-
-                LocalBoundingBox = newBoundingBox;
+                UpdateAnimatedBoundingBox();
             }
             finally
             {
@@ -919,6 +909,36 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 LocalBoundingBox = first ? mesh.BoundingBox : LocalBoundingBox.Union(mesh.BoundingBox);
                 first = false;
             }
+        }
+
+        /// <summary>
+        /// Fits the local bounding box to the current pose by placing each bone's authored sphere at that
+        /// bone's posed origin. Replaces sweeping the whole mesh box through every bone's skinning matrix,
+        /// which cost a matrix transform per bone and produced a box far larger than the model.
+        /// </summary>
+        private void UpdateAnimatedBoundingBox()
+        {
+            if (AnimationController.Skeleton.BoneSpheres.Length == 0)
+            {
+                return;
+            }
+
+            var spheres = AnimationController.Skeleton.BoneSpheres;
+            var pose = AnimationController.Pose;
+
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+
+            for (var boneIndex = 0; boneIndex < spheres.Length; boneIndex++)
+            {
+                var radius = new Vector3(spheres[boneIndex]);
+                var origin = pose[boneIndex].Translation;
+
+                min = Vector3.Min(min, origin - radius);
+                max = Vector3.Max(max, origin + radius);
+            }
+
+            LocalBoundingBox = new AABB(min, max);
         }
 
 #if DEBUG

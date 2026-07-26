@@ -31,6 +31,13 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
         public Bone? ClothSimulationRoot { get; private set; }
 
         /// <summary>
+        /// Gets the authored bounding sphere radius of each bone, in model space, covering the vertices
+        /// weighted to it. Zero for bones that carry no geometry, which is most of a skeleton. Empty when
+        /// the skeleton was not built from model data.
+        /// </summary>
+        public float[] BoneSpheres { get; private set; } = [];
+
+        /// <summary>
         /// Gets a bone by its <see cref="StringToken"/> hash.
         /// </summary>
         public Bone? this[uint hash]
@@ -126,6 +133,11 @@ namespace ValveResourceFormat.ResourceTypes.ModelAnimation
 
             var boneCount = boneNames.Length;
             Bones = new Bone[boneCount];
+
+            if (skeletonData.ContainsKey("m_boneSphere"))
+            {
+                BoneSpheres = skeletonData.GetFloatArray("m_boneSphere");
+            }
 
             for (var i = 0; i < boneCount; i++)
             {
