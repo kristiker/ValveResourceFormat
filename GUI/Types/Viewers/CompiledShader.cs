@@ -281,7 +281,7 @@ namespace GUI.Types.Viewers
             else if (e.Node.Tag is VfxShaderFile shaderFile)
             {
                 // TODO: Perhaps these tabs can also be removed, but currently required for the byte viewer
-                control.TextBox.Text = shaderFile.GetDecompiledFile();
+                control.TextBox.Text = shaderFile.GetDecompiledFile(SpirvReflectionOptions.Clean);
 
                 /*
                 TODO: We need to display the bytecode somehow
