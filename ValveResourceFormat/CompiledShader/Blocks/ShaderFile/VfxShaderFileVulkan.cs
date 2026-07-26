@@ -341,8 +341,16 @@ public class VfxShaderFileVulkan : VfxShaderFile
     /// When every backend fails, the errors are returned as comments.
     /// </remarks>
     public override string GetDecompiledFile()
+        => GetDecompiledFile(backend: null, SpirvReflectionOptions.Default);
+
+    /// <summary>
+    /// Decompiles SPIR-V bytecode to a specific target language.
+    /// </summary>
+    /// <param name="backend">The backend to use, or null to try HLSL and then fall back to GLSL.</param>
+    /// <param name="options">Controls how the decompiled source is post-processed.</param>
+    public string GetDecompiledFile(Backend? backend, SpirvReflectionOptions options)
     {
-        TryGetDecompiledFile(out var code);
+        TryGetDecompiledFile(backend, options, out var code);
         return code;
     }
 
@@ -352,14 +360,27 @@ public class VfxShaderFileVulkan : VfxShaderFile
     /// <param name="code">The decompiled code, or the errors of each backend as comments when every backend failed.</param>
     /// <returns><see langword="true"/> if a backend succeeded.</returns>
     public bool TryGetDecompiledFile(out string code)
+        => TryGetDecompiledFile(backend: null, SpirvReflectionOptions.Default, out code);
+
+    /// <summary>
+    /// Decompiles SPIR-V bytecode to a specific target language.
+    /// </summary>
+    /// <param name="backend">The backend to use, or null to try HLSL and then fall back to GLSL.</param>
+    /// <param name="options">Controls how the decompiled source is post-processed.</param>
+    /// <param name="code">The decompiled code, or the errors of each backend as comments when every backend failed.</param>
+    /// <returns><see langword="true"/> if a backend succeeded.</returns>
+    public bool TryGetDecompiledFile(Backend? backend, SpirvReflectionOptions options, out string code)
     {
         using var buffer = new StringWriter(CultureInfo.InvariantCulture);
 
-        var backendsToTry = new[] { Backend.HLSL, Backend.GLSL, /* Backend.MSL, */ };
+        var backendsToTry = backend.HasValue
+            ? [backend.Value]
+            : new[] { Backend.HLSL, Backend.GLSL, /* Backend.MSL, */ };
+
         for (var i = 0; i < backendsToTry.Length; i++)
         {
-            var backend = backendsToTry[i];
-            var success = ShaderSpirvReflection.ReflectSpirv(this, backend, out var backendCode);
+            var currentBackend = backendsToTry[i];
+            var success = ShaderSpirvReflection.ReflectSpirv(this, currentBackend, options, out var backendCode);
             if (success)
             {
                 buffer.Write(backendCode);
@@ -367,7 +388,7 @@ public class VfxShaderFileVulkan : VfxShaderFile
                 return true;
             }
 
-            buffer.WriteLine($"// SPIR-V reflection failed for backend {backend}:");
+            buffer.WriteLine($"// SPIR-V reflection failed for backend {currentBackend}:");
 
             foreach (var line in backendCode.AsSpan().EnumerateLines())
             {
