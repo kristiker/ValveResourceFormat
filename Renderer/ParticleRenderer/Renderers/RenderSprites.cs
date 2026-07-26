@@ -17,8 +17,8 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
     {
         private const string ShaderName = "vrf.particle_sprite";
         // One set per particle, not per vertex: position 3, right 3, up 3, colour 4, uv rect 4,
-        // next-frame uv rect 4, frame blend 1.
-        private const int VertexSize = 22;
+        // next-frame uv rect 4, frame blend 1, per-particle scalars 4, rotation 3, shader extra data 2.
+        private const int VertexSize = 31;
 
         // The shader keeps one sampler per layer, so this is a hard ceiling rather than a preference.
         private const int MaxTextureLayers = 5;
@@ -33,6 +33,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private static readonly string[] LayerBlendUniforms = ["uLayerBlend[0]", "uLayerBlend[1]", "uLayerBlend[2]", "uLayerBlend[3]", "uLayerBlend[4]"];
         private static readonly string[] LayerUvTransformUniforms = ["uLayerUvTransform[0]", "uLayerUvTransform[1]", "uLayerUvTransform[2]", "uLayerUvTransform[3]", "uLayerUvTransform[4]"];
         private static readonly string[] LayerUvRotationUniforms = ["uLayerUvRotation[0]", "uLayerUvRotation[1]", "uLayerUvRotation[2]", "uLayerUvRotation[3]", "uLayerUvRotation[4]"];
+        private static readonly string[] LayerPerParticleUniforms = ["uLayerPerParticleSelectors[0]", "uLayerPerParticleSelectors[1]", "uLayerPerParticleSelectors[2]", "uLayerPerParticleSelectors[3]", "uLayerPerParticleSelectors[4]"];
 
         /// <summary>One entry of m_vecTexturesInput: a texture plus how it folds into the layers below it.</summary>
         private sealed class TextureLayer(RenderTexture texture)
@@ -48,6 +49,44 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             public INumberProvider OffsetU { get; init; } = ZeroNumberProvider;
             public INumberProvider OffsetV { get; init; } = ZeroNumberProvider;
             public INumberProvider UvRotation { get; init; } = ZeroNumberProvider;
+
+            /// <summary>
+            /// The m_nPerParticle* selectors, one <see cref="SpriteCardPerParticleScale"/> per nibble, with
+            /// m_bRandomizeOffsets in bit 28. Packed the way the real shader packs its own field selectors,
+            /// so the whole set travels as one uniform.
+            /// </summary>
+            public int PerParticleSelectors { get; init; }
+        }
+
+        private const int PpSlotScale = 0;
+        private const int PpSlotOffsetU = 1;
+        private const int PpSlotOffsetV = 2;
+        private const int PpSlotRotation = 3;
+        private const int PpSlotBlend = 4;
+        private const int PpSlotZoom = 5;
+        private const int PpSlotDistortion = 6;
+        private const int PpRandomizeOffsetsBit = 28;
+
+        private static int PackPerParticleSelectors(ParticleDefinitionParser? controls)
+        {
+            if (controls is null)
+            {
+                return 0;
+            }
+
+            static int Slot(ParticleDefinitionParser parser, string key, int slot)
+                => ((int)parser.Enum<SpriteCardPerParticleScale>(key) & 15) << (slot * 4);
+
+            var parsed = controls.Value;
+
+            return Slot(parsed, "m_nPerParticleScale", PpSlotScale)
+                | Slot(parsed, "m_nPerParticleOffsetU", PpSlotOffsetU)
+                | Slot(parsed, "m_nPerParticleOffsetV", PpSlotOffsetV)
+                | Slot(parsed, "m_nPerParticleRotation", PpSlotRotation)
+                | Slot(parsed, "m_nPerParticleBlend", PpSlotBlend)
+                | Slot(parsed, "m_nPerParticleZoom", PpSlotZoom)
+                | Slot(parsed, "m_nPerParticleDistortion", PpSlotDistortion)
+                | (parsed.Boolean("m_bRandomizeOffsets", false) ? 1 << PpRandomizeOffsetsBit : 0);
         }
 
         private readonly Shader shader;
@@ -168,6 +207,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         OffsetU = controls?.NumberProvider("m_flFinalTextureOffsetU", ZeroNumberProvider) ?? ZeroNumberProvider,
                         OffsetV = controls?.NumberProvider("m_flFinalTextureOffsetV", ZeroNumberProvider) ?? ZeroNumberProvider,
                         UvRotation = controls?.NumberProvider("m_flFinalTextureUVRotation", ZeroNumberProvider) ?? ZeroNumberProvider,
+                        PerParticleSelectors = PackPerParticleSelectors(controls),
                     });
                 }
 
@@ -274,6 +314,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             SetupAttribute("aUvRect", 4, 13);
             SetupAttribute("aUvRectNextFrame", 4, 17);
             SetupAttribute("aFrameBlend", 1, 21);
+            SetupAttribute("aParticleScalars", 4, 22);
+            SetupAttribute("aRotation", 3, 26);
+            SetupAttribute("aShaderExtraData", 2, 29);
 
             return vao;
         }
@@ -474,6 +517,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     var uvNextMin = Vector2.Zero;
                     var uvNextMax = Vector2.One;
                     var frameBlend = 0f;
+                    var animationFrame = 0f;
 
                     // The sheet sequence comes from the base layer; extra layers ride its frame timing.
                     var spriteSheetData = layers[0].Texture.SpriteSheetData;
@@ -487,6 +531,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
                         var frameId = (int)MathF.Floor(frame);
                         frameBlend = frame - frameId;
+                        animationFrame = frame;
 
                         // TODO: Support more than one image per frame?
                         var currentImage = sequence.Frames[ResolveSheetFrame(frameId, sequence.Frames.Length, sequence.Clamp)].Images[0];
@@ -507,6 +552,21 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     rawVertices[quadStart + 19] = uvNextMax.X;
                     rawVertices[quadStart + 20] = uvNextMax.Y;
                     rawVertices[quadStart + 21] = frameBlend;
+
+                    // The scalars a SpriteCardPerParticleScale_t selector can name. The particle id stands
+                    // in for the reference's per-particle seed: the shader fracts it against a different
+                    // multiplier per control so two controls driven by RANDOM do not move together.
+                    rawVertices[quadStart + 22] = particle.ParticleID;
+                    rawVertices[quadStart + 23] = particle.Age;
+                    rawVertices[quadStart + 24] = animationFrame;
+                    rawVertices[quadStart + 25] = particle.Radius;
+                    rawVertices[quadStart + 26] = particle.Rotation.Z; // roll
+                    rawVertices[quadStart + 27] = particle.Rotation.X; // yaw
+                    rawVertices[quadStart + 28] = particle.Rotation.Y; // pitch
+                    // Always 0 today: the particle struct has no storage for these two fields yet, so
+                    // GetScalar falls through. Routed through it anyway so they light up if it gains them.
+                    rawVertices[quadStart + 29] = particle.GetScalar(ParticleField.ShaderExtraData1);
+                    rawVertices[quadStart + 30] = particle.GetScalar(ParticleField.ShaderExtraData2);
 
                     i++;
                 }
@@ -562,8 +622,18 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
             shader.SetUniform1("uLayerCount", layers.Length);
 
-            for (var layer = 0; layer < layers.Length; layer++)
+            // Every slot is written, not just the live ones: the vertex shader builds all five layer uvs
+            // unconditionally, and an unwritten transform would leave it dividing by a zero scale.
+            for (var layer = 0; layer < MaxTextureLayers; layer++)
             {
+                if (layer >= layers.Length)
+                {
+                    shader.SetUniform4(LayerUvTransformUniforms[layer], new Vector4(0f, 0f, 1f, 1f));
+                    shader.SetUniform1(LayerUvRotationUniforms[layer], 0f);
+                    shader.SetUniform1(LayerPerParticleUniforms[layer], 0);
+                    continue;
+                }
+
                 shader.SetUniform1(LayerChannelsUniforms[layer], (int)layers[layer].Channels);
                 shader.SetUniform1(LayerBlendModeUniforms[layer], (int)layers[layer].BlendMode);
                 shader.SetUniform1(LayerBlendUniforms[layer], layers[layer].Blend.NextNumber(systemRenderState));
@@ -579,6 +649,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     scaleV == 0f ? 1f : scaleV));
 
                 shader.SetUniform1(LayerUvRotationUniforms[layer], layers[layer].UvRotation.NextNumber(systemRenderState));
+                shader.SetUniform1(LayerPerParticleUniforms[layer], layers[layer].PerParticleSelectors);
             }
 
             // TODO: This formula is a guess but still seems too bright compared to valve particles

@@ -103,7 +103,7 @@ in vec2 vTexCoordNextFrameOut;
 in float vFrameBlend;
 in vec4 vColor;
 in vec3 vFragPosition;
-in vec2 vUvCorner;
+in vec2 vLayerUv[MAX_TEXTURE_LAYERS];
 
 out vec4 fragColor;
 
@@ -235,9 +235,9 @@ void main(void) {
 
     for (int i = 0; i < uLayerCount; ++i)
     {
-        // Layer 0's uv already went through its own transform and its sheet frame in the vertex shader.
-        // The extra layers have no sequence of their own, so they tile the raw texture.
-        vec4 layer = SampleLayer(i, i == 0 ? vTexCoordOut : ApplyLayerUvTransform(vUvCorner, i));
+        // Layer 0's uv went through its sheet frame in the vertex shader; the extra layers have no
+        // sequence of their own, so they tile the raw texture from their own transformed corner.
+        vec4 layer = SampleLayer(i, i == 0 ? vTexCoordOut : vLayerUv[i]);
 
         // The sheet sequence belongs to the base texture, so only layer 0 cross-fades frames.
         if (i == 0 && uBlendFrames != 0)

@@ -12,6 +12,10 @@ layout (location = 4) in vec4 aVertexColor;
 layout (location = 5) in vec4 aUvRect;
 layout (location = 6) in vec4 aUvRectNextFrame;
 layout (location = 7) in float aFrameBlend;
+// The scalars a SpriteCardPerParticleScale_t selector can name.
+layout (location = 8) in vec4 aParticleScalars;   // seed, age, animation frame, radius
+layout (location = 9) in vec3 aRotation;          // roll, yaw, pitch
+layout (location = 10) in vec2 aShaderExtraData;
 
 #include "common/utils.slang"
 #include "common/ViewConstants.slang"
@@ -26,8 +30,9 @@ out vec2 vTexCoordNextFrameOut;
 out float vFrameBlend;
 out vec4 vColor;
 out vec3 vFragPosition;
-// The card's own corner in uv space, for the extra layers to transform at sample time.
-out vec2 vUvCorner;
+// Layer 0 rides vTexCoordOut, since its uv has to be mapped through the sheet frame; the extra layers
+// carry theirs here.
+out vec2 vLayerUv[MAX_TEXTURE_LAYERS];
 
 void main(void) {
     // 0 -> (-1,-1), 1 -> (-1,+1), 2 -> (+1,-1), 3 -> (+1,+1): a triangle strip over the quad.
@@ -42,12 +47,17 @@ void main(void) {
     }
 
     // v runs opposite to the corner's y, so the rectangle's max lands on the -1 corner.
-    vUvCorner = vec2(unitCorner.x, 1.0 - unitCorner.y);
+    vec2 uvCorner = vec2(unitCorner.x, 1.0 - unitCorner.y);
+
+    for (int i = 0; i < MAX_TEXTURE_LAYERS; ++i)
+    {
+        vLayerUv[i] = ApplyLayerUvTransform(uvCorner, i, aParticleScalars, aRotation,
+            aShaderExtraData, aVertexColor.a);
+    }
 
     // Layer 0's transformed corner is then mapped into its sheet frame, for both frames.
-    vec2 baseCorner = ApplyLayerUvTransform(vUvCorner, 0);
-    vTexCoordOut = mix(aUvRect.xy, aUvRect.zw, baseCorner);
-    vTexCoordNextFrameOut = mix(aUvRectNextFrame.xy, aUvRectNextFrame.zw, baseCorner);
+    vTexCoordOut = mix(aUvRect.xy, aUvRect.zw, vLayerUv[0]);
+    vTexCoordNextFrameOut = mix(aUvRectNextFrame.xy, aUvRectNextFrame.zw, vLayerUv[0]);
     vFrameBlend = aFrameBlend;
 
     vec3 positionWs = aPosition + (aRight * corner.x) + (aUp * corner.y);
