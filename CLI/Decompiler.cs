@@ -67,7 +67,8 @@ namespace CLI
         private bool ShaderListCombos;
         private bool ShaderDumpAll;
         private bool ShaderClean;
-        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos || ShaderDumpAll;
+        private bool ShaderCbuffers;
+        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos || ShaderDumpAll || ShaderCbuffers;
 
         // The options below are for collecting stats and testing exporting, this is mostly intended for VRF developers, not end users.
         private bool CollectStats;
@@ -128,6 +129,7 @@ namespace CLI
         /// <param name="shader_list_combos">List every compiled variant of a shader with its combo values and bytecode hash.</param>
         /// <param name="shader_dump_all">Write every unique compiled variant of a shader to the output folder, along with a manifest.</param>
         /// <param name="shader_clean">Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.</param>
+        /// <param name="shader_cbuffers">Print the constant buffer and resource names a DirectX shader's reflection chunk retains. Only the "_pc_" build of a shader has them; the "_vulkan_" build stores no names at all.</param>
         /// <param name="stats">Collect stats on all input files and then print them. Use "-i steam" to scan all Steam libraries.</param>
         /// <param name="stats_with_loader">When using --stats, use GameFileLoader to load dependencies.</param>
         /// <param name="stats_print_files">When using --stats, print example file names for each stat.</param>
@@ -167,6 +169,7 @@ namespace CLI
             bool shader_list_combos = false,
             bool shader_dump_all = false,
             bool shader_clean = false,
+            bool shader_cbuffers = false,
 
             bool stats = false,
             bool stats_with_loader = false,
@@ -207,6 +210,7 @@ namespace CLI
             ShaderListCombos = shader_list_combos;
             ShaderDumpAll = shader_dump_all;
             ShaderClean = shader_clean;
+            ShaderCbuffers = shader_cbuffers;
 
             CollectStats = stats;
             StatsWithLoader = stats_with_loader;
@@ -861,6 +865,11 @@ namespace CLI
                         ListShaderCombos(shader);
                     }
 
+                    if (ShaderCbuffers)
+                    {
+                        PrintShaderReflection(shader);
+                    }
+
                     if (ShaderCombo != null)
                     {
                         DecompileShaderCombo(shader, path);
@@ -933,6 +942,37 @@ namespace CLI
 
             Console.WriteLine();
             Console.WriteLine($"--- {count} variants across {shader.StaticComboEntries.Count} static combos, {uniqueHashes.Count} of them unique");
+        }
+
+        /// <summary>
+        /// Prints the real constant buffer and resource names out of a DirectX shader's reflection chunk.
+        /// </summary>
+        /// <remarks>
+        /// Reflection is stripped per program rather than per variant, but not consistently, so this walks the
+        /// variants until it finds one that kept its chunk instead of giving up on the first.
+        /// </remarks>
+        private static void PrintShaderReflection(VfxProgramData shader)
+        {
+            var scanned = 0;
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                scanned++;
+
+                if (variant.ShaderFile is VfxShaderFileDXBC dxbc && dxbc.TryGetReflection(out var reflection))
+                {
+                    Console.WriteLine($"// Read from variant 0x{variant.StaticComboId:x08} / 0x{variant.DynamicComboId:x04}," +
+                        $" the first of {scanned} scanned that kept its reflection chunk.");
+                    Console.WriteLine(reflection.ToStringListing());
+                    return;
+                }
+            }
+
+            Console.Error.WriteLine(scanned == 0
+                ? "This shader has no compiled variants to read."
+                : $"None of the {scanned} variants retain an RDEF reflection chunk. Only DirectX builds carry one, " +
+                  "so check that this is the \"_pc_\" file rather than the \"_vulkan_\" or \"_pcgl_\" one. Failing that, " +
+                  "another program of the same shader may declare the same buffers and still have its chunk.");
         }
 
         /// <summary>

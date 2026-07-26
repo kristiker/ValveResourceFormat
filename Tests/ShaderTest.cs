@@ -1,6 +1,9 @@
+using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using NUnit.Framework;
 using ValveResourceFormat;
 using ValveResourceFormat.CompiledShader;
@@ -634,6 +637,225 @@ namespace Tests
                     Assert.That(parsed.GroupOrder, Is.EqualTo(expected.GroupOrder));
                     Assert.That(parsed.VariableOrder, Is.EqualTo(expected.VariableOrder));
                 }
+            }
+        }
+
+        [Test]
+        public void TestDxbcReflectionShaderModel4()
+        {
+            // Reflection is stripped from most shipped blobs. This fixture is one of the few checked in that
+            // keeps a populated one, and being shader model 4 it exercises the 24 byte variable descriptor.
+            using var shader = new VfxProgramData();
+            shader.Read(Path.Combine(ShadersDir, "vcs64_error_pc_40_vs.vcs"));
+
+            DxbcReflection? reflection = null;
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                if (variant.ShaderFile is VfxShaderFileDXBC dxbc && dxbc.TryGetReflection(out reflection))
+                {
+                    break;
+                }
+            }
+
+            Assert.That(reflection, Is.Not.Null, "the fixture was expected to retain a populated RDEF chunk");
+
+            string[] expectedBindings =
+                ["g_tTransformTexture_sampler", "g_tTransformTexture", "PerViewConstantBuffer_t"];
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(reflection!.ShaderModelMajor, Is.EqualTo(4));
+                Assert.That(reflection.Creator, Does.Contain("Shader Compiler"));
+                Assert.That(reflection.ResourceBindings.Select(b => b.Name), Is.EquivalentTo(expectedBindings));
+                Assert.That(reflection.ConstantBuffers, Has.Count.EqualTo(1));
+            }
+
+            var buffer = reflection!.ConstantBuffers[0];
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(buffer.Name, Is.EqualTo("PerViewConstantBuffer_t"));
+                Assert.That(buffer.Members, Has.Count.EqualTo(39));
+                Assert.That(buffer.Members[0].Name, Is.EqualTo("g_matWorldToProjection"));
+                Assert.That(buffer.Members[0].PackOffset, Is.EqualTo("c0"));
+                Assert.That(buffer.Members[0].Size, Is.EqualTo(64));
+                Assert.That(buffer.Members[0].IsUsed, Is.True);
+            }
+
+            // A wrong descriptor stride reads names from the middle of other records, so requiring every one to
+            // be an identifier that sits inside the buffer is what actually pins the layout down.
+            foreach (var member in buffer.Members)
+            {
+                Assert.That(member.Name, Does.Match("^[A-Za-z_$][A-Za-z0-9_$]*$"));
+                Assert.That(member.Size, Is.GreaterThan(0));
+                Assert.That(member.Offset + member.Size, Is.LessThanOrEqualTo(buffer.Size));
+            }
+        }
+
+        [Test]
+        public void TestDxbcReflectionShaderModel5Stride()
+        {
+            // Every CS2 shader is shader model 5, where an "RD11" header declares a 40 byte variable descriptor
+            // instead of shader model 4's 24. No checked in fixture has a populated SM5 chunk -- the SM5 ones
+            // keep the chunk but with emptied tables -- so this builds a minimal container to cover that path.
+            var bytecode = BuildShaderModel5Rdef();
+
+            Assert.That(DxbcReflection.TryParse(bytecode, out var parsed), Is.True);
+            Assert.That(parsed, Is.Not.Null);
+
+            var reflection = parsed!;
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(reflection.ShaderModelMajor, Is.EqualTo(5));
+                Assert.That(reflection.ShaderModelMinor, Is.EqualTo(0));
+                Assert.That(reflection.Creator, Is.EqualTo("test"));
+
+                Assert.That(reflection.ResourceBindings, Has.Count.EqualTo(1));
+                Assert.That(reflection.ResourceBindings[0].Name, Is.EqualTo("g_tTexture"));
+                Assert.That(reflection.ResourceBindings[0].Type, Is.EqualTo(DxbcResourceType.Texture));
+                Assert.That(reflection.ResourceBindings[0].Register, Is.EqualTo("t7"));
+
+                Assert.That(reflection.ConstantBuffers, Has.Count.EqualTo(1));
+            }
+
+            var buffer = reflection.ConstantBuffers[0];
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(buffer.Name, Is.EqualTo("MyControls_t"));
+                Assert.That(buffer.Members, Has.Count.EqualTo(2));
+
+                // Reading these at a 24 byte stride would land the second name inside the first record.
+                Assert.That(buffer.Members[0].Name, Is.EqualTo("g_vFirst"));
+                Assert.That(buffer.Members[0].PackOffset, Is.EqualTo("c0"));
+                Assert.That(buffer.Members[0].IsUsed, Is.True);
+
+                Assert.That(buffer.Members[1].Name, Is.EqualTo("g_flSecond"));
+                Assert.That(buffer.Members[1].PackOffset, Is.EqualTo("c1.z"));
+                Assert.That(buffer.Members[1].IsUsed, Is.False);
+            }
+        }
+
+        /// <summary>
+        /// Builds the smallest DXBC container that carries a populated shader model 5 RDEF chunk: one constant
+        /// buffer with two members and one texture binding.
+        /// </summary>
+        private static byte[] BuildShaderModel5Rdef()
+        {
+            const int ConstantBufferDescriptor = 24;
+            const int ResourceBindingDescriptor = 32;
+            const int VariableDescriptor = 40;
+
+            const int HeaderSize = 60;                                  // 28 byte header plus the RD11 block
+            const int CbufferTable = HeaderSize;
+            const int VariableTable = CbufferTable + ConstantBufferDescriptor;
+            const int ResourceTable = VariableTable + (2 * VariableDescriptor);
+            const int StringTable = ResourceTable + ResourceBindingDescriptor;
+
+            var strings = new List<byte>();
+
+            int AddString(string value)
+            {
+                var at = StringTable + strings.Count;
+                strings.AddRange(Encoding.ASCII.GetBytes(value));
+                strings.Add(0);
+                return at;
+            }
+
+            var creatorOffset = AddString("test");
+            var bufferNameOffset = AddString("MyControls_t");
+            var firstNameOffset = AddString("g_vFirst");
+            var secondNameOffset = AddString("g_flSecond");
+            var textureNameOffset = AddString("g_tTexture");
+
+            var payload = new byte[StringTable + strings.Count];
+
+            void Write(int at, int value) => BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(at), value);
+
+            Write(0, 1);                                                // constant buffer count
+            Write(4, CbufferTable);
+            Write(8, 1);                                                // resource binding count
+            Write(12, ResourceTable);
+            payload[16] = 0;                                            // shader model minor
+            payload[17] = 5;                                            // shader model major
+            BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(18), 0xFFFE);
+            Write(20, 0);                                               // flags
+            Write(24, creatorOffset);
+            "RD11"u8.CopyTo(payload.AsSpan(28));
+            Write(32, HeaderSize);
+            Write(36, ConstantBufferDescriptor);
+            Write(40, ResourceBindingDescriptor);
+            Write(44, VariableDescriptor);                              // the size this test is about
+            Write(48, 36);
+            Write(52, 12);
+            Write(56, 0);
+
+            Write(CbufferTable + 0, bufferNameOffset);
+            Write(CbufferTable + 4, 2);                                 // member count
+            Write(CbufferTable + 8, VariableTable);
+            Write(CbufferTable + 12, 32);                               // buffer size
+
+            Write(VariableTable + 0, firstNameOffset);
+            Write(VariableTable + 4, 0);                                // c0
+            Write(VariableTable + 8, 16);
+            Write(VariableTable + 12, 2);                               // used
+
+            Write(VariableTable + VariableDescriptor + 0, secondNameOffset);
+            Write(VariableTable + VariableDescriptor + 4, 24);           // c1.z
+            Write(VariableTable + VariableDescriptor + 8, 4);
+            Write(VariableTable + VariableDescriptor + 12, 0);           // unused
+
+            Write(ResourceTable + 0, textureNameOffset);
+            Write(ResourceTable + 4, (int)DxbcResourceType.Texture);
+            Write(ResourceTable + 20, 7);                               // bind point
+            Write(ResourceTable + 24, 1);                               // bind count
+
+            strings.CopyTo(payload, StringTable);
+
+            // Wrap the payload in a container: magic, digest, version, size, chunk count, offset table.
+            var container = new byte[36 + 8 + payload.Length];
+            var outer = container.AsSpan();
+            "DXBC"u8.CopyTo(outer);
+            BinaryPrimitives.WriteInt32LittleEndian(outer[20..], 1);
+            BinaryPrimitives.WriteInt32LittleEndian(outer[24..], container.Length);
+            BinaryPrimitives.WriteInt32LittleEndian(outer[28..], 1);
+            BinaryPrimitives.WriteInt32LittleEndian(outer[32..], 36);
+            "RDEF"u8.CopyTo(outer[36..]);
+            BinaryPrimitives.WriteInt32LittleEndian(outer[40..], payload.Length);
+            payload.CopyTo(container, 44);
+
+            return container;
+        }
+
+        [Test]
+        public void TestDxbcReflectionAbsentFromNonDirectXShaders()
+        {
+            // A Vulkan build stores SPIR-V rather than DXBC, so there is nothing to find. The API has to say so
+            // rather than throw, because a stripped or non-DirectX blob is the common case, not an error.
+            using var shader = new VfxProgramData();
+            shader.Read(Path.Combine(ShadersDir, "vcs64_error_vulkan_40_vs.vcs"));
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                Assert.That(variant.ShaderFile, Is.Not.InstanceOf<VfxShaderFileDXBC>());
+                Assert.That(DxbcReflection.TryParse(variant.ShaderFile.Bytecode, out var reflection), Is.False);
+                Assert.That(reflection, Is.Null);
+            }
+        }
+
+        [Test]
+        public void TestDxbcPackOffsetFormatting()
+        {
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(new DxbcConstantBufferMember("a", 0, 4, true).PackOffset, Is.EqualTo("c0"));
+                Assert.That(new DxbcConstantBufferMember("a", 4, 4, true).PackOffset, Is.EqualTo("c0.y"));
+                Assert.That(new DxbcConstantBufferMember("a", 8, 4, true).PackOffset, Is.EqualTo("c0.z"));
+                Assert.That(new DxbcConstantBufferMember("a", 12, 4, true).PackOffset, Is.EqualTo("c0.w"));
+                Assert.That(new DxbcConstantBufferMember("a", 184, 8, true).PackOffset, Is.EqualTo("c11.z"));
+                Assert.That(new DxbcConstantBufferMember("a", 256, 16, true).PackOffset, Is.EqualTo("c16"));
             }
         }
     }
