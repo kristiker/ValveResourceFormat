@@ -25,6 +25,7 @@ using ValveResourceFormat.TextureDecoders;
 using ValveResourceFormat.ToolsAssetInfo;
 using ValveResourceFormat.Utils;
 using ValveResourceFormat.ValveFont;
+using Backend = Vortice.SpirvCross.Backend;
 
 namespace CLI
 {
@@ -137,6 +138,9 @@ namespace CLI
         /// <param name="gltf_compose_additive">Compose additive animations over the bind pose instead of exporting their delta tracks.</param>
         /// <param name="shader_list_combos">List every compiled variant of a shader with its combo values and bytecode hash. For a material, only the variants of its shader that the material selects.</param>
         /// <param name="shader_combo">Decompile the shader variant matching these combo values, example: "S_ALPHA_TEST=1,D_BLEND_WEIGHT_COUNT=4". A bare name means "=1", omitted combos stay at their minimum. For a material, the static combos it selects are used.</param>
+        /// <param name="shader_dump_all">Write every unique compiled variant of a shader to the --output folder, along with a manifest.</param>
+        /// <param name="shader_backend">Language to decompile shader bytecode to. Must be either "glsl" or "hlsl". By default hlsl is attempted first, falling back to glsl.</param>
+        /// <param name="shader_clean">Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.</param>
         /// <param name="tools_asset_info_short">Print only file paths for tools_asset_info files.</param>
         /// <param name="threads">If higher than 1, files are processed concurrently. Only used with --output or --test.</param>
         /// <param name="quiet">-q, When writing to --output or --vpk_create, only print errors and a summary. With the shader options, only print their output.</param>
@@ -179,6 +183,9 @@ namespace CLI
             bool gltf_compose_additive = false,
             bool shader_list_combos = false,
             [HideDefaultValue] string? shader_combo = default,
+            bool shader_dump_all = false,
+            [HideDefaultValue] string? shader_backend = default,
+            bool shader_clean = false,
             bool tools_asset_info_short = false,
 
             int threads = 1,
@@ -298,6 +305,8 @@ namespace CLI
             ToolsAssetInfoShort = tools_asset_info_short;
             ShaderListCombos = shader_list_combos;
             ShaderCombo = shader_combo;
+            ShaderDumpAll = shader_dump_all;
+            ShaderClean = shader_clean;
 
             CollectStats = test;
             StatsWithLoader = test_loader;
@@ -387,7 +396,7 @@ namespace CLI
                 return 1;
             }
 
-            bool[] modes = [OutputFile != null, ListResources, VerifyVPKChecksums, VpkCreatePath != null, ShouldPrintBlockContents, CollectStats, HasShaderOptions];
+            bool[] modes = [OutputFile != null && !ShaderDumpAll, ListResources, VerifyVPKChecksums, VpkCreatePath != null, ShouldPrintBlockContents, CollectStats, HasShaderOptions];
 
             if (modes.Count(mode => mode) > 1)
             {
@@ -481,6 +490,40 @@ namespace CLI
             if (OutputToConsole && (GltfExportFormat != null || CachedManifest))
             {
                 Console.Error.WriteLine("--output - only prints decompiled files, use it without glTF exports or --vpk_cache.");
+                return 1;
+            }
+
+            if (shader_backend != null)
+            {
+                ShaderBackend = shader_backend.ToUpperInvariant() switch
+                {
+                    "GLSL" => Backend.GLSL,
+                    "HLSL" => Backend.HLSL,
+                    _ => null,
+                };
+
+                if (ShaderBackend == null)
+                {
+                    Console.Error.WriteLine("Shader backend must be either 'glsl' or 'hlsl'.");
+                    return 1;
+                }
+            }
+
+            if (ShaderDumpAll && (OutputFile == null || OutputToConsole))
+            {
+                Console.Error.WriteLine("--shader_dump_all requires an --output folder to write to.");
+                return 1;
+            }
+
+            if (ShaderDumpAll && (ShaderCombo != null || ShaderListCombos))
+            {
+                Console.Error.WriteLine("Do not use --shader_dump_all with the other shader options.");
+                return 1;
+            }
+
+            if ((ShaderClean || ShaderBackend != null) && ShaderCombo == null && !ShaderDumpAll)
+            {
+                Console.Error.WriteLine("--shader_clean and --shader_backend require --shader_combo or --shader_dump_all.");
                 return 1;
             }
 
@@ -1137,7 +1180,7 @@ namespace CLI
 
                 if (HasShaderOptions)
                 {
-                    ProcessShaderOptions(shader);
+                    ProcessShaderOptions(shader, path);
                     return;
                 }
 
@@ -1316,7 +1359,9 @@ namespace CLI
         private void ParseVPK(string path, Stream stream)
         {
             // When processing the files inside of the package, they are counted and print their own header instead
-            var processVpkFiles = OutputFile == null && !VerifyVPKChecksums && !ListResources && (CollectStats || ShouldPrintBlockContents || HasShaderOptions);
+            // --shader_dump_all writes the variants itself, so the package is not extracted to the output
+            var processEntries = OutputFile == null || ShaderDumpAll;
+            var processVpkFiles = processEntries && !VerifyVPKChecksums && !ListResources && (CollectStats || ShouldPrintBlockContents || HasShaderOptions);
 
             if (!processVpkFiles && !ListResources)
             {
@@ -1364,7 +1409,7 @@ namespace CLI
 
             Debug.Assert(package.Entries != null);
 
-            if (OutputFile == null)
+            if (processEntries)
             {
                 var orderedEntries = package.Entries.OrderByDescending(x => x.Value.Count).ThenBy(x => x.Key).ToList();
 

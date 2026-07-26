@@ -38,6 +38,9 @@ The binary name is `Source2Viewer-CLI`.
 | `--gltf_compose_additive`    | Compose additive animations over the bind pose instead of exporting their delta tracks.                                                                                                                                                                                                                          |
 | `--shader_list_combos`       | List every compiled variant of a shader with its combo values and bytecode hash. For a material, only the variants of its shader that the material selects.                                                                                                                                                      |
 | `--shader_combo`             | Decompile the shader variant matching these combo values, example: `"S_ALPHA_TEST=1,D_BLEND_WEIGHT_COUNT=4"`. A bare name means `=1`, omitted combos stay at their minimum. For a material, the static combos it selects are used.                                                                               |
+| `--shader_dump_all`          | Write every unique compiled variant of a shader to the `--output` folder, along with a manifest.                                                                                                                                                                                                                 |
+| `--shader_backend`           | Language to decompile shader variants to, `"glsl"` or `"hlsl"`. By default hlsl is attempted first, falling back to glsl.                                                                                                                                                                                        |
+| `--shader_clean`             | Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.                                                                                                                                                                              |
 | `--tools_asset_info_short`   | Print only file paths for tools_asset_info files.                                                                                                                                                                                                                                                                |
 | **Other**                    |                                                                                                                                                                                                                                                                                                                  |
 | `--threads`                  | If higher than 1, files are processed concurrently. Only used with `--output` or `--test`.                                                                                                                                                                                                                       |
@@ -54,7 +57,7 @@ The exit code is `0` on success, `1` for invalid arguments, and `2` when any fil
 
 ### Good to know
 
-- Only one of `--output`, `--vpk_list` (or `--vpk_dir`), `--vpk_verify`, `--vpk_create`, `--block` (or `--all`), `--test`, and the shader options can be used at a time.
+- Only one of `--output`, `--vpk_list` (or `--vpk_dir`), `--vpk_verify`, `--vpk_create`, `--block` (or `--all`), `--test`, and the shader options can be used at a time. `--shader_dump_all` is the exception, it writes to `--output`.
 - Paths starting with `steam:<appid>/` are relative to the installation folder of that Steam app, so `-i steam:730/game/csgo/pak01_dir.vpk` works on any computer with Counter-Strike 2 installed. "Copy full path" in Source 2 Viewer copies `vpk:` links in this form, which can be passed to `--input` to process the file or folder they point to.
 - Pass the `_dir.vpk` of a multi-chunk package (`pak01_dir.vpk`), not one of the numbered `pak01_000.vpk` chunks.
 - Use `--vpk_list` to find the exact path of a file, then filter on it with `--vpk_filepath`. The filter matches the start of the path, so `models/chicken/` works but `chicken` does not, use `*chicken*` instead.
@@ -198,6 +201,16 @@ Pass a material together with one of these options to decompile the variants of 
 ```powershell
 ./Source2Viewer-CLI.exe -i "<game>/pak01_dir.vpk" -f "materials/models/chicken/chick_yellow.vmat_c" --shader_combo ""
 ```
+
+### Dump every variant of a shader
+
+`--shader_clean` renames the SPIR-V id derived identifiers that SPIRV-Cross generates. Those ids differ between variants even when the code is identical, so without it every variant looks different from every other one. With it, variants that compiled to the same code produce the same text and collapse into one file:
+
+```powershell
+./Source2Viewer-CLI.exe -i "<game>/shaders_vulkan_dir.vpk" -f "shaders/vfx/depth_only_vulkan_50_vs.vcs" --shader_dump_all --shader_backend glsl --shader_clean --output "depth_only"
+```
+
+The `manifest.tsv` written alongside maps every combo combination to the file it produced. `--shader_backend` and `--shader_clean` also apply to `--shader_combo`.
 
 ## Argument Stability
 

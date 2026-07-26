@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using TUnit.Assertions.Enums;
 using ValveResourceFormat;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.Utils;
+using Vortice.SpirvCross;
 using static ValveResourceFormat.CompiledShader.ShaderUtilHelpers;
 
 namespace Tests.Formats
@@ -517,6 +519,38 @@ namespace Tests.Formats
 
             var reference = await File.ReadAllTextAsync(referencePath);
             await Assert.That(code).IsEqualTo(reference).IgnoringWhitespace().Because("Spirv reflection output does not match reference.");
+        }
+
+        [Test]
+        public async Task TestSpirvReflectionNormalization()
+        {
+            if (!IsSpirvCrossAvailable())
+            {
+                Skip.Test("There are no native binaries for SPIR-V on arm linux yet.");
+                return;
+            }
+
+            var path = Path.Combine(ShadersDir, "vcs69_zstd5_npr_dummy_vulkan_50_vs.vcs");
+            using var shader = new VfxProgramData();
+            shader.Read(path);
+
+            var shaderFile = (VfxShaderFileVulkan)shader.GetStaticCombo(0).ShaderFiles[0];
+            var raw = shaderFile.GetDecompiledFile(Backend.HLSL, SpirvReflectionOptions.Default);
+            var clean = shaderFile.GetDecompiledFile(Backend.HLSL, SpirvReflectionOptions.Clean);
+
+            using (Assert.Multiple())
+            {
+                // SPIR-V ids differ between combos even when the code is the same, so none may survive.
+                await Assert.That(Regex.IsMatch(raw, @"\b_\d+\b")).IsTrue().Because("Expected the raw output to contain SPIR-V id derived names.");
+                await Assert.That(Regex.IsMatch(clean, @"\b_\d+(?:ident)?\b")).IsFalse();
+
+                await Assert.That(raw).Contains("PerViewConstantBuffer_t_1_g_matWorldToProjection");
+                await Assert.That(clean).Contains("g_matWorldToProjection");
+                await Assert.That(clean).DoesNotContain("PerViewConstantBuffer_t_1_g_matWorldToProjection");
+
+                // Rewriting must not drop or duplicate any statement.
+                await Assert.That(clean.Count(c => c == ';')).IsEqualTo(raw.Count(c => c == ';'));
+            }
         }
 
         [Test]

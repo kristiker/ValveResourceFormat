@@ -1,8 +1,12 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Text;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
+using Backend = Vortice.SpirvCross.Backend;
 
 namespace CLI
 {
@@ -10,13 +14,23 @@ namespace CLI
     {
         private string? ShaderCombo;
         private bool ShaderListCombos;
-        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos;
+        private bool ShaderDumpAll;
+        private bool ShaderClean;
+        private Backend? ShaderBackend;
+        private bool HasShaderOptions => ShaderCombo != null || ShaderListCombos || ShaderDumpAll;
+        private string ShaderSourceExtension => ShaderBackend == Backend.GLSL ? "glsl" : "hlsl";
 
         // Materials in the same package share a loader, so their shaders are only loaded once
         private readonly Dictionary<string, GameFileLoader> ShaderFileLoaders = [];
 
-        private void ProcessShaderOptions(VfxProgramData shader, int[]? staticState = null)
+        private void ProcessShaderOptions(VfxProgramData shader, string path, int[]? staticState = null)
         {
+            if (ShaderDumpAll)
+            {
+                DumpAllShaderCombos(shader, path);
+                return;
+            }
+
             if (ShaderListCombos)
             {
                 ListShaderCombos(shader, staticState);
@@ -44,6 +58,12 @@ namespace CLI
                 }
             }
 
+            if (ShaderDumpAll)
+            {
+                ReportError("--shader_dump_all only applies to shader files, not materials.");
+                return;
+            }
+
             var shader = fileLoader.LoadShader(material.ShaderName);
 
             if (shader.Features == null)
@@ -65,7 +85,7 @@ namespace CLI
                 var staticState = ShaderDataProvider.ResolveStaticConfiguration(shader.Features, program, featureState).StaticConfig;
 
                 Stdout.WriteLine($"// {program.VcsProgramType} program");
-                ProcessShaderOptions(program, staticState);
+                ProcessShaderOptions(program, path, staticState);
             }
         }
 
@@ -188,7 +208,96 @@ namespace CLI
             }
 
             Stdout.WriteLine($"// Static combo 0x{staticComboId:x08}, dynamic combo 0x{dynamicComboId:x04}");
-            Stdout.WriteLine(shaderFile.GetDecompiledFile());
+            Stdout.WriteLine(DecompileShaderFile(shaderFile));
+        }
+
+        /// <summary>
+        /// Writes every unique variant of a shader to the output folder. Variants that compiled to identical
+        /// bytecode share one file, the manifest says which combos map to it.
+        /// </summary>
+        private void DumpAllShaderCombos(VfxProgramData shader, string path)
+        {
+            Debug.Assert(OutputFile != null);
+
+            var baseName = Path.GetFileNameWithoutExtension(path);
+            var directory = Path.Combine(OutputFile, baseName);
+
+            // Two levels of deduplication: combos often share bytecode outright, and bytecode that only differs
+            // in SPIR-V id numbering decompiles to the same source once identifiers have been normalized.
+            var fileNamesByBytecode = new Dictionary<Guid, string>();
+            var fileNamesBySource = new Dictionary<string, string>(StringComparer.Ordinal);
+            var manifest = new StringBuilder();
+            var count = 0;
+
+            manifest.AppendLine("static_combo\tdynamic_combo\tfile\tstatic_values\tdynamic_values");
+
+            foreach (var variant in VfxComboResolver.EnumerateVariants(shader))
+            {
+                count++;
+
+                if (!fileNamesByBytecode.TryGetValue(variant.ShaderFile.HashMD5, out var fileName))
+                {
+                    var decompiled = DecompileShaderFile(variant.ShaderFile);
+                    var body = StripLeadingComments(decompiled);
+
+                    if (!fileNamesBySource.TryGetValue(body, out fileName))
+                    {
+                        fileName = $"{baseName}_{variant.StaticComboId:x08}_{variant.DynamicComboId:x04}.{ShaderSourceExtension}";
+                        fileNamesBySource.Add(body, fileName);
+
+                        DumpFile(Path.Combine(directory, fileName), Encoding.UTF8.GetBytes(decompiled));
+                    }
+
+                    fileNamesByBytecode.Add(variant.ShaderFile.HashMD5, fileName);
+                }
+
+                manifest.Append(CultureInfo.InvariantCulture, $"0x{variant.StaticComboId:x08}\t0x{variant.DynamicComboId:x04}\t{fileName}\t");
+                manifest.Append(variant.StaticCombos).Append('\t').AppendLine(variant.DynamicCombos);
+            }
+
+            DumpFile(Path.Combine(directory, "manifest.tsv"), Encoding.UTF8.GetBytes(manifest.ToString()));
+
+            Console.WriteLine($"--- {count} variants, {fileNamesByBytecode.Count} unique bytecodes, written as {fileNamesBySource.Count} unique files");
+        }
+
+        /// <summary>
+        /// Drops the header comments, which name the combo this variant belongs to and therefore differ
+        /// between variants that are otherwise identical.
+        /// </summary>
+        private static string StripLeadingComments(string decompiled)
+        {
+            var span = decompiled.AsSpan();
+            var offset = 0;
+
+            while (offset < span.Length)
+            {
+                var lineEnd = span[offset..].IndexOf('\n');
+                var line = (lineEnd == -1 ? span[offset..] : span.Slice(offset, lineEnd)).Trim();
+
+                if (line.Length > 0 && !line.StartsWith("//"))
+                {
+                    break;
+                }
+
+                if (lineEnd == -1)
+                {
+                    return string.Empty;
+                }
+
+                offset += lineEnd + 1;
+            }
+
+            return decompiled[offset..];
+        }
+
+        private string DecompileShaderFile(VfxShaderFile shaderFile)
+        {
+            if (shaderFile is VfxShaderFileVulkan vulkan)
+            {
+                return vulkan.GetDecompiledFile(ShaderBackend, ShaderClean ? SpirvReflectionOptions.Clean : SpirvReflectionOptions.Default);
+            }
+
+            return shaderFile.GetDecompiledFile();
         }
 
         private static VfxShaderFile? GetShaderFile(VfxStaticComboData staticCombo, VfxRenderStateInfo renderState)
