@@ -191,6 +191,11 @@ namespace GUI.Types.GLViewers
                 Input.PhysicsWorld = Scene.PhysicsWorld;
             }
 
+            if (Scene.EntityWorld.Entities.Count > 0)
+            {
+                Input.EntityWorld = Scene.EntityWorld;
+            }
+
             SkyboxScene?.Initialize();
 
             if (Scene.FogInfo.CubeFogActive)
@@ -458,6 +463,11 @@ namespace GUI.Types.GLViewers
 
                 Input.MouseSensitivity = Settings.Config.MouseSensitivity;
                 var wasNoClip = Input.NoClip;
+
+                // Movers advance before the player does, so this frame's traces meet them where
+                // they have already arrived rather than a frame behind
+                Scene.EntityWorld.Tick(frameTime);
+
                 Input.Tick(frameTime, pressedKeys, new Vector2(mouseDelta.X, mouseDelta.Y), Renderer.Camera);
                 LastMouseDelta = mouseDelta;
 

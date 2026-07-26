@@ -42,6 +42,12 @@ public class UserInput
     /// <summary>Gets or sets the physics world used for orbit-target and player-movement ray traces.</summary>
     public Rubikon? PhysicsWorld { get; set; }
 
+    /// <summary>
+    /// Gets or sets the simulated entities the player collides with and touches: brush movers and
+    /// trigger volumes. Null when the loaded asset has none.
+    /// </summary>
+    public Entities.EntityWorld? EntityWorld { get; set; }
+
     private Vector3? _orbitTarget;
     private bool _forceUpdate = true;
 

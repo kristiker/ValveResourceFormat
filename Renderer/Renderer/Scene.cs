@@ -74,6 +74,12 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the physics simulation world associated with this scene.</summary>
         public Rubikon? PhysicsWorld { get; set; }
 
+        /// <summary>
+        /// Gets the simulated entities of this scene: movers, trigger volumes and the entity I/O
+        /// wiring between them. Empty until a world is loaded.
+        /// </summary>
+        public Entities.EntityWorld EntityWorld { get; } = new();
+
         /// <summary>Gets or sets the voxel visibility data.</summary>
         public VoxelVisibility? VoxelVisibility { get; set; }
 

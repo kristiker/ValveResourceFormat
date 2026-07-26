@@ -173,6 +173,11 @@ public partial class PlayerMovement
         SlopeClipNormalZ = 1f;
         HasPreviousYaw = false;
         Effects.Reset();
+
+        // Trigger touch only runs while walking, so a push held at the moment noclip took over
+        // would otherwise still be waiting here when movement resumes
+        BaseVelocity = Vector3.Zero;
+        GroundEntity = null;
     }
 
     /// <summary>
@@ -180,6 +185,9 @@ public partial class PlayerMovement
     /// </summary>
     public void ProcessMovement(Camera camera, float deltaTime)
     {
+        ActiveCamera = camera;
+        EnsurePlayerEntityRegistered();
+
         if (Initialize)
         {
             ResetPosition(camera);
@@ -189,6 +197,10 @@ public partial class PlayerMovement
         }
 
         var position = TracePosition;
+
+        // A platform that moved this tick takes its rider with it, before the frame's own movement
+        CarryByGroundEntity(ref position);
+
         var yaw = camera.Yaw;
 
         // Signed view rotation over this frame, wrapped to (-pi, pi]
@@ -302,6 +314,10 @@ public partial class PlayerMovement
             RewindToGroundBandEntry(ref position, moveStart, airMoveDelta, playerHull);
         }
 
+        // Push volumes displace the player on top of their own move. Applied after the ground-band
+        // rewind, which reconstructs the frame from airMoveDelta alone and must not see the push.
+        position = ApplyBaseVelocity(position, deltaTime, playerHull);
+
         CategorizePosition(ref position, playerHull);
         CheckVelocity(ref position);
 
@@ -322,6 +338,11 @@ public partial class PlayerMovement
         }
 
         TracePosition = position;
+
+        // Touch is tested once the frame's position is final, so a volume crossed within a single
+        // frame still registers. A teleport fired from here writes TracePosition directly, which
+        // is why everything below reads it rather than the local.
+        UpdateTriggerTouch();
 
         var horizontalSpeed = new Vector2(Velocity.X, Velocity.Y).Length();
         Effects.Update(deltaTime, horizontalSpeed, StepSmoothingEnabled);
@@ -472,6 +493,7 @@ public partial class PlayerMovement
     private void CategorizePosition(ref Vector3 position, Vector3 halfExtents)
     {
         var result = TraceBBox(position, position + new Vector3(0, 0, -GroundProbeDistance), halfExtents);
+        var groundBrush = LastTraceEntity;
 
         var grounded = IsWalkableGroundHit(result);
 
@@ -487,6 +509,10 @@ public partial class PlayerMovement
 
         // NON_JUMP_VELOCITY guard, on the Z velocity a plain projection would have produced (see SlopeClipNormalZ)
         OnGround = grounded && Velocity.Z * SlopeClipNormalZ < NonJumpVelocity;
+
+        // Only a hit the full hull made identifies the brush underfoot; the quadrant retry probes
+        // with a quarter hull and reports no usable owner
+        GroundEntity = OnGround && snapToHit ? groundBrush : null;
 
         if (OnGround && snapToHit)
         {
@@ -1556,7 +1582,11 @@ public partial class PlayerMovement
         // gap along the normal. The push is validated so it cannot embed into an opposing
         // surface; an opposing corridor is split so both sides keep equal gaps.
         var deficit = SurfaceEpsilon - raw.Distance * approach;
+
+        // The probe overwrites what the sweep hit; the caller must still see the sweep's entity
+        var hitEntity = LastTraceEntity;
         var push = TraceBBoxRaw(from, from + raw.HitNormal * deficit, halfExtents, detectStartSolid: false);
+        LastTraceEntity = hitEntity;
 
         float pushDistance;
 
@@ -1593,6 +1623,9 @@ public partial class PlayerMovement
             var normal = new Vector3(plane.X, plane.Y, plane.Z);
             result.MinimizeWith(TraceStaticPlane(from, to, halfExtents, normal, plane.W, detectStartSolid));
         }
+
+        LastTraceEntity = null;
+        TraceEntityBrushes(from, to, halfExtents, detectStartSolid, ref result);
 
         return result;
     }

@@ -8,6 +8,7 @@ using SteamDatabase.ValvePak;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.NavMesh;
+using ValveResourceFormat.Renderer.Entities;
 using ValveResourceFormat.Renderer.SceneEnvironment;
 using ValveResourceFormat.Renderer.SceneNodes;
 using ValveResourceFormat.ResourceTypes;
@@ -223,6 +224,9 @@ namespace ValveResourceFormat.Renderer.World
             }
 
             ResolveAttachmentParenting();
+
+            // Every lump is in, so movers and triggers can resolve the names they point at
+            scene.EntityWorld.SpawnAll();
 
             Action<List<SceneLight>> lightEntityStore = (scene.LightingInfo.LightmapVersionNumber, scene.LightingInfo.LightmapGameVersionNumber) switch
             {
@@ -1309,6 +1313,79 @@ namespace ValveResourceFormat.Renderer.World
                     throw new InvalidDataException($"Failed to process entity '{classname}' (hammeruniqueid={id})", e);
                 }
             }
+
+            SpawnRuntimeEntities(entitiesReordered);
+        }
+
+        /// <summary>
+        /// Creates the simulated counterparts of the entities just loaded: the movers, trigger
+        /// volumes and logic that make a map playable rather than just visible. Runs after the render
+        /// nodes exist so each entity can take ownership of the nodes that must follow it.
+        /// </summary>
+        private void SpawnRuntimeEntities(IEnumerable<(Entity Entity, Matrix4x4 ParentTransform, bool FromTemplate, string Classname)> entities)
+        {
+            var nodesByEntity = new Dictionary<Entity, List<SceneNode>>(ReferenceEqualityComparer.Instance);
+
+            foreach (var node in scene.AllNodes)
+            {
+                if (node.EntityData is not Entity entityData)
+                {
+                    continue;
+                }
+
+                if (!nodesByEntity.TryGetValue(entityData, out var list))
+                {
+                    list = [];
+                    nodesByEntity[entityData] = list;
+                }
+
+                list.Add(node);
+            }
+
+            foreach (var (entity, parentTransform, _, classname) in entities)
+            {
+                var instance = EntityFactory.Create(entity, classname, parentTransform);
+
+                if (instance == null)
+                {
+                    continue;
+                }
+
+                if (nodesByEntity.TryGetValue(entity, out var nodes))
+                {
+                    instance.VisualNodes.AddRange(nodes);
+                }
+
+                if (instance is BrushEntity brush)
+                {
+                    brush.Collider = LoadBrushCollider(entity);
+                }
+
+                scene.EntityWorld.Add(instance);
+            }
+        }
+
+        /// <summary>
+        /// Builds the collision shape for a brush entity from its own compiled model. Brush entities
+        /// each compile to a private model holding nothing but their hulls.
+        /// </summary>
+        private EntityCollider? LoadBrushCollider(Entity entity)
+        {
+            var modelName = entity.GetStringProperty("model");
+
+            if (string.IsNullOrEmpty(modelName))
+            {
+                return null;
+            }
+
+            if (RendererContext.FileLoader.LoadFileCompiled(modelName)?.DataBlock is not Model model)
+            {
+                return null;
+            }
+
+            var physics = EntityCollider.LoadPhysics(model, RendererContext.FileLoader);
+
+            return physics == null ? null : new EntityCollider(physics);
         }
 
         private void LoadSkybox(Entity entity)
