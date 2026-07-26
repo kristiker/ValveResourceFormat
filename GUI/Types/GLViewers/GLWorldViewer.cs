@@ -130,7 +130,8 @@ namespace GUI.Types.GLViewers
 
             if (exposureSlider != null && !userChangedExposure)
             {
-                DisplayExposure(Renderer.Postprocess.TonemapScalar);
+                var exposure = Renderer.Postprocess.TonemapScalar;
+                exposureSlider.BeginInvoke(() => DisplayExposure(exposure));
             }
         }
 

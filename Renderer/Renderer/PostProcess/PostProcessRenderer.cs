@@ -251,13 +251,17 @@ namespace ValveResourceFormat.Renderer.PostProcess
             {
                 TonemapScalar = CustomExposure;
                 State = State with { ExposureSettings = State.ExposureSettings with { AutoExposureEnabled = false } };
-                return;
+            }
+            else
+            {
+                exposure = AutoAdjustExposure(exposure, deltaTime);
+
+                exposure *= MathF.Pow(2.0f, State.ExposureSettings.ExposureCompensation);
+                TonemapScalar = exposure;
             }
 
-            exposure = AutoAdjustExposure(exposure, deltaTime);
-
-            exposure *= MathF.Pow(2.0f, State.ExposureSettings.ExposureCompensation);
-            TonemapScalar = exposure;
+            PerfStats.Active.Set(Metric.Exposure, TonemapScalar);
+            PerfStats.Active.Set(Metric.AverageLuminance, AverageLuminance);
         }
 
         private float AutoAdjustExposure(float exposure, float deltaTime)

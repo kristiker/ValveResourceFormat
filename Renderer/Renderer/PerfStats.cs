@@ -25,6 +25,8 @@ internal enum Counter
 internal enum Metric
 {
     ShadowAtlasUsage,
+    Exposure,
+    AverageLuminance,
 }
 
 /// <summary>
@@ -408,6 +410,7 @@ public class PerfStats
         AddLine($"Static Lights:    in view {FormatLightCounts(staticLightsInView, totalStaticLights)} out of total {FormatLightCounts(totalStaticLights, totalStaticLights)}", valueColor);
         AddLine($"Shadow maps:      {counts[(int)Counter.DirectionalShadowMap]:N0} directional, {counts[(int)Counter.BarnShadowMap]:N0} barn, {counts[(int)Counter.ShadowFaceSubmitted]:N0} faces binned, {floatMetrics[(int)Metric.ShadowAtlasUsage]:0%} atlas utilization", valueColor);
         AddLine($"Particle Systems: {counts[(int)Counter.ParticleSystem]:N0} particle systems rendered in {counts[(int)Counter.ParticleDraw]:N0} draw calls out of {totalParticleSystems:N0} total particle systems", valueColor);
+        AddLine($"Exposure:         {floatMetrics[(int)Metric.Exposure]:0.00} ({floatMetrics[(int)Metric.AverageLuminance]:0.000} average luminance)", valueColor);
     }
 
     /// <summary>Resets per-frame counters, reads back the previous frame's results.</summary>
