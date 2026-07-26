@@ -24,6 +24,14 @@ uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
 // range increases -- so x >= y disables it, which is the default here.
 uniform vec2 uAlphaRemapRange = vec2(1.0, 0.0);
 
+// m_bOutline: ramps an overlay colour in over a band of alpha values, so that the soft edge of a sprite
+// reads as an outline. uOutlineRanges packs (m_flOutlineStart0, m_flOutlineEnd0, m_flOutlineStart1,
+// m_flOutlineEnd1): the overlay feathers in from Start0, is solid between Start1 and End0, and feathers
+// back out by End1.
+uniform int uOutline = 0;
+uniform vec4 uOutlineColor = vec4(1.0);
+uniform vec4 uOutlineRanges = vec4(0.5, 0.7, 0.6, 0.8);
+
 // The spritecard layer chain. Each texture layer is folded into an accumulator that starts at
 // vec4(1.0): the layer is first reduced to a masked colour/alpha pair by SpriteCardTextureChannel_t,
 // then combined with the accumulator by SpriteCardTextureBlendMode_t. The base texture IS layer 0, so
@@ -140,17 +148,31 @@ void main(void) {
 
     vec4 color = accum;
 
-    // spritecard shading: brightness from diffuse+selfillum, saturated before the alpha blend.
     vec3 finalColor = vColor.rgb * color.rgb;
-    finalColor = saturate(finalColor * (uOverbrightFactor * uColorFactor));
 
-    // Texture alpha remap, then the per-particle alpha.
+    // Texture alpha remap.
     float alpha = color.a;
 
     if (uAlphaRemapRange.x < uAlphaRemapRange.y)
     {
         alpha = smoothstep(uAlphaRemapRange.x, uAlphaRemapRange.y, alpha);
     }
+
+    // Overlay the outline colour across its alpha band. Solid between Start1 and End0, feathered outside;
+    // the second smoothstep runs with its edges swapped so that it falls rather than rises.
+    if (uOutline != 0 && alpha >= uOutlineRanges.x && alpha <= uOutlineRanges.w)
+    {
+        float outlineRamp = alpha <= uOutlineRanges.z
+            ? smoothstep(uOutlineRanges.x, uOutlineRanges.z, alpha)
+            : smoothstep(uOutlineRanges.w, uOutlineRanges.y, alpha);
+
+        finalColor = mix(finalColor, uOutlineColor.rgb, outlineRamp);
+        alpha = mix(alpha, uOutlineColor.a, outlineRamp);
+    }
+
+    // spritecard shading: brightness from diffuse+selfillum, saturated before the alpha blend. Applied
+    // after the outline so the overlay colour is lit the same way the sample is.
+    finalColor = saturate(finalColor * (uOverbrightFactor * uColorFactor));
 
     alpha *= vColor.a;
 

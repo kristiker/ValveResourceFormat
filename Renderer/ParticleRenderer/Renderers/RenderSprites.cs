@@ -41,6 +41,11 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly INumberProvider alphaMapToZero = new LiteralNumberProvider(0);
         private readonly INumberProvider alphaMapToOne = new LiteralNumberProvider(1);
         private readonly bool hasAlphaRemap;
+
+        private readonly bool outline;
+        private readonly Vector4 outlineColor = Vector4.One;
+        // Start0, End0, Start1, End1 -- the order the shader's two-sided ramp wants them in.
+        private readonly Vector4 outlineRanges = new(0.5f, 0.7f, 0.6f, 0.8f);
         private int vertexBufferHandle;
 
 
@@ -113,6 +118,19 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             // ease curve applied to its alpha.
             hasAlphaRemap = parse.Data.ContainsKey("m_flSourceAlphaValueToMapToZero")
                 || parse.Data.ContainsKey("m_flSourceAlphaValueToMapToOne");
+
+            outline = parse.Boolean("m_bOutline", outline);
+
+            if (outline)
+            {
+                var color = parse.Color24("m_OutlineColor", new Vector3(1f));
+                outlineColor = new Vector4(color, parse.Int32("m_nOutlineAlpha", 255) / 255f);
+                outlineRanges = new Vector4(
+                    parse.Float("m_flOutlineStart0", outlineRanges.X),
+                    parse.Float("m_flOutlineEnd0", outlineRanges.Y),
+                    parse.Float("m_flOutlineStart1", outlineRanges.Z),
+                    parse.Float("m_flOutlineEnd1", outlineRanges.W));
+            }
         }
 
         public override void SetWireframe(bool isWireframe)
@@ -417,6 +435,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 : new Vector2(1f, 0f);
             shader.SetUniform2("uAlphaRemapRange", alphaRemapRange);
             shader.SetUniform1("uTextureChannels", (int)textureChannels);
+
+            shader.SetUniform1("uOutline", outline);
+            shader.SetUniform4("uOutlineColor", outlineColor);
+            shader.SetUniform4("uOutlineRanges", outlineRanges);
 
             // Set every draw: the program is shared with every other sprite renderer, whatever their mode.
             shader.SetUniform1("uBlendMode", (int)blendMode);
