@@ -85,6 +85,12 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly INumberProvider alphaMapToOne = new LiteralNumberProvider(1);
         private readonly bool hasAlphaRemap;
 
+        // m_nFeatheringMode: OFF, ON_OPTIONAL or ON_REQUIRED. We treat the two "on" values alike, since the
+        // distinction is about whether the engine may skip the effect when the depth copy is unavailable.
+        private readonly ParticleDepthFeatheringMode featheringMode;
+        private readonly INumberProvider featheringMinDist = new LiteralNumberProvider(0f);
+        private readonly INumberProvider featheringMaxDist = new LiteralNumberProvider(0f);
+
         private readonly bool outline;
         private readonly Vector4 outlineColor = Vector4.One;
         // Start0, End0, Start1, End1 -- the order the shader's two-sided ramp wants them in.
@@ -188,6 +194,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             hasAlphaRemap = parse.Data.ContainsKey("m_flSourceAlphaValueToMapToZero")
                 || parse.Data.ContainsKey("m_flSourceAlphaValueToMapToOne");
 
+            featheringMode = parse.Enum("m_nFeatheringMode", featheringMode);
+            featheringMinDist = parse.NumberProvider("m_flFeatheringMinDist", featheringMinDist);
+            featheringMaxDist = parse.NumberProvider("m_flFeatheringMaxDist", featheringMaxDist);
+
             outline = parse.Boolean("m_bOutline", outline);
 
             if (outline)
@@ -201,6 +211,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     parse.Float("m_flOutlineEnd1", outlineRanges.W));
             }
         }
+
+        /// <inheritdoc/>
+        public override bool WantsSceneDepth => featheringMode != ParticleDepthFeatheringMode.PARTICLE_DEPTH_FEATHERING_OFF;
 
         public override void SetWireframe(bool isWireframe)
         {
@@ -562,6 +575,15 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                 ? new Vector2(alphaMapToZero.NextNumber(systemRenderState), alphaMapToOne.NextNumber(systemRenderState))
                 : new Vector2(1f, 0f);
             shader.SetUniform2("uAlphaRemapRange", alphaRemapRange);
+
+            // g_tSceneDepth lives on a reserved texture unit that the scene keeps bound for the whole pass,
+            // so this only has to point the sampler at that unit -- never rebind the texture here.
+            shader.SetUniform1("g_tSceneDepth", (int)ReservedTextureSlots.SceneDepth);
+
+            var featheringRange = WantsSceneDepth
+                ? new Vector2(featheringMinDist.NextNumber(systemRenderState), featheringMaxDist.NextNumber(systemRenderState))
+                : Vector2.Zero;
+            shader.SetUniform2("uFeatheringRange", featheringRange);
 
             shader.SetUniform1("uGammaCorrectVertexColors", gammaCorrectVertexColors);
             shader.SetUniform1("uBlendFrames", blendFrames);

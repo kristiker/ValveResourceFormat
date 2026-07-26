@@ -411,6 +411,9 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <inheritdoc/>
+        public override bool WantsSceneDepth => particleRenderer.WantsSceneDepth;
+
+        /// <inheritdoc/>
         public override void Render(Scene.RenderContext context)
         {
             if (context.RenderPass != RenderPass.Translucent || context.ReplacementShader is not null)

@@ -14,6 +14,12 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         {
         }
 
+        /// <summary>
+        /// Whether this renderer samples the resolved opaque depth, so that the scene knows to produce a
+        /// copy for the translucent pass.
+        /// </summary>
+        public virtual bool WantsSceneDepth => false;
+
         public abstract void Render(ParticleCollection particles, ParticleSystemRenderState systemRenderState, Camera camera);
 
         /// <summary>

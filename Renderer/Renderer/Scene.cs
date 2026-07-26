@@ -900,6 +900,10 @@ namespace ValveResourceFormat.Renderer
                         Node = node,
                     };
 
+                    // These requests carry no Call, so the translucent branch in AddRequest cannot inspect
+                    // a material shader for them; a self-rendering node asks for the depth copy directly.
+                    WantsSceneDepth |= node.WantsSceneDepth;
+
                     if (node.RenderAsViewmodel)
                     {
                         viewmodelRenderLists[RenderPass.Opaque].Add(customRender);

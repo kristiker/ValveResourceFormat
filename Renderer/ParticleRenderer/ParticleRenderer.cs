@@ -530,6 +530,35 @@ namespace ValveResourceFormat.Renderer.Particles
             return true;
         }
 
+        /// <summary>
+        /// Whether this system, or any system nested under it, soft-fades against the scene and therefore
+        /// needs the resolved opaque depth. Walked once per frame at cull time, so it stays a property
+        /// rather than cached state that could go stale as children come and go.
+        /// </summary>
+        public bool WantsSceneDepth
+        {
+            get
+            {
+                foreach (var renderer in Renderers)
+                {
+                    if (renderer.WantsSceneDepth)
+                    {
+                        return true;
+                    }
+                }
+
+                foreach (var childParticleRenderer in childParticleRenderers)
+                {
+                    if (childParticleRenderer.WantsSceneDepth)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
         public void Render(Camera camera)
         {
             foreach (var childParticleRenderer in childParticleRenderers)

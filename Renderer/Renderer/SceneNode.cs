@@ -91,6 +91,13 @@ namespace ValveResourceFormat.Renderer
         /// </summary>
         public bool RenderAsViewmodel { get; set; }
 
+        /// <summary>
+        /// Gets whether this node samples the resolved opaque depth during the translucent pass. Nodes
+        /// that draw through a material advertise this through their shader's reserved textures; nodes
+        /// that render themselves have to say so here, because the scene has no material to inspect.
+        /// </summary>
+        public virtual bool WantsSceneDepth => false;
+
 #if DEBUG
         /// <summary>
         /// Gets a human-readable debug name including type, name, id, and position.

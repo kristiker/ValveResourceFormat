@@ -3,6 +3,12 @@
 #include "common/utils.slang"
 #include "common/ViewConstants.slang"
 #include "common/fog.slang"
+#include "common/depth.slang"
+
+// m_nFeatheringMode / m_flFeatheringMinDist / m_flFeatheringMaxDist. Fades the card out as it approaches
+// whatever the opaque depth buffer holds, so an intersection with geometry reads as a soft edge instead
+// of a hard cut line. Zero range disables it, which is also what an unavailable depth copy resolves to.
+uniform vec2 uFeatheringRange = vec2(0.0);
 
 // Render modes -- Switched on/off by code
 #define renderMode_Color 0
@@ -296,6 +302,15 @@ void main(void) {
     finalColor = saturate(finalColor * (uOverbrightFactor * uColorFactor));
 
     alpha *= vColor.a;
+
+    if (uFeatheringRange.y > uFeatheringRange.x)
+    {
+        vec3 cameraRay = vFragPosition - g_vCameraPositionWs;
+        vec3 scenePosition = GetWorldPositionFromDepth(ivec2(gl_FragCoord.xy), cameraRay);
+
+        alpha *= saturate((distance(vFragPosition, scenePosition) - uFeatheringRange.x)
+            / (uFeatheringRange.y - uFeatheringRange.x));
+    }
 
     // MOD2X composites like ADD. The modulate-2x in spritecard is a texture combiner inside the layer
     // chain (SPRITECARD_TEXTURE_BLEND_MULTIPLY2X above), not a framebuffer op: every blend state the
