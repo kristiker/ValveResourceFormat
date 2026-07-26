@@ -36,6 +36,12 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private readonly float startFadeDot = 1f;
         private readonly float endFadeDot = 2f;
 
+        // m_flCenterXOffset/m_flCenterYOffset shift the quad within its own corner space, before the
+        // radius scale, so the card pivots about a point other than its middle.
+        private readonly INumberProvider centerXOffset = new LiteralNumberProvider(0f);
+        private readonly INumberProvider centerYOffset = new LiteralNumberProvider(0f);
+        private readonly bool gammaCorrectVertexColors;
+
         private readonly INumberProvider radiusScale = new LiteralNumberProvider(1f);
         private readonly INumberProvider alphaScale = new LiteralNumberProvider(1f);
         private readonly SpriteCardTextureChannel textureChannels = SpriteCardTextureChannel.SPRITECARD_TEXTURE_CHANNEL_MIX_RGBA;
@@ -118,6 +124,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             distanceAlpha = parse.Boolean("m_bDistanceAlpha", distanceAlpha);
             startFadeDot = parse.Float("m_flStartFadeDot", startFadeDot);
             endFadeDot = parse.Float("m_flEndFadeDot", endFadeDot);
+            centerXOffset = parse.NumberProvider("m_flCenterXOffset", centerXOffset);
+            centerYOffset = parse.NumberProvider("m_flCenterYOffset", centerYOffset);
+            gammaCorrectVertexColors = parse.Boolean("m_bGammaCorrectVertexColors", gammaCorrectVertexColors);
             animationType = parse.Enum<ParticleAnimationType>("m_nAnimationType", animationType);
             radiusScale = parse.NumberProvider("m_flRadiusScale", radiusScale);
             alphaScale = parse.NumberProvider("m_flAlphaScale", alphaScale);
@@ -261,6 +270,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             var endFadeScreenSize = endFadeSize.NextNumber(systemRenderState);
             var tanHalfFov = MathF.Tan(camera.GetFOV() * 0.5f);
 
+            var centerOffset = new Vector2(
+                centerXOffset.NextNumber(systemRenderState),
+                centerYOffset.NextNumber(systemRenderState));
+
             // Only the two normal-aligned modes fade by view angle, and only when the range can actually
             // be entered: the value it tests is a dot product magnitude, so it never exceeds 1.
             var viewAngleFadeActive = startFadeDot < 1f
@@ -336,10 +349,12 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         _ => particle.GetRotationMatrix() * particle.GetTransformationMatrix(radiusScale),
                     };
 
-                    var tl = Vector4.Transform(new Vector4(-1, -1, 0, 1), modelMatrix);
-                    var bl = Vector4.Transform(new Vector4(-1, 1, 0, 1), modelMatrix);
-                    var br = Vector4.Transform(new Vector4(1, 1, 0, 1), modelMatrix);
-                    var tr = Vector4.Transform(new Vector4(1, -1, 0, 1), modelMatrix);
+                    // The centre offset shifts the corners before the model matrix scales them, so it is
+                    // measured in half-widths rather than world units.
+                    var tl = Vector4.Transform(new Vector4(centerOffset.X - 1, centerOffset.Y - 1, 0, 1), modelMatrix);
+                    var bl = Vector4.Transform(new Vector4(centerOffset.X - 1, centerOffset.Y + 1, 0, 1), modelMatrix);
+                    var br = Vector4.Transform(new Vector4(centerOffset.X + 1, centerOffset.Y + 1, 0, 1), modelMatrix);
+                    var tr = Vector4.Transform(new Vector4(centerOffset.X + 1, centerOffset.Y - 1, 0, 1), modelMatrix);
 
                     var quadStart = i * VertexSize * 4;
                     rawVertices[quadStart + 0] = tl.X;
@@ -499,6 +514,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             shader.SetUniform2("uAlphaRemapRange", alphaRemapRange);
             shader.SetUniform1("uTextureChannels", (int)textureChannels);
 
+            shader.SetUniform1("uGammaCorrectVertexColors", gammaCorrectVertexColors);
             shader.SetUniform1("uOutline", outline);
             shader.SetUniform4("uOutlineColor", outlineColor);
             shader.SetUniform4("uOutlineRanges", outlineRanges);
