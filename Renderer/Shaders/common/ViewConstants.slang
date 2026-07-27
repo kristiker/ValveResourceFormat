@@ -34,7 +34,7 @@ layout(std140, binding = 0) uniform ViewConstants
     mat4 g_matvCubeFogSkyWsToOs;
     vec4 g_vCubeFogCullingParams_ExposureBias_MaxOpacity;
 
-    mat4 g_matPrevWorldToProjection;
+    mat4 g_matDepthPyramidWorldToProjection;
 };
 
 bool blink()

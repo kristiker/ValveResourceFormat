@@ -57,7 +57,9 @@ bool testAABBOcclusion(vec3 bmin, vec3 bmax)
     // Offset camera forward to reduce false occlusions
     //vec3 cameraOffset = g_vCameraDirWs * g_flDepthPyramidCameraOffset;
 
-    // Project all 8 corners to clip space
+    // Project all 8 corners to clip space. The pyramid holds the previous frame's depth reprojected
+    // into this frame's view, so this is the current view-projection; it is only an older one while
+    // the cull frustum is locked and the whole cull state is frozen for inspection.
     vec4 corners[8];
     for (int i = 0; i < 8; i++)
     {
@@ -67,7 +69,7 @@ bool testAABBOcclusion(vec3 bmin, vec3 bmax)
             (i & 4) != 0 ? bmax.z : bmin.z
         );
 
-        corners[i] = g_matPrevWorldToProjection * vec4(corner, 1.0);
+        corners[i] = g_matDepthPyramidWorldToProjection * vec4(corner, 1.0);
     }
 
     float minW = min(min(min(corners[0].w, corners[1].w), min(corners[2].w, corners[3].w)),

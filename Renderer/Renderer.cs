@@ -140,6 +140,19 @@ public class Renderer
     /// </summary>
     public bool ForceResolveSceneDepth { get; set; }
 
+    /// <summary>
+    /// The view <see cref="ResolvedSceneDepth"/> was captured with. Reprojecting that depth into a later
+    /// frame's view needs the projection and a camera-relative view separately, not the combined
+    /// world-to-clip transform, to keep the reprojection out of world-space coordinates.
+    /// </summary>
+    private readonly record struct DepthCapture(Matrix4x4 RelativeWorldToProjection, Vector3 Position)
+    {
+        public static DepthCapture From(Camera camera)
+            => new(WithoutTranslation(camera.CameraViewMatrix) * camera.ProjectionMatrix, camera.Location);
+    }
+
+    private DepthCapture? sceneDepthCapture;
+
     private readonly Shader[] histogramShaders = new Shader[2];
     private readonly StorageBuffer[] histogramBuffers = new StorageBuffer[2];
 
@@ -373,25 +386,9 @@ public class Renderer
     {
         Debug.Assert(ViewBuffer != null);
 
-        {
-            // Skip occlusion culling if the camera moved too much -- we use last frame depth
-            var moveDelta = ViewBuffer.Data.CameraPosition - camera.Location;
-            var eyeDelta = ViewBuffer.Data.CameraDirWs - camera.Forward;
-
-            var t = moveDelta.LengthSquared();
-            var t2 = eyeDelta.LengthSquared();
-
-            if (t > 5000f || t2 > 0.5f)
-            {
-                scene.DepthPyramidValid = false;
-            }
-            else
-            {
-                ViewBuffer.Data.WorldToProjectionPrev = scene.DepthPyramidViewProjection;
-            }
-
-            scene.UpdateIndirectRenderingState();
-        }
+        scene.UpdateIndirectRenderingState();
+        UpdateDepthPyramid(scene, camera);
+        ViewBuffer.Data.DepthPyramidWorldToProjection = scene.DepthPyramidWorldToProjection;
 
         camera.SetViewConstants(ViewBuffer.Data);
         scene.SetFogConstants(ViewBuffer.Data);
@@ -423,6 +420,59 @@ public class Renderer
             Postprocess.State = scene.PostProcessInfo.CurrentState;
             Postprocess.CalculateTonemapScalar(deltaTime);
         }
+    }
+
+    /// <summary>
+    /// Rebuilds the occlusion culling depth pyramid for the view that is about to be culled, out of the
+    /// scene depth captured at the end of the previous frame, reprojected into that view.
+    /// </summary>
+    void UpdateDepthPyramid(Scene scene, Camera camera)
+    {
+        if (LockedCullFrustum != null)
+        {
+            // Nothing is culled while the frustum is locked, so the pyramid and the transform it is
+            // expressed in are both left alone: the frozen cull result stays inspectable from any camera.
+            return;
+        }
+
+        scene.DepthPyramidValid = false;
+
+        if (!scene.EnableOcclusionCulling || !scene.DrawMeshletsIndirect || DisableAllCulling
+            || Uptime < OcclusionCullWarmupSeconds
+            || sceneDepthCapture is not DepthCapture capture || ResolvedSceneDepth == null)
+        {
+            return;
+        }
+
+        // Both ends of the reprojection are built relative to the camera the depth was captured with, so
+        // that the round trip out of clip space and back never has to hold a world position - which out
+        // at the edges of a large map costs most of the mantissa - in single precision.
+        var relativeWorldToProjection = Matrix4x4.CreateTranslation(capture.Position - camera.Location)
+            * WithoutTranslation(camera.CameraViewMatrix)
+            * camera.ProjectionMatrix;
+
+        if (!Matrix4x4.Invert(capture.RelativeWorldToProjection, out var projectionToRelativeWorld))
+        {
+            return;
+        }
+
+        EnsureDepthPyramidSize(ResolvedSceneDepth.Width, ResolvedSceneDepth.Height);
+
+        scene.GenerateDepthPyramid(ResolvedSceneDepth, projectionToRelativeWorld * relativeWorldToProjection);
+        scene.DepthPyramidWorldToProjection = camera.ViewProjectionMatrix;
+        scene.DepthPyramidValid = true;
+    }
+
+    /// <summary>
+    /// Returns a look-at matrix with its translation dropped, which for a look-at is the rotation that
+    /// takes a position relative to the camera into view space.
+    /// </summary>
+    private static Matrix4x4 WithoutTranslation(Matrix4x4 view)
+    {
+        view.M41 = 0f;
+        view.M42 = 0f;
+        view.M43 = 0f;
+        return view;
     }
 
     private static void RenderTranslucentLayer(Scene scene, Scene.RenderContext renderContext)
@@ -606,25 +656,18 @@ public class Renderer
 
             if (isMainFramebuffer)
             {
-                var generateDepthPyramid = Scene.EnableOcclusionCulling
+                // The depth pyramid is built at the start of the next frame, out of this frame's depth
+                // reprojected into that frame's view, so all this pass owes it is the depth itself.
+                copyDepth |= Scene.EnableOcclusionCulling
                     && Scene.DrawMeshletsIndirect
                     && LockedCullFrustum == null
-                    && !DisableAllCulling
-                    && Uptime >= OcclusionCullWarmupSeconds;
-
-                copyDepth |= generateDepthPyramid;
-                Scene.DepthPyramidValid = !DisableAllCulling && (generateDepthPyramid || LockedCullFrustum != null);
+                    && !DisableAllCulling;
 
                 GrabFramebufferCopy(renderContext.Framebuffer, copyColor, copyDepth);
 
-                if (generateDepthPyramid)
-                {
-                    Debug.Assert(ResolvedSceneColor != null && ResolvedSceneDepth != null);
-                    EnsureDepthPyramidSize(renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
-                    Scene.GenerateDepthPyramid(ResolvedSceneDepth);
-                    Scene.DepthPyramidViewProjection = Camera.ViewProjectionMatrix;
-                    Scene.DepthPyramidValid = true;
-                }
+                // Without a copy this frame the resolved depth is however old the last one was, which is
+                // not something to reproject and cull against once occlusion culling comes back on.
+                sceneDepthCapture = copyDepth ? DepthCapture.From(renderContext.Camera) : null;
             }
 
             if (render3DSkybox)
@@ -891,6 +934,9 @@ public class Renderer
             ResolvedSceneDepth!.Delete();
             ResolvedSceneDepth = RenderTexture.Create(width, height, SizedInternalFormat.R32f);
 
+            // The captured depth went with the old texture, so there is nothing to reproject this frame.
+            sceneDepthCapture = null;
+
             Textures.RemoveAll(static t => t.Slot == ReservedTextureSlots.SceneColor || t.Slot == ReservedTextureSlots.SceneDepth);
             Textures.Add(new(ReservedTextureSlots.SceneColor, "g_tSceneColor", ResolvedSceneColor));
             Textures.Add(new(ReservedTextureSlots.SceneDepth, "g_tSceneDepth", ResolvedSceneDepth));
@@ -992,9 +1038,11 @@ public class Renderer
 
     void EnsureDepthPyramidSize(int width, int height)
     {
-        // Get the target pyramid size
-        var maxDim = Math.Max(width, height);
-        var cappedDim = Math.Min(maxDim, 256);
+        // Get the target pyramid size. Sized off the smaller dimension, halved, because the reprojection
+        // scatters one sample per 2x2 source block into it: below that, destination texels start going
+        // without any source sample at all and the pyramid fills up with gaps.
+        var minDim = Math.Max(Math.Min(width, height) / 2, 1);
+        var cappedDim = Math.Min(minDim, 256);
         var targetSize = 1 << (int)Math.Floor(Math.Log2(cappedDim));
 
         if (Scene.DepthPyramid != null && Scene.DepthPyramid.Width == targetSize && Scene.DepthPyramid.Height == targetSize)
@@ -1002,8 +1050,9 @@ public class Renderer
             return;
         }
 
-        // Delete old texture
+        // Delete old textures
         Scene.DepthPyramid?.Delete();
+        Scene.DepthPyramidScatter?.Delete();
 
         // Calculate mips needed to go from targetSize down to 1x1
         var maxMipLevel = (int)Math.Log2(targetSize);
@@ -1012,5 +1061,8 @@ public class Renderer
         Scene.DepthPyramid.SetLabel("DepthPyramid");
 
         Scene.DepthPyramid.SetBaseMaxLevel(0, maxMipLevel);
+
+        Scene.DepthPyramidScatter = RenderTexture.Create(targetSize, targetSize, SizedInternalFormat.R32ui, 1);
+        Scene.DepthPyramidScatter.SetLabel("DepthPyramidScatter");
     }
 }

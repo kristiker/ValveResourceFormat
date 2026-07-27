@@ -120,12 +120,19 @@ namespace ValveResourceFormat.Renderer
         private Shader? CompactionShader;
 
         private Shader? DepthPyramidShader;
-        private Shader? DepthPyramidNpotShader;
+        private Shader? DepthReprojectShader;
+        private Shader? DepthReprojectResolveShader;
         /// <summary>Gets the hierarchical depth pyramid texture used for GPU occlusion culling.</summary>
         public RenderTexture? DepthPyramid { get; internal set; }
 
-        /// <summary>Gets the view-projection matrix that was used when the depth pyramid was last generated.</summary>
-        public Matrix4x4 DepthPyramidViewProjection { get; internal set; }
+        /// <summary>
+        /// Gets the scatter target the depth reprojection accumulates into before it becomes the top level
+        /// of <see cref="DepthPyramid"/>. Integer typed because scattering needs an atomic min.
+        /// </summary>
+        internal RenderTexture? DepthPyramidScatter { get; set; }
+
+        /// <summary>Gets the view-projection matrix the depth pyramid is currently expressed in.</summary>
+        public Matrix4x4 DepthPyramidWorldToProjection { get; internal set; }
 
         /// <summary>Gets whether the depth pyramid is current and safe to use for occlusion culling this frame.</summary>
         public bool DepthPyramidValid { get; internal set; }
@@ -206,7 +213,8 @@ namespace ValveResourceFormat.Renderer
             FrustumCullShader = RendererContext.ShaderLoader.LoadShader("vrf.frustum_cull");
             CompactionShader = RendererContext.ShaderLoader.LoadShader("vrf.compact_indirect_draws");
             DepthPyramidShader = RendererContext.ShaderLoader.LoadShader("vrf.depth_pyramid");
-            DepthPyramidNpotShader = RendererContext.ShaderLoader.LoadShader("vrf.depth_pyramid", ("D_NPOT_DOWNSAMPLE", 1));
+            DepthReprojectShader = RendererContext.ShaderLoader.LoadShader("vrf.depth_reproject");
+            DepthReprojectResolveShader = RendererContext.ShaderLoader.LoadShader("vrf.depth_reproject", ("D_RESOLVE", 1));
 
             EnableIndirectDraws = LightingInfo.LightingData.IsSkybox == 0u;
 
@@ -1222,12 +1230,15 @@ namespace ValveResourceFormat.Renderer
         }
 
         /// <summary>
-        /// Generates the hierarchical depth pyramid from the given depth texture by downsampling through compute shaders.
+        /// Generates the hierarchical depth pyramid from a depth buffer captured in a previous frame,
+        /// reprojected into the view that is about to be culled.
         /// </summary>
-        /// <param name="depthSource">The full-resolution depth texture to downsample.</param>
-        public void GenerateDepthPyramid(RenderTexture depthSource)
+        /// <param name="depthSource">The full-resolution depth texture to reproject and downsample.</param>
+        /// <param name="reprojection">Transform from the clip space <paramref name="depthSource"/> was rendered in to the clip space being culled.</param>
+        public void GenerateDepthPyramid(RenderTexture depthSource, Matrix4x4 reprojection)
         {
-            if (DepthPyramid == null || DepthPyramidShader == null)
+            if (DepthPyramid == null || DepthPyramidScatter == null || DepthPyramidShader == null
+                || DepthReprojectShader == null || DepthReprojectResolveShader == null)
             {
                 return;
             }
@@ -1235,19 +1246,37 @@ namespace ValveResourceFormat.Renderer
             using var _ = new GLDebugGroup("Generate Depth Pyramid");
 
             Debug.Assert(depthSource.Target == TextureTarget.Texture2D);
-            var startMipLevel = 1;
 
-            // Downsample from non power of two depth source
+            var sceneDepthRange = new Vector2(Renderer.DepthRange.Scene.Near, Renderer.DepthRange.Scene.Far);
+
+            // Reproject the previous frame's depth into the top level of the pyramid. This is a scatter,
+            // so the destination starts out as gaps that the shader's atomic min can only improve on.
             {
-                Debug.Assert(DepthPyramidNpotShader != null);
-                DepthPyramidNpotShader.Use();
-                DepthPyramidNpotShader.SetTexture(0, "g_tSourceDepthNpot", depthSource);
-                DepthPyramidNpotShader.SetUniform1("g_nSourceDepthWidth", depthSource.Width);
-                DepthPyramidNpotShader.SetUniform1("g_nSourceDepthHeight", depthSource.Height);
+                var noSample = uint.MaxValue;
+                GL.MemoryBarrier(MemoryBarrierFlags.TextureUpdateBarrierBit);
+                GL.ClearTexImage(DepthPyramidScatter.Handle, 0, PixelFormat.RedInteger, PixelType.UnsignedInt, ref noSample);
 
-                DepthPyramidNpotShader.SetUniform1("g_nDestDepthWidth", DepthPyramid.Width);
-                DepthPyramidNpotShader.SetUniform1("g_nDestDepthHeight", DepthPyramid.Height);
+                DepthReprojectShader.Use();
+                DepthReprojectShader.SetUniform2("g_vSceneDepthRange", sceneDepthRange);
+                DepthReprojectShader.SetUniform4x4("g_matReprojection", reprojection);
 
+                GL.BindImageTexture(0, depthSource.Handle, 0, false, 0, TextureAccess.ReadOnly, SizedInternalFormat.R32f);
+                GL.BindImageTexture(1, DepthPyramidScatter.Handle, 0, false, 0, TextureAccess.ReadWrite, SizedInternalFormat.R32ui);
+
+                // One invocation per 2x2 block of the source depth.
+                var groupsX = ((depthSource.Width + 1) / 2 + 7) / 8;
+                var groupsY = ((depthSource.Height + 1) / 2 + 7) / 8;
+                GL.DispatchCompute(groupsX, groupsY, 1);
+
+                GL.MemoryBarrier(MemoryBarrierFlags.ShaderImageAccessBarrierBit);
+            }
+
+            // Resolve the scattered depth into the pyramid, filling the gaps the reprojection left behind
+            {
+                DepthReprojectResolveShader.Use();
+                DepthReprojectResolveShader.SetUniform2("g_vSceneDepthRange", sceneDepthRange);
+
+                GL.BindImageTexture(1, DepthPyramidScatter.Handle, 0, false, 0, TextureAccess.ReadOnly, SizedInternalFormat.R32ui);
                 GL.BindImageTexture(2, DepthPyramid.Handle, 0, false, 0, TextureAccess.WriteOnly, SizedInternalFormat.R32f);
 
                 var groupsX = (DepthPyramid.Width + 7) / 8;
@@ -1260,7 +1289,7 @@ namespace ValveResourceFormat.Renderer
             // Generate mip levels down to 1x1
             DepthPyramidShader.Use();
 
-            for (var mipLevel = startMipLevel; mipLevel < DepthPyramid.NumMipLevels; mipLevel++)
+            for (var mipLevel = 1; mipLevel < DepthPyramid.NumMipLevels; mipLevel++)
             {
                 var destWidth = Math.Max(1, DepthPyramid.Width >> mipLevel);
                 var destHeight = Math.Max(1, DepthPyramid.Height >> mipLevel);
@@ -1891,6 +1920,8 @@ namespace ValveResourceFormat.Renderer
                 lightingBuffer?.Dispose();
                 lpvBuffer?.Dispose();
                 envMapBuffer?.Dispose();
+                DepthPyramid?.Delete();
+                DepthPyramidScatter?.Delete();
                 LightingInfo.DisposeBarnLights();
             }
         }

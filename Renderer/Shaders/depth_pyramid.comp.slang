@@ -5,15 +5,11 @@
 
 layout (local_size_x = 8, local_size_y = 8) in;
 
-#define D_NPOT_DOWNSAMPLE 0
+// Reduces one mip level of the depth pyramid into the next. The top level is written by
+// depth_reproject.comp.slang, which reprojects the previous frame's depth buffer into this
+// frame's view.
 
-#if D_NPOT_DOWNSAMPLE == 1
-    layout(binding = 0) uniform sampler2D g_tSourceDepthNpot;
-    uniform int g_nSourceDepthWidth;
-    uniform int g_nSourceDepthHeight;
-#else
-    layout(binding = 1, r32f) uniform readonly image2D g_tSourceDepth;
-#endif
+layout(binding = 1, r32f) uniform readonly image2D g_tSourceDepth;
 
 layout(binding = 2, r32f) uniform writeonly image2D g_tDestDepth;
 uniform int g_nDestDepthWidth;
@@ -29,25 +25,6 @@ void main()
         return;
     }
 
-#if D_NPOT_DOWNSAMPLE == 1
-    // Downsample from non power of two depth source
-    ivec2 vSourceDepthSize = ivec2(g_nSourceDepthWidth, g_nSourceDepthHeight);
-    
-    // Conservative mapping: round down for min, round up for max
-    ivec2 sourceMin = (destCoord * vSourceDepthSize) / destSize;
-    ivec2 sourceMax = min(((destCoord + ivec2(1)) * vSourceDepthSize + destSize - ivec2(1)) / destSize, vSourceDepthSize);
-
-    float furthestDepth = 1.0;
-
-    for (int y = sourceMin.y; y < sourceMax.y; y++)
-    {
-        for (int x = sourceMin.x; x < sourceMax.x; x++)
-        {
-            float depth = texelFetch(g_tSourceDepthNpot, ivec2(x, y), 0).r;
-            furthestDepth = min(furthestDepth, depth);
-        }
-    }
-#else
     ivec2 sourceCoord = destCoord * 2;
 
     // Regular 2x2 downsample - take min (reverse Z: furthest point)
@@ -57,6 +34,6 @@ void main()
     float depth3 = imageLoad(g_tSourceDepth, sourceCoord + ivec2(1, 1)).r;
 
     float furthestDepth = min(min(depth0, depth1), min(depth2, depth3));
-#endif    
+
     imageStore(g_tDestDepth, destCoord, vec4(furthestDepth, 0.0, 0.0, 0.0));
 }

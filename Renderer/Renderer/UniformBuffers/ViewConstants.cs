@@ -68,8 +68,8 @@ namespace ValveResourceFormat.Renderer.Buffers
         /// <summary>Cube fog culling parameters, exposure bias, and maximum opacity.</summary>
         public Vector4 CubeFogCullingParams_ExposureBias_MaxOpacity;
 
-        /// <summary>World-to-clip transform from when the depth pyramid was last generated, used for GPU occlusion culling.</summary>
-        public Matrix4x4 WorldToProjectionPrev = Matrix4x4.Identity;
+        /// <summary>World-to-clip transform the depth pyramid is expressed in, used for GPU occlusion culling.</summary>
+        public Matrix4x4 DepthPyramidWorldToProjection = Matrix4x4.Identity;
 
         /// <summary>Initializes a new <see cref="ViewConstants"/> with identity matrices and default values.</summary>
         public ViewConstants()
