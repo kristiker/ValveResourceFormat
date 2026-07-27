@@ -43,6 +43,8 @@ bool LayerRandomizesOffsets(int layer)
 #define PP_SEED_ROTATION  0.524950679
 #define PP_SEED_RANDOM_U  0.303749563
 #define PP_SEED_RANDOM_V  0.224818403
+#define PP_SEED_ZOOM      0.343681088
+#define PP_SEED_DISTORTION 0.477996963
 
 // SpriteCardPerParticleScale_t. Multipliers, so NONE resolves to 1; the age-driven entries add 1 for the
 // same reason, leaving a newborn particle at unity.
@@ -109,6 +111,19 @@ vec2 ApplyLayerUvTransform(vec2 uvCorner, int layer, vec4 particleScalars, vec3 
         : vec2(0.0);
 
     return tiled + fract((xform.xy * vec2(offsetU, offsetV)) + vec2(0.5)) + randomOffset;
+}
+
+// The layer's uv in xy, plus the two scalars its effect mode needs: the zoom phase in z and the
+// distortion amount in w. The reference carries the same four components per layer for the same reason.
+vec4 BuildLayerUv(vec2 uvCorner, int layer, vec4 particleScalars, vec3 rotation,
+                  vec2 shaderExtraData, float particleAlpha)
+{
+    return vec4(
+        ApplyLayerUvTransform(uvCorner, layer, particleScalars, rotation, shaderExtraData, particleAlpha),
+        PerParticleScale(PerParticleSelector(layer, PP_SLOT_ZOOM), PP_SEED_ZOOM,
+            particleScalars, rotation, shaderExtraData, particleAlpha),
+        PerParticleScale(PerParticleSelector(layer, PP_SLOT_DISTORTION), PP_SEED_DISTORTION,
+            particleScalars, rotation, shaderExtraData, particleAlpha));
 }
 
 #endif

@@ -106,7 +106,7 @@ in vec2 vTexCoordNextFrameOut;
 in float vFrameBlend;
 in vec4 vColor;
 in vec3 vFragPosition;
-in vec2 vLayerUv[MAX_TEXTURE_LAYERS];
+in vec4 vLayerUv[MAX_TEXTURE_LAYERS];
 
 out vec4 fragColor;
 
@@ -215,6 +215,74 @@ vec4 SampleLayer(int layer, vec2 uv)
     return texture(uTexture, uv);
 }
 
+// SpriteCardTextureType_t, for the values that are effect modes. NORMALMAP and ANIMMOTIONVEC never reach
+// here: the renderer keeps them out of the colour chain entirely.
+#define SPRITECARD_TEXTURE_DIFFUSE            0
+#define SPRITECARD_TEXTURE_ZOOM               1
+#define SPRITECARD_TEXTURE_1D_COLOR_LOOKUP    2
+#define SPRITECARD_TEXTURE_UVDISTORTION       3
+#define SPRITECARD_TEXTURE_UVDISTORTION_ZOOM  4
+uniform int uLayerEffectMode[MAX_TEXTURE_LAYERS];
+uniform float uLayerZoomScale[MAX_TEXTURE_LAYERS];   // m_flZoomScale
+uniform float uLayerDistortion[MAX_TEXTURE_LAYERS];  // m_flDistortion
+
+// Two lookups the reference keeps as constant tables indexed by mask mode. The first says whether an
+// effect's own alpha replaces the one underneath it; the second drives the gradient ramp, with .x
+// premultiplying the ramp's source colour by its alpha and .y switching the lookup to use alpha as luma.
+bool MaskKeepsEffectAlpha(int maskMode)
+{
+    return maskMode != SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_A
+        && maskMode != SPRITECARD_TEXTURE_CHANNEL_MIX_RGB_A_RGBALPHA;
+}
+
+const vec2 MASK_RAMP_FLAGS[15] = vec2[](
+    vec2(1.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 0.0),
+    vec2(1.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 1.0), vec2(0.0, 0.0), vec2(1.0, 0.0),
+    vec2(1.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 0.0));
+
+// Two samples of the layer's own uv, scaled about the centre by a time-driven factor and crossfaded. The
+// 0.4 in the denominator eases the phase so the blur accelerates rather than sweeping linearly.
+vec4 SampleZoomBlur(int layer, vec4 layerUv, vec2 uv)
+{
+    float phase = fract(uLayerZoomScale[layer] * layerUv.z);
+    float zoom = phase / ((-0.39999997615814208984375 * (1.0 - phase)) + 1.0);
+
+    vec2 centred = uv - vec2(0.5);
+    vec2 wide = (centred * mix(4.0, 1.0, zoom)) + vec2(0.5);
+    vec2 tight = (centred * mix(1.0, 0.0625, zoom)) + vec2(0.5);
+
+    return mix(SampleLayer(layer, tight), SampleLayer(layer, wide), zoom * zoom);
+}
+
+// The red and green of a source colour, taken to gamma space, become a 2D offset. The offset is derived
+// from THIS layer but the tap comes from the PREVIOUS one, so layer 1 distorts the base texture, layer 2
+// distorts layer 1, and so on. Layer 0's previous is itself.
+vec4 SampleDistorted(int layer, vec4 layerUv, vec2 previousUv, vec4 source, float amount)
+{
+    vec2 gammaSource = SrgbLinearToGamma(vec3(source.rg, 0.0)).rg;
+
+    vec2 offset = ((gammaSource - vec2(0.5)) * 2.0)
+        * (((uLayerDistortion[layer] * layerUv.w) * 0.125) * amount);
+
+    return SampleLayer(max(layer - 1, 0), previousUv - offset);
+}
+
+// A 1D ramp, looked up by the luminance of whatever is beneath this layer. This is the most common effect
+// mode in shipped content by a wide margin.
+vec4 SampleGradientRamp(int layer, vec4 layerUv, vec4 previous, int maskMode)
+{
+    vec2 flags = MASK_RAMP_FLAGS[maskMode];
+
+    vec4 source = mix(mix(vec4(previous.rgb * previous.aaa, 1.0), previous, flags.x),
+                      previous.aaaa, flags.y);
+
+    vec2 rampUv = vec2((GetLuma(SrgbLinearToGamma(source.rgb)) + layerUv.x) * layerUv.z, layerUv.y);
+    vec4 ramp = SampleLayer(layer, rampUv);
+
+    // With alpha as the luma the ramp also supplies the alpha; otherwise the layer below keeps its own.
+    return mix(vec4(ramp.rgb, previous.a), vec4(ramp.rgb, dot(ramp.rgb, LUMA_601)), flags.y);
+}
+
 // Combine the masked layer into the accumulator.
 vec4 ApplyLayerBlend(vec4 accum, vec4 masked, int blendMode)
 {
@@ -240,7 +308,10 @@ void main(void) {
     {
         // Layer 0's uv went through its sheet frame in the vertex shader; the extra layers have no
         // sequence of their own, so they tile the raw texture from their own transformed corner.
-        vec4 layer = SampleLayer(i, i == 0 ? vTexCoordOut : vLayerUv[i]);
+        vec2 uv = i == 0 ? vTexCoordOut : vLayerUv[i].xy;
+        vec2 previousUv = i == 0 ? vTexCoordOut : vLayerUv[max(i - 1, 0)].xy;
+
+        vec4 layer = SampleLayer(i, uv);
 
         // The sheet sequence belongs to the base texture, so only layer 0 cross-fades frames.
         if (i == 0 && uBlendFrames != 0)
@@ -261,10 +332,47 @@ void main(void) {
             }
         }
 
+        int maskMode = uLayerChannels[i];
+
+        // The colour an effect reads for its alpha and its ramp input is the layer's own sample on layer 0
+        // but the accumulator on every later layer. On layer 0 the accumulator is still white, so this is a
+        // genuine special case rather than something that folds away.
+        vec4 previous = i == 0 ? layer : accum;
+        vec4 effect = layer;
+
+        switch (uLayerEffectMode[i])
+        {
+            case SPRITECARD_TEXTURE_ZOOM:
+            {
+                vec4 zoomed = SampleZoomBlur(i, vLayerUv[i], uv);
+                zoomed.a = MaskKeepsEffectAlpha(maskMode) ? zoomed.a : previous.a;
+                effect = zoomed;
+                break;
+            }
+
+            case SPRITECARD_TEXTURE_1D_COLOR_LOOKUP:
+                effect = SampleGradientRamp(i, vLayerUv[i], previous, maskMode);
+                break;
+
+            case SPRITECARD_TEXTURE_UVDISTORTION:
+                // Unlike the ramp and zoom inputs, the distortion strength is always the layer's own
+                // sample alpha, never the accumulator's.
+                effect = SampleDistorted(i, vLayerUv[i], previousUv, layer, layer.a);
+                break;
+
+            case SPRITECARD_TEXTURE_UVDISTORTION_ZOOM:
+            {
+                vec4 zoomed = SampleZoomBlur(i, vLayerUv[i], uv);
+                float amount = MaskKeepsEffectAlpha(maskMode) ? zoomed.a : previous.a;
+                effect = SampleDistorted(i, vLayerUv[i], previousUv, zoomed, amount);
+                break;
+            }
+        }
+
         int blendMode = uLayerBlendMode[i];
         float sub = float(blendMode == SPRITECARD_TEXTURE_BLEND_SUBTRACT);
 
-        vec4 masked = ApplyChannelMask(accum, layer, uLayerChannels[i], sub);
+        vec4 masked = ApplyChannelMask(accum, effect, maskMode, sub);
         vec4 blended = ApplyLayerBlend(accum, masked, blendMode);
 
         // m_flTextureBlend fades the layer's contribution back toward what was already there.

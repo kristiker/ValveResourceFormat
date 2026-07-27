@@ -34,6 +34,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         private static readonly string[] LayerUvTransformUniforms = ["uLayerUvTransform[0]", "uLayerUvTransform[1]", "uLayerUvTransform[2]", "uLayerUvTransform[3]", "uLayerUvTransform[4]"];
         private static readonly string[] LayerUvRotationUniforms = ["uLayerUvRotation[0]", "uLayerUvRotation[1]", "uLayerUvRotation[2]", "uLayerUvRotation[3]", "uLayerUvRotation[4]"];
         private static readonly string[] LayerPerParticleUniforms = ["uLayerPerParticleSelectors[0]", "uLayerPerParticleSelectors[1]", "uLayerPerParticleSelectors[2]", "uLayerPerParticleSelectors[3]", "uLayerPerParticleSelectors[4]"];
+        private static readonly string[] LayerEffectModeUniforms = ["uLayerEffectMode[0]", "uLayerEffectMode[1]", "uLayerEffectMode[2]", "uLayerEffectMode[3]", "uLayerEffectMode[4]"];
+        private static readonly string[] LayerZoomScaleUniforms = ["uLayerZoomScale[0]", "uLayerZoomScale[1]", "uLayerZoomScale[2]", "uLayerZoomScale[3]", "uLayerZoomScale[4]"];
+        private static readonly string[] LayerDistortionUniforms = ["uLayerDistortion[0]", "uLayerDistortion[1]", "uLayerDistortion[2]", "uLayerDistortion[3]", "uLayerDistortion[4]"];
 
         /// <summary>One entry of m_vecTexturesInput: a texture plus how it folds into the layers below it.</summary>
         private sealed class TextureLayer(RenderTexture texture)
@@ -56,6 +59,11 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             /// so the whole set travels as one uniform.
             /// </summary>
             public int PerParticleSelectors { get; init; }
+
+            // m_nTextureType, for the values that are effect modes, plus the two strengths they read.
+            public SpriteCardTextureType EffectMode { get; init; } = SpriteCardTextureType.SPRITECARD_TEXTURE_DIFFUSE;
+            public INumberProvider ZoomScale { get; init; } = OneNumberProvider;
+            public INumberProvider Distortion { get; init; } = OneNumberProvider;
         }
 
         private const int PpSlotScale = 0;
@@ -222,6 +230,9 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         OffsetV = controls?.NumberProvider("m_flFinalTextureOffsetV", ZeroNumberProvider) ?? ZeroNumberProvider,
                         UvRotation = controls?.NumberProvider("m_flFinalTextureUVRotation", ZeroNumberProvider) ?? ZeroNumberProvider,
                         PerParticleSelectors = PackPerParticleSelectors(controls),
+                        EffectMode = textureType,
+                        ZoomScale = controls?.NumberProvider("m_flZoomScale", OneNumberProvider) ?? OneNumberProvider,
+                        Distortion = controls?.NumberProvider("m_flDistortion", OneNumberProvider) ?? OneNumberProvider,
                     });
                 }
 
@@ -646,6 +657,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                     shader.SetUniform4(LayerUvTransformUniforms[layer], new Vector4(0f, 0f, 1f, 1f));
                     shader.SetUniform1(LayerUvRotationUniforms[layer], 0f);
                     shader.SetUniform1(LayerPerParticleUniforms[layer], 0);
+                    shader.SetUniform1(LayerEffectModeUniforms[layer], (int)SpriteCardTextureType.SPRITECARD_TEXTURE_DIFFUSE);
                     continue;
                 }
 
@@ -665,6 +677,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
 
                 shader.SetUniform1(LayerUvRotationUniforms[layer], layers[layer].UvRotation.NextNumber(systemRenderState));
                 shader.SetUniform1(LayerPerParticleUniforms[layer], layers[layer].PerParticleSelectors);
+
+                shader.SetUniform1(LayerEffectModeUniforms[layer], (int)layers[layer].EffectMode);
+                shader.SetUniform1(LayerZoomScaleUniforms[layer], layers[layer].ZoomScale.NextNumber(systemRenderState));
+                shader.SetUniform1(LayerDistortionUniforms[layer], layers[layer].Distortion.NextNumber(systemRenderState));
             }
 
             // TODO: This formula is a guess but still seems too bright compared to valve particles

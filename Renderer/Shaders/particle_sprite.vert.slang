@@ -32,7 +32,7 @@ out vec4 vColor;
 out vec3 vFragPosition;
 // Layer 0 rides vTexCoordOut, since its uv has to be mapped through the sheet frame; the extra layers
 // carry theirs here.
-out vec2 vLayerUv[MAX_TEXTURE_LAYERS];
+out vec4 vLayerUv[MAX_TEXTURE_LAYERS];
 
 void main(void) {
     // 0 -> (-1,-1), 1 -> (-1,+1), 2 -> (+1,-1), 3 -> (+1,+1): a triangle strip over the quad.
@@ -51,13 +51,13 @@ void main(void) {
 
     for (int i = 0; i < MAX_TEXTURE_LAYERS; ++i)
     {
-        vLayerUv[i] = ApplyLayerUvTransform(uvCorner, i, aParticleScalars, aRotation,
+        vLayerUv[i] = BuildLayerUv(uvCorner, i, aParticleScalars, aRotation,
             aShaderExtraData, aVertexColor.a);
     }
 
     // Layer 0's transformed corner is then mapped into its sheet frame, for both frames.
-    vTexCoordOut = mix(aUvRect.xy, aUvRect.zw, vLayerUv[0]);
-    vTexCoordNextFrameOut = mix(aUvRectNextFrame.xy, aUvRectNextFrame.zw, vLayerUv[0]);
+    vTexCoordOut = mix(aUvRect.xy, aUvRect.zw, vLayerUv[0].xy);
+    vTexCoordNextFrameOut = mix(aUvRectNextFrame.xy, aUvRectNextFrame.zw, vLayerUv[0].xy);
     vFrameBlend = aFrameBlend;
 
     vec3 positionWs = aPosition + (aRight * corner.x) + (aUp * corner.y);
