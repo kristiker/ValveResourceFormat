@@ -14,7 +14,7 @@ namespace ValveResourceFormat.Renderer.Particles
         /// <summary>accumulator * layer.</summary>
         SPRITECARD_TEXTURE_BLEND_MULTIPLY = 0,
         /// <summary>accumulator * layer * 2, so that 0.5 in the layer is neutral.</summary>
-        SPRITECARD_TEXTURE_BLEND_MULTIPLY2X = 1,
+        SPRITECARD_TEXTURE_BLEND_MOD2X = 1,
         /// <summary>The layer replaces the accumulator outright.</summary>
         SPRITECARD_TEXTURE_BLEND_REPLACE = 2,
         /// <summary>accumulator + layer.</summary>

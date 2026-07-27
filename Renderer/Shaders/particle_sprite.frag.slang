@@ -34,6 +34,9 @@ uniform sampler2D uTextureLayer4;
 uniform float uOverbrightFactor;
 uniform float uColorFactor = 1.0; // m_flDiffuseAmount + m_flSelfIllumAmount
 uniform float uDesaturation = 0.0; // m_flDesaturation
+// m_bSaturateColorPreAlphaBlend, which defaults on. A good deal of shipped content turns it off to let
+// the brightness run past 1 into the blend.
+uniform int uSaturateColorPreAlphaBlend = 1;
 
 // The control point named by m_nHSVShiftControlPoint supplies a hue offset in turns plus saturation and
 // value scales. Disabled when the offset is 0 and both scales are 1, which is what an absent control
@@ -83,7 +86,7 @@ uniform int uLayerBlendMode[MAX_TEXTURE_LAYERS];
 uniform float uLayerBlend[MAX_TEXTURE_LAYERS];
 
 #define SPRITECARD_TEXTURE_BLEND_MULTIPLY   0
-#define SPRITECARD_TEXTURE_BLEND_MULTIPLY2X 1
+#define SPRITECARD_TEXTURE_BLEND_MOD2X 1
 #define SPRITECARD_TEXTURE_BLEND_REPLACE    2
 #define SPRITECARD_TEXTURE_BLEND_ADD        3
 #define SPRITECARD_TEXTURE_BLEND_SUBTRACT   4
@@ -217,7 +220,7 @@ vec4 ApplyLayerBlend(vec4 accum, vec4 masked, int blendMode)
 {
     switch (blendMode)
     {
-        case SPRITECARD_TEXTURE_BLEND_MULTIPLY2X: return accum * masked * 2.0;
+        case SPRITECARD_TEXTURE_BLEND_MOD2X: return accum * masked * 2.0;
         case SPRITECARD_TEXTURE_BLEND_REPLACE:    return masked;
         case SPRITECARD_TEXTURE_BLEND_ADD:        return accum + masked;
         case SPRITECARD_TEXTURE_BLEND_SUBTRACT:   return accum - masked;
@@ -301,9 +304,14 @@ void main(void) {
     // with everything else, and before the brightness below.
     finalColor = mix(finalColor, vec3(GetLuma(finalColor)), uDesaturation);
 
-    // spritecard shading: brightness from diffuse+selfillum, saturated before the alpha blend. Applied
-    // after the outline so the overlay colour is lit the same way the sample is.
-    finalColor = saturate(finalColor * (uOverbrightFactor * uColorFactor));
+    // spritecard shading: brightness from diffuse+selfillum, optionally clamped before the alpha blend.
+    // Applied after the outline so the overlay colour is lit the same way the sample is.
+    finalColor = finalColor * (uOverbrightFactor * uColorFactor);
+
+    if (uSaturateColorPreAlphaBlend != 0)
+    {
+        finalColor = saturate(finalColor);
+    }
 
     alpha *= vColor.a;
 
@@ -317,7 +325,7 @@ void main(void) {
     }
 
     // MOD2X composites like ADD. The modulate-2x in spritecard is a texture combiner inside the layer
-    // chain (SPRITECARD_TEXTURE_BLEND_MULTIPLY2X above), not a framebuffer op: every blend state the
+    // chain (SPRITECARD_TEXTURE_BLEND_MOD2X above), not a framebuffer op: every blend state the
     // shader ships with is an Add with a One destination, so it never scales what is behind it.
     bool isAdditive = uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_ADD
         || uBlendMode == PARTICLE_OUTPUT_BLEND_MODE_MOD2X;

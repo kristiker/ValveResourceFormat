@@ -111,7 +111,10 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         // radius scale, so the card pivots about a point other than its middle.
         private readonly INumberProvider centerXOffset = new LiteralNumberProvider(0f);
         private readonly INumberProvider centerYOffset = new LiteralNumberProvider(0f);
-        private readonly bool gammaCorrectVertexColors;
+        // Both default on: shipped content only ever writes them as false, which is how the compiled KV
+        // reveals a default it omits.
+        private readonly bool gammaCorrectVertexColors = true;
+        private readonly bool saturateColorPreAlphaBlend = true;
 
         // m_bBlendFramesSeq0 cross-fades consecutive sheet frames instead of stepping between them.
         // m_bMaxLuminanceBlendingSequence0 swaps the plain lerp for a luminance-weighted one, which keeps
@@ -187,6 +190,17 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
                         continue;
                     }
 
+                    // Normal maps and motion vector sheets are not colour: compositing them into the chain
+                    // would tint the card with a tangent-space basis or a flow field. They are the majority
+                    // of the extra layers in shipped content, so this matters more than it sounds.
+                    var textureType = textureInput.Enum("m_nTextureType", SpriteCardTextureType.SPRITECARD_TEXTURE_DIFFUSE);
+
+                    if (textureType is SpriteCardTextureType.SPRITECARD_TEXTURE_NORMALMAP
+                        or SpriteCardTextureType.SPRITECARD_TEXTURE_ANIMMOTIONVEC)
+                    {
+                        continue;
+                    }
+
                     if (parsed.Count == MaxTextureLayers)
                     {
                         break;
@@ -234,6 +248,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             centerXOffset = parse.NumberProvider("m_flCenterXOffset", centerXOffset);
             centerYOffset = parse.NumberProvider("m_flCenterYOffset", centerYOffset);
             gammaCorrectVertexColors = parse.Boolean("m_bGammaCorrectVertexColors", gammaCorrectVertexColors);
+            saturateColorPreAlphaBlend = parse.Boolean("m_bSaturateColorPreAlphaBlend", saturateColorPreAlphaBlend);
             blendFrames = parse.Boolean("m_bBlendFramesSeq0", blendFrames);
             maxLuminanceFrameBlend = parse.Boolean("m_bMaxLuminanceBlendingSequence0", maxLuminanceFrameBlend);
             animationType = parse.Enum<ParticleAnimationType>("m_nAnimationType", animationType);
@@ -678,6 +693,7 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             shader.SetUniform2("uFeatheringRange", featheringRange);
 
             shader.SetUniform1("uGammaCorrectVertexColors", gammaCorrectVertexColors);
+            shader.SetUniform1("uSaturateColorPreAlphaBlend", saturateColorPreAlphaBlend);
             shader.SetUniform1("uBlendFrames", blendFrames);
             shader.SetUniform1("uMaxLuminanceFrameBlend", maxLuminanceFrameBlend);
             shader.SetUniform1("uOutline", outline);
