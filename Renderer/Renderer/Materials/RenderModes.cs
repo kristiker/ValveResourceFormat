@@ -60,7 +60,10 @@ namespace ValveResourceFormat.Renderer.Materials
             new("MeshId"),
             new("ShaderId"),
             new("ShaderProgramId"),
-            new("Meshlets")
+            new("Meshlets"),
+
+            new("Debug", IsHeader: true),
+            new("DepthPyramid")
         ];
 
         private readonly static Dictionary<string, byte> ShaderIds = new(Items.Count);

@@ -48,9 +48,17 @@ namespace GUI.Types.GLViewers
         private PerfDisplay perfDisplay;
         private ComboBox? perfDisplayComboBox;
 
+        /// <summary>
+        /// Render mode drawn by the viewer itself rather than by a material shader, so it is always
+        /// offered no matter which shaders the loaded scene uses.
+        /// </summary>
+        private const string DepthPyramidRenderMode = "DepthPyramid";
+
         private readonly List<RenderModes.RenderMode> renderModes = new(RenderModes.Items.Count);
         private int renderModeCurrentIndex;
         private ComboBox? renderModeComboBox;
+        private DepthPyramidDebugRenderer? depthPyramidDebugRenderer;
+        private bool showDepthPyramid;
         private InfiniteGrid? baseGrid;
         protected SelectedNodeRenderer? SelectedNodeRenderer;
 
@@ -619,6 +627,12 @@ namespace GUI.Types.GLViewers
 
             BlitFramebufferToScreen();
 
+            if (showDepthPyramid && GLDefaultFramebuffer != null)
+            {
+                depthPyramidDebugRenderer ??= new DepthPyramidDebugRenderer(Scene.RendererContext);
+                depthPyramidDebugRenderer.Render(Scene, GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height);
+            }
+
             if (GrabbedMouse)
             {
                 TextRenderer.AddTextRelative(new ValveResourceFormat.Renderer.TextRenderer.TextRenderRequest
@@ -774,7 +788,7 @@ namespace GUI.Types.GLViewers
             {
                 var selectedIndex = 0;
                 var currentlySelected = keepCurrentSelection ? renderModeComboBox.SelectedItem?.ToString() : null;
-                var supportedRenderModes = new HashSet<string>(Picker.Shader.RenderModes);
+                var supportedRenderModes = new HashSet<string>(Picker.Shader.RenderModes) { DepthPyramidRenderMode };
                 foreach (var node in Scene.AllNodes)
                 {
                     supportedRenderModes.UnionWith(node.GetSupportedRenderModes());
@@ -838,6 +852,9 @@ namespace GUI.Types.GLViewers
             Renderer.ViewBuffer!.Data!.RenderMode = RenderModes.GetShaderId(renderMode);
 
             Renderer.Postprocess.Enabled = Renderer.ViewBuffer.Data.RenderMode == 0;
+
+            // Drawn over the finished frame, so the scene underneath keeps rendering as it normally would.
+            showDepthPyramid = renderMode == DepthPyramidRenderMode;
 
             Scene.EnableCompaction = renderMode != "Meshlets";
 
