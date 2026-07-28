@@ -93,25 +93,8 @@ public class VcsShader : Shader
             }
         }
 
-        // Mark sRGB-read members and refresh the uniform cache so vector setters convert them.
-        foreach (var (member, aliases) in materialParamAliases)
-        {
-            if (VariableDescriptions.TryGetValue(member, out var description) && description.SrgbRead)
-            {
-                foreach (var alias in aliases)
-                {
-                    SrgbUniforms.Add(alias);
-                }
-            }
-        }
-
-        if (SrgbUniforms.Count > 0)
-        {
-            foreach (var _ in GetAllUniformNames())
-            {
-                // Enumerating repopulates the uniform cache with the updated sRGB flags.
-            }
-        }
+        // Note: VfxVariableDescription.SrgbRead is only meaningful for textures; on scalar and vector
+        // parameters the underlying bit is repurposed, so no vector params are marked for conversion.
 
         // Combined sampler uniforms: create GL sampler objects and alias multi-sampler textures.
         foreach (var reflection in StageReflections)
