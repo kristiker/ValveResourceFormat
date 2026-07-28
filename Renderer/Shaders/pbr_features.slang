@@ -24,6 +24,10 @@
 // Shading
 #define F_SELF_ILLUM 0
 #define F_UNLIT 0
+// Only the tint mask repack is honoured; the lighting itself stays PBR. See the reference
+// functions at the bottom of common/deadlock.slang.
+#define F_USE_NPR_LIGHTING 0
+
 #define F_SHEEN 0
 #define F_GLASS 0 // transmission through the albedo, not the edge fresnel glass elsewhere
 
@@ -31,7 +35,7 @@
     #define GLASS_IS_TRANSMISSIVE
 #endif
 
-// Not implemented: F_USE_NPR_LIGHTING and its outline/rim/transmissive companions,
+// Not implemented: NPR lighting itself and its outline/rim/transmissive companions,
 // F_CLOAK, F_COSMIC_VEIL, F_USE_STATUS_EFFECTS_PROXY, F_MATERIAL_VARIANT,
 // F_OVERRIDE_BLOOM_AMOUNT.
 

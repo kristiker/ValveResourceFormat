@@ -23,7 +23,15 @@ out vec4 outputColor;
 
 uniform sampler2D g_tColor; // SrgbRead(true)
 uniform sampler2D g_tNormalRoughness;
-uniform sampler2D g_tTintMask;
+
+#if (F_USE_NPR_LIGHTING == 1)
+    // NPR materials bind no g_tTintMask; they pack the tint mask and the rim light mask into
+    // one two channel texture instead. Only .x is used here, .y being the rim mask that the
+    // NPR lighting would consume.
+    uniform sampler2D g_tTintMaskRimLightMask;
+#else
+    uniform sampler2D g_tTintMask;
+#endif
 #if (F_UNLIT == 0)
     uniform sampler2D g_tAmbientOcclusion;
     uniform bool g_bUseSecondaryUvForAmbientOcclusion = false;
@@ -193,7 +201,11 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
 
     vec4 color = texture(g_tColor, albedoTexCoord);
     vec4 normalRoughness = texture(g_tNormalRoughness, normalTexCoord);
-    float tintMask = texture(g_tTintMask, albedoTexCoord).x;
+    #if (F_USE_NPR_LIGHTING == 1)
+        float tintMask = texture(g_tTintMaskRimLightMask, albedoTexCoord).x;
+    #else
+        float tintMask = texture(g_tTintMask, albedoTexCoord).x;
+    #endif
 
     float vertexColorAmount = (g_bMaskVertexColorTint1 ? tintMask : 1.0) * g_fVertexColorStrength1;
 
