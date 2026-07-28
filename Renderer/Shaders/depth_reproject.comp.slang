@@ -95,23 +95,67 @@ void main()
 
     uint packedDepth = imageLoad(g_tScatterDepth, coord).r;
 
-    // Single texel gaps are where the new view pulled last frame's samples apart, which happens on
-    // geometry close enough to the camera to swing across the screen in one frame. Filling them with
-    // the furthest neighbour keeps the pyramid useful: every coarser mip is the furthest sample of
-    // the level below, so one unfilled gap would flatten every mip covering it to the far plane and
-    // stop culling anything large. A gap the size of a real disocclusion keeps an empty core, and
-    // stays the far plane where it matters.
+    // A gap is either a surface last frame's samples were pulled apart by the new view, or a place
+    // last frame had nothing to give - geometry the camera has just uncovered. The first kind is
+    // worth filling in: every coarser mip is the furthest sample of the level below, so a single
+    // unfilled gap flattens every mip covering it to the far plane and stops culling anything large.
+    // The second kind must be left alone, because filling it means asserting a depth for geometry
+    // that has never been seen, and getting that wrong culls something that is plainly visible.
+    // Neither kind announces itself, so both tests below are about telling them apart.
     const bool FillGaps = true;
 
     if (FillGaps && packedDepth == REPROJECT_GAP)
     {
         ivec2 lastCoord = size - ivec2(1);
 
+        uint furthest = REPROJECT_GAP;
+        uint nearest = 0u;
+        bool surrounded = true;
+
         for (int y = -1; y <= 1; y++)
         {
             for (int x = -1; x <= 1; x++)
             {
-                packedDepth = min(packedDepth, imageLoad(g_tScatterDepth, clamp(coord + ivec2(x, y), ivec2(0), lastCoord)).r);
+                if (x == 0 && y == 0)
+                {
+                    continue;
+                }
+
+                uint neighbour = imageLoad(g_tScatterDepth, clamp(coord + ivec2(x, y), ivec2(0), lastCoord)).r;
+
+                surrounded = surrounded && neighbour != REPROJECT_GAP;
+                furthest = min(furthest, neighbour);
+                nearest = max(nearest, neighbour == REPROJECT_GAP ? 0u : neighbour);
+            }
+        }
+
+        // A surface pulled apart leaves lone holes in an otherwise dense patch, so anything with a
+        // gap beside it is the rim of something the camera uncovered - the disocclusion is wider than
+        // one texel and this is its edge. Filling the rim would smear the occluder that caused the
+        // disocclusion out over the geometry it just revealed, one texel deep, all the way around.
+        // The clamp at the image border counts as a gap, which is right: content arriving from off
+        // screen is uncovered geometry too.
+        if (surrounded)
+        {
+            // Being surrounded is not enough on its own - a disocclusion exactly one texel wide is
+            // still a disocclusion - but a gap between two surfaces has both of them in its
+            // neighbourhood, and that silhouette is visible as a jump between the nearest and
+            // furthest neighbour. Only a neighbourhood that stays on one surface gets filled.
+            //
+            // Compared as view distances, which are proportional to the reciprocal of NDC depth, so
+            // "no further apart than this ratio" flips into a product and never divides by the far
+            // plane's zero. Tighter than a real silhouette needs and looser than a steeply angled
+            // surface can be, so grazing floors still get their holes filled.
+            const float ContinuousDistanceRatio = 2.0;
+
+            float sceneDepthSize = g_vSceneDepthRange.y - g_vSceneDepthRange.x;
+            float ndcFurthest = (uintBitsToFloat(furthest) - g_vSceneDepthRange.x) / sceneDepthSize;
+            float ndcNearest = (uintBitsToFloat(nearest) - g_vSceneDepthRange.x) / sceneDepthSize;
+
+            if (ndcNearest <= ContinuousDistanceRatio * ndcFurthest)
+            {
+                // The furthest of them, matching the reduction the rest of the pyramid does.
+                packedDepth = furthest;
             }
         }
     }
