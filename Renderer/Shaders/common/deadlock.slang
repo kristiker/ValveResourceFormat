@@ -39,6 +39,50 @@ vec3 GetDeadlockSpecularColor(vec3 albedo, float metalness)
 // provide for opaque draws.
 // ---------------------------------------------------------------------------------------
 
+// The knobs, with the names, types and defaults the shipped shader has. Nothing reads them:
+// the functions below take their inputs as arguments so they stay callable from anywhere, and
+// an unused uniform is stripped before it reaches the material system. They are declared so
+// the set is recorded in one place, and so that whoever fills them in has the spelling.
+//
+// Zero is not a resting value here. It disables all three stages, and g_nNPRSpecularSteps at 0
+// makes NprSteppedSpecular divide by zero. Deadlock overwrites every one of these at runtime.
+#if (F_USE_NPR_LIGHTING == 1)
+    // Diffuse
+    uniform int g_bNPRDirectDiffuse = 0;
+    uniform int g_bNPRBounceDiffuse = 0;
+    uniform float g_flNPRDirectLightWrap = 0.0;
+    uniform float g_flNPRDiffuseStepSharpness = 0.0;
+    uniform float g_flNPRDiffusePbrBlend = 0.0;
+    uniform float g_flOoNPRDirectLightNormalization = 0.0;
+    uniform vec3 g_vNPRLightWeights = vec3(0.0);
+    uniform vec2 g_vNPRDfaoInfluenceRange = vec2(0.0);
+
+    // Specular. g_nNPRSpecularSteps is a float despite the name, and is divided by.
+    uniform int g_bNPRDirectSpecular = 0;
+    uniform float g_nNPRSpecularSteps = 0.0;
+    uniform float g_flNPRSpecularStepSharpness = 0.0;
+    uniform float g_flNPRSpecularTint = 0.0;
+    uniform float g_flNPRSpecularReflectance = 0.0;
+    uniform float g_fNPRSpecularRoughnessBias = 0.0;
+    uniform int g_bNoSpecularAtFullRoughness = 0;
+
+    // Rim light
+    uniform int g_bNPRRimLighting = 0;
+    uniform float g_flNPRRimLightWrap = 0.0;
+    uniform float g_flNPRRimLightFalloff = 0.0;
+    uniform float g_flNPRRimLightStrength = 0.0;
+    uniform vec2 g_vNPRRimLightUpRamp = vec2(0.0);
+    uniform int g_bNPRRimLightingDepthOcclusion = 0;
+    uniform float g_flNPRRimOcclusionSampleDistance = 0.0;
+    uniform float g_flNPRRimOcclusionDepthToleranceMin = 0.0;
+    uniform float g_flNPRRimOcclusionDepthToleranceRange = 0.0;
+
+    // Exposure control
+    uniform int g_bNPRExposureControl = 0;
+    uniform vec3 g_vNPRExposureTargets = vec3(0.0);
+    uniform float g_flNPRExposureControlPbrBlend = 0.0;
+#endif
+
 // Symmetric S-curve about 0.5, shared by the toon diffuse and the specular banding. k is the
 // hardness: 1 is a straight line, larger values push the curve toward a hard step.
 float NprGain(float x, float k)
