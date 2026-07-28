@@ -64,6 +64,7 @@ namespace CLI
         private bool ToolsAssetInfoShort;
         private string? ShaderCombo;
         private Backend? ShaderBackend;
+        private bool ShaderBackendOpenGl;
         private bool ShaderListCombos;
         private bool ShaderDumpAll;
         private bool ShaderClean;
@@ -125,7 +126,7 @@ namespace CLI
         /// <param name="gltf_export_extras">Export additional Mesh properties into glTF extras</param>
         /// <param name="tools_asset_info_short">Whether to print only file paths for tools_asset_info files.</param>
         /// <param name="shader_combo">Decompile the shader variant matching these combo values, example: "S_ALPHA_TEST=1,D_BLEND_WEIGHT_COUNT=4". A bare name means "=1", omitted combos stay at their minimum.</param>
-        /// <param name="shader_backend">Language to decompile shader bytecode to. Must be either "glsl" or "hlsl". By default hlsl is attempted first, falling back to glsl.</param>
+        /// <param name="shader_backend">Language to decompile shader bytecode to. Must be "glsl", "hlsl" or "opengl" (desktop GL compilable GLSL). By default hlsl is attempted first, falling back to glsl.</param>
         /// <param name="shader_list_combos">List every compiled variant of a shader with its combo values and bytecode hash.</param>
         /// <param name="shader_dump_all">Write every unique compiled variant of a shader to the output folder, along with a manifest.</param>
         /// <param name="shader_clean">Rename generated identifiers and strip constant buffer prefixes, so that variants of the same shader can be compared to each other.</param>
@@ -282,12 +283,15 @@ namespace CLI
                 {
                     "GLSL" => Backend.GLSL,
                     "HLSL" => Backend.HLSL,
+                    "OPENGL" => Backend.GLSL,
                     _ => null,
                 };
 
+                ShaderBackendOpenGl = string.Equals(shader_backend, "opengl", StringComparison.OrdinalIgnoreCase);
+
                 if (ShaderBackend == null)
                 {
-                    Console.Error.WriteLine("Shader backend must be either 'glsl' or 'hlsl'.");
+                    Console.Error.WriteLine("Shader backend must be 'glsl', 'hlsl' or 'opengl'.");
                     return 1;
                 }
             }
@@ -1108,6 +1112,16 @@ namespace CLI
         {
             if (shaderFile is VfxShaderFileVulkan vulkan)
             {
+                if (ShaderBackendOpenGl)
+                {
+                    if (ShaderSpirvReflection.ReflectSpirvOpenGl(vulkan, out var glCode, out _))
+                    {
+                        return glCode;
+                    }
+
+                    return $"// OpenGL emission failed: {glCode}";
+                }
+
                 return vulkan.GetDecompiledFile(ShaderBackend, ShaderClean ? SpirvReflectionOptions.Clean : SpirvReflectionOptions.Default);
             }
 

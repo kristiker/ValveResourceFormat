@@ -497,6 +497,95 @@ namespace Tests
             Assert.That(code, Is.EqualTo(reference).IgnoreWhiteSpace, $"Spirv reflection output does not match reference.");
         }
 
+        private static IEnumerable<TestCaseData> SpirvOpenGlTestCases()
+        {
+            yield return new TestCaseData("vcs68_tower_force_field_vulkan_40_vs.vcs", 0, 9);
+            yield return new TestCaseData("vcs68_tower_force_field_vulkan_40_ps.vcs", 1, 1);
+            yield return new TestCaseData("vcs66_vr_stencil_vulkan_50_vs.vcs", 0, 0);
+            yield return new TestCaseData("vcs69_zstd5_npr_dummy_vulkan_50_vs.vcs", 0, 0);
+            yield return new TestCaseData("vcs69_bloom_vulkan_40_ps.vcs", 0, 0);
+        }
+
+        [Test, TestCaseSource(nameof(SpirvOpenGlTestCases))]
+        public void TestSpirvOpenGlEmission(string shaderFile, int staticCombo, int dynamicCombo)
+        {
+            if (!IsSpirvCrossAvailable())
+            {
+                Assert.Ignore("There are no native binaries for SPIR-V on arm linux yet.");
+                return;
+            }
+
+            var path = Path.Combine(ShadersDir, shaderFile);
+            using var shader = new VfxProgramData();
+            shader.Read(path);
+
+            var staticComboEntry = shader.GetStaticCombo(staticCombo);
+            var dynamicComboEntry = staticComboEntry.DynamicCombos[dynamicCombo];
+            var vulkanSource = (VfxShaderFileVulkan)staticComboEntry.ShaderFiles[dynamicComboEntry.ShaderFileId];
+
+            var success = ShaderSpirvReflection.ReflectSpirvOpenGl(vulkanSource, out var code, out var info);
+
+            Assert.That(success, Is.True, code);
+            Assert.That(code, Does.StartWith("#version 460"));
+
+            // Nothing Vulkan may survive: no descriptor set/binding qualifiers, no separate images or samplers.
+            Assert.That(code, Does.Not.Contain("layout(set"));
+            Assert.That(code, Does.Not.Contain("layout(binding"));
+            Assert.That(code, Does.Not.Contain("uniform texture"));
+
+            // The saturate() rewrite is skipped, it is not a GLSL builtin.
+            Assert.That(code, Does.Not.Contain("saturate("));
+
+            var isVertexShader = shader.VcsProgramType == VcsProgramType.VertexShader;
+            var stageSuffix = isVertexShader ? "_vs" : "_ps";
+
+            if (isVertexShader)
+            {
+                // The FlipVertexY counter-negation of the baked Vulkan Y-flip.
+                Assert.That(code, Does.Contain("gl_Position.y = -gl_Position.y"));
+            }
+
+            foreach (var block in info.UniformBlocks)
+            {
+                Assert.That(block.EmittedName, Does.EndWith(stageSuffix));
+                Assert.That(code, Does.Contain(block.EmittedName));
+            }
+
+            foreach (var block in info.StorageBlocks)
+            {
+                Assert.That(block.EmittedName, Does.EndWith(stageSuffix));
+                Assert.That(code, Does.Contain(block.EmittedName));
+            }
+
+            foreach (var combinedSampler in info.CombinedSamplers)
+            {
+                Assert.That(code, Does.Contain($" {combinedSampler.UniformName};"));
+            }
+        }
+
+        [Test]
+        public void TestSpirvOpenGlUnsupportedProgramType()
+        {
+            if (!IsSpirvCrossAvailable())
+            {
+                Assert.Ignore("There are no native binaries for SPIR-V on arm linux yet.");
+                return;
+            }
+
+            var path = Path.Combine(ShadersDir, "vcs68_csgo_simple_2way_blend_vulkan_60_rtx.vcs");
+            using var shader = new VfxProgramData();
+            shader.Read(path);
+
+            var staticComboEntry = shader.GetStaticCombo(0x6);
+            var dynamicComboEntry = staticComboEntry.DynamicCombos[0];
+            var vulkanSource = (VfxShaderFileVulkan)staticComboEntry.ShaderFiles[dynamicComboEntry.ShaderFileId];
+
+            var success = ShaderSpirvReflection.ReflectSpirvOpenGl(vulkanSource, out var code, out _);
+
+            Assert.That(success, Is.False);
+            Assert.That(code, Does.Contain("not supported"));
+        }
+
         private static IEnumerable<TestCaseData> Clamp01TestCases()
         {
             // The clamped expression routinely contains calls and their commas.

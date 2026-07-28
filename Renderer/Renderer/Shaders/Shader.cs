@@ -100,10 +100,21 @@ namespace ValveResourceFormat.Renderer.Shaders
                 {
                     StoreAttributeLocations();
                     StoreUniformLocations();
+                    OnProgramLoaded();
                 }
             }
 
             return IsValid;
+        }
+
+        /// <summary>Called once after the program has linked and uniform/attribute caches were stored. Base implementation does nothing.</summary>
+        protected virtual void OnProgramLoaded()
+        {
+        }
+
+        /// <summary>Called by the material after its draw calls complete, to undo any per-draw binding state. Base implementation does nothing.</summary>
+        public virtual void PostRender()
+        {
         }
 
         private unsafe void StoreUniformLocations()
@@ -325,7 +336,7 @@ namespace ValveResourceFormat.Renderer.Shaders
         }
 
         /// <summary>Sets a scalar float uniform on this program.</summary>
-        public void SetUniform1(string name, float value)
+        public virtual void SetUniform1(string name, float value)
         {
             var uniformLocation = GetUniformLocation(name);
             if (uniformLocation > -1)
@@ -335,7 +346,7 @@ namespace ValveResourceFormat.Renderer.Shaders
         }
 
         /// <summary>Sets a scalar integer uniform on this program.</summary>
-        public void SetUniform1(string name, int value)
+        public virtual void SetUniform1(string name, int value)
         {
             var uniformLocation = GetUniformLocation(name);
             if (uniformLocation > -1)
@@ -388,7 +399,7 @@ namespace ValveResourceFormat.Renderer.Shaders
         }
 
         /// <summary>Sets a vector material uniform, applying sRGB-to-linear conversion if needed and adapting to the actual uniform size.</summary>
-        public void SetMaterialVector4Uniform(string name, Vector4 value)
+        public virtual void SetMaterialVector4Uniform(string name, Vector4 value)
         {
             if (Uniforms.TryGetValue(name, out var uniform) && uniform.Location > -1)
             {
@@ -486,7 +497,7 @@ namespace ValveResourceFormat.Renderer.Shaders
         /// <param name="name">The sampler uniform name.</param>
         /// <param name="texture">The texture to bind.</param>
         /// <returns><see langword="true"/> if the texture was successfully bound; otherwise <see langword="false"/>.</returns>
-        public bool SetTexture(int slot, string name, RenderTexture? texture)
+        public virtual bool SetTexture(int slot, string name, RenderTexture? texture)
         {
             if (texture == null)
             {
