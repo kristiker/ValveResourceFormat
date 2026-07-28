@@ -24,10 +24,16 @@
 // Shading
 #define F_SELF_ILLUM 0
 #define F_UNLIT 0
+#define F_SHEEN 0
+#define F_GLASS 0 // transmission through the albedo, not the edge fresnel glass elsewhere
+
+#if (F_GLASS == 1)
+    #define GLASS_IS_TRANSMISSIVE
+#endif
 
 // Not implemented: F_USE_NPR_LIGHTING and its outline/rim/transmissive companions,
-// F_SHEEN, F_GLASS, F_CLOAK, F_COSMIC_VEIL, F_USE_STATUS_EFFECTS_PROXY,
-// F_MATERIAL_VARIANT, F_OVERRIDE_BLOOM_AMOUNT.
+// F_CLOAK, F_COSMIC_VEIL, F_USE_STATUS_EFFECTS_PROXY, F_MATERIAL_VARIANT,
+// F_OVERRIDE_BLOOM_AMOUNT.
 
 // The colour alpha is the opacity whenever the material is cut out or see through,
 // which is what pushes metalness onto its own texture. Unlit shades nothing, so it
