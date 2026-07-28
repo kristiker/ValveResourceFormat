@@ -50,7 +50,8 @@ public static class VcsRenderStateGl
             }
             else
             {
-                GL.DepthFunc(VcsSamplerCache.ToGlComparison(depthStencil.DepthFunc));
+                // Valve stores comparisons in standard-Z convention; the renderer runs reverse-Z.
+                GL.DepthFunc(VcsSamplerCache.ToGlComparison(FlipForReverseZ(depthStencil.DepthFunc)));
             }
 
             GL.DepthMask(depthStencil.DepthWriteEnable);
@@ -146,6 +147,15 @@ public static class VcsRenderStateGl
             }
         }
     }
+
+    private static RsComparison FlipForReverseZ(RsComparison comparison) => comparison switch
+    {
+        RsComparison.Less => RsComparison.Greater,
+        RsComparison.LessEqual => RsComparison.GreaterEqual,
+        RsComparison.Greater => RsComparison.Less,
+        RsComparison.GreaterEqual => RsComparison.LessEqual,
+        _ => comparison,
+    };
 
     private static BlendingFactorSrc ToGlSrcBlend(VfxRenderStateInfoPixelShader.RsBlendStateDesc.RsBlendMode mode)
         => (BlendingFactorSrc)ToGlBlend(mode);

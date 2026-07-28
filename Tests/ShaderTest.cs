@@ -586,6 +586,41 @@ namespace Tests
             Assert.That(code, Does.Contain("not supported"));
         }
 
+        [Test]
+        public void TestDepthStencilStateBitLayouts()
+        {
+            // Value observed in CS2 (VCS 71) pixel shaders: depth test+write with LessEqual,
+            // stencil disabled with Always funcs and full masks. The bit layout changed in version 71.
+            var v71 = new VfxRenderStateInfoPixelShader.RsDepthStencilStateDesc(0xFFFF00000077000FUL, 71);
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(v71.DepthTestEnable, Is.True);
+                Assert.That(v71.DepthWriteEnable, Is.True);
+                Assert.That(v71.DepthFunc, Is.EqualTo(RsComparison.LessEqual));
+                Assert.That(v71.StencilEnable, Is.False);
+                Assert.That(v71.FrontStencilFunc, Is.EqualTo(RsComparison.Always));
+                Assert.That(v71.BackStencilFunc, Is.EqualTo(RsComparison.Always));
+                Assert.That(v71.StencilReadMask, Is.EqualTo(0xFF));
+                Assert.That(v71.StencilWriteMask, Is.EqualTo(0xFF));
+            }
+
+            // Value from the vcs70 resource bloom fixture: depth disabled, LessEqual, Always funcs.
+            var v70 = new VfxRenderStateInfoPixelShader.RsDepthStencilStateDesc(0xFFFF01C01C000300UL, 70);
+
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(v70.DepthTestEnable, Is.False);
+                Assert.That(v70.DepthWriteEnable, Is.False);
+                Assert.That(v70.DepthFunc, Is.EqualTo(RsComparison.LessEqual));
+                Assert.That(v70.StencilEnable, Is.False);
+                Assert.That(v70.FrontStencilFunc, Is.EqualTo(RsComparison.Always));
+                Assert.That(v70.BackStencilFunc, Is.EqualTo(RsComparison.Always));
+                Assert.That(v70.StencilReadMask, Is.EqualTo(0xFF));
+                Assert.That(v70.StencilWriteMask, Is.EqualTo(0xFF));
+            }
+        }
+
         private static IEnumerable<TestCaseData> Clamp01TestCases()
         {
             // The clamped expression routinely contains calls and their commas.
