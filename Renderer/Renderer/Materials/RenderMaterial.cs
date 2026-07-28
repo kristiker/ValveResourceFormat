@@ -245,11 +245,7 @@ namespace ValveResourceFormat.Renderer.Materials
                 || material.IntParams.GetValueOrDefault("F_FOLIAGE_ANIMATION") > 0;
 
             // :MaterialIsOverlay
-            // environment_blend has no depth bias feature: it sets DepthBias in its render state
-            // for every material, because blends are meshes laid over the geometry they blend into.
-            hasDepthBias = material.IntParams.GetValueOrDefault("F_DEPTHBIAS") == 1
-                || material.IntParams.GetValueOrDefault("F_DEPTH_BIAS") == 1
-                || material.ShaderName == "environment_blend.vfx";
+            hasDepthBias = material.IntParams.GetValueOrDefault("F_DEPTHBIAS") == 1 || material.IntParams.GetValueOrDefault("F_DEPTH_BIAS") == 1;
             IsOverlay = material.IntParams.GetValueOrDefault("F_OVERLAY") == 1;
 
             if (material.ShaderName == "csgo_decalmodulate.vfx")
