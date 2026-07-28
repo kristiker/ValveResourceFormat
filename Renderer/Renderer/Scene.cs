@@ -94,6 +94,9 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Gets or sets the GPU buffer containing world-space transform matrices for all scene nodes.</summary>
         public StorageBuffer? TransformBufferGpu { get; set; }
 
+        /// <summary>Gets or sets the per-instance data buffer in the layout Valve's compiled vertex shaders expect. Only built when game shaders are enabled.</summary>
+        public StorageBuffer? VcsInstanceBufferGpu { get; set; }
+
 
         /// <summary>Gets or sets the GPU buffer containing per-draw-call bounding boxes for indirect culling.</summary>
         public StorageBuffer? DrawBoundsGpu { get; set; }
@@ -427,6 +430,8 @@ namespace ValveResourceFormat.Renderer
             {
                 InstanceBufferGpu?.Delete();
                 TransformBufferGpu?.Delete();
+                VcsInstanceBufferGpu?.Delete();
+                VcsInstanceBufferGpu = null;
             }
 
             var nodes = AllNodes.ToList();
@@ -490,6 +495,26 @@ namespace ValveResourceFormat.Renderer
 
             InstanceBufferGpu.Create(instanceData, BufferUsageHint.StaticDraw);
             TransformBufferGpu.Create(CollectionsMarshal.AsSpan(transformData), BufferUsageHint.StaticDraw);
+
+            if (RendererContext.UseGameShaders)
+            {
+                // Parallel instance buffer in the layout Valve's compiled vertex shaders unpack:
+                // packed sRGB tint, transform buffer offset, flags, and an alpha scale.
+                var vcsInstanceData = new VcsInstanceData[instanceData.Length];
+
+                for (var i = 0; i < instanceData.Length; i++)
+                {
+                    vcsInstanceData[i] = new VcsInstanceData
+                    {
+                        TintAlpha = instanceData[i].TintAlpha,
+                        TransformIndex = instanceData[i].TransformIndex,
+                        AlphaScale = 1f,
+                    };
+                }
+
+                VcsInstanceBufferGpu = new StorageBuffer(ReservedBufferSlots.VcsInstanceData);
+                VcsInstanceBufferGpu.Create(vcsInstanceData, BufferUsageHint.StaticDraw);
+            }
         }
 
         private void CreateIndirectDrawBuffers(bool deletePrevious = false)

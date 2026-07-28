@@ -73,6 +73,8 @@ namespace GUI.Utils
             public bool SmoothCameraEnabled { get; set; }
             /// <summary>Gets or sets the number of MSAA samples used for anti-aliasing.</summary>
             public int AntiAliasingSamples { get; set; }
+            /// <summary>Gets or sets whether the renderer uses the game's own compiled shaders (experimental) where supported.</summary>
+            public bool UseGameShaders { get; set; }
             /// <summary>Gets or sets the top edge position of the main window.</summary>
             public int WindowTop { get; set; }
             /// <summary>Gets or sets the left edge position of the main window.</summary>

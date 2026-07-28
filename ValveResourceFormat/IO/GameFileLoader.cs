@@ -275,7 +275,12 @@ namespace ValveResourceFormat.IO
         /// <summary>
         /// Loads a shader from disk by finding all its program files.
         /// </summary>
-        protected virtual ShaderCollection LoadShaderFromDisk(string shaderName)
+        protected virtual ShaderCollection LoadShaderFromDisk(string shaderName) => LoadShaderFromDisk(shaderName, preferredPlatform: null);
+
+        /// <summary>
+        /// Loads a shader from disk by finding all its program files, probing the preferred platform first when given.
+        /// </summary>
+        protected virtual ShaderCollection LoadShaderFromDisk(string shaderName, VcsPlatformType? preferredPlatform)
         {
             if (!ShaderPackagesScanned)
             {
@@ -323,6 +328,19 @@ namespace ValveResourceFormat.IO
             var selectedPlatformType = VcsPlatformType.Undetermined;
             var selectedModelType = VcsShaderModelType.Undetermined;
 
+            if (preferredPlatform is { } preferred)
+            {
+                for (var modelType = VcsShaderModelType._60; modelType > VcsShaderModelType._20; modelType--)
+                {
+                    if (TryLoadShader(VcsProgramType.Features, preferred, modelType))
+                    {
+                        selectedPlatformType = preferred;
+                        selectedModelType = modelType;
+                        break;
+                    }
+                }
+            }
+
             for (var platformType = (VcsPlatformType)0; platformType < VcsPlatformType.Undetermined && selectedPlatformType == VcsPlatformType.Undetermined; platformType++)
             {
                 for (var modelType = VcsShaderModelType._60; modelType > VcsShaderModelType._20; modelType--)
@@ -363,6 +381,27 @@ namespace ValveResourceFormat.IO
 
                 shader = LoadShaderFromDisk(shaderName);
                 CachedShaders.Add(shaderName, shader);
+                return shader;
+            }
+        }
+
+        /// <summary>
+        /// Loads a shader preferring a specific platform's build (e.g. <see cref="VcsPlatformType.VULKAN"/>
+        /// for SPIR-V bytecode), falling back to the regular platform probe order when it does not exist.
+        /// </summary>
+        public ShaderCollection LoadShader(string shaderName, VcsPlatformType preferredPlatform)
+        {
+            var cacheKey = $"{preferredPlatform}:{shaderName}";
+
+            lock (CachedShadersLock)
+            {
+                if (CachedShaders.TryGetValue(cacheKey, out var shader))
+                {
+                    return shader;
+                }
+
+                shader = LoadShaderFromDisk(shaderName, preferredPlatform);
+                CachedShaders.Add(cacheKey, shader);
                 return shader;
             }
         }

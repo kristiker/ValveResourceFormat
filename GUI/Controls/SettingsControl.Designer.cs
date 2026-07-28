@@ -55,6 +55,7 @@ namespace GUI.Controls
             groupBox1 = new ThemedGroupBox();
             groupBox2 = new ThemedGroupBox();
             smoothCamCheckbox = new System.Windows.Forms.CheckBox();
+            useGameShadersCheckbox = new System.Windows.Forms.CheckBox();
             shadowQualityComboBox = new ThemedComboBox();
             shadowResolutionLabel = new System.Windows.Forms.Label();
             groupBox3 = new ThemedGroupBox();
@@ -318,6 +319,7 @@ namespace GUI.Controls
             groupBox2.BorderWidth = 2;
             groupBox2.Controls.Add(displayFpsCheckBox);
             groupBox2.Controls.Add(smoothCamCheckbox);
+            groupBox2.Controls.Add(useGameShadersCheckbox);
             groupBox2.Controls.Add(viewmodelFovInput);
             groupBox2.Controls.Add(viewmodelFovLabel);
             groupBox2.Controls.Add(vsyncCheckBox);
@@ -355,6 +357,17 @@ namespace GUI.Controls
             smoothCamCheckbox.Text = "Smooth camera";
             smoothCamCheckbox.UseVisualStyleBackColor = true;
             smoothCamCheckbox.CheckedChanged += OnSmoothCameraChanged;
+            //
+            // useGameShadersCheckbox
+            //
+            useGameShadersCheckbox.AutoSize = true;
+            useGameShadersCheckbox.Location = new System.Drawing.Point(15, 430);
+            useGameShadersCheckbox.Name = "useGameShadersCheckbox";
+            useGameShadersCheckbox.Size = new System.Drawing.Size(220, 23);
+            useGameShadersCheckbox.TabIndex = 14;
+            useGameShadersCheckbox.Text = "Use game shaders (experimental)";
+            useGameShadersCheckbox.UseVisualStyleBackColor = true;
+            useGameShadersCheckbox.CheckedChanged += OnUseGameShadersChanged;
             //
             // shadowQualityComboBox
             // 
@@ -589,5 +602,6 @@ namespace GUI.Controls
         private ThemedGroupBox groupBox3;
         private ThemedGroupBox groupBox4;
         private System.Windows.Forms.CheckBox smoothCamCheckbox;
+        private System.Windows.Forms.CheckBox useGameShadersCheckbox;
     }
 }

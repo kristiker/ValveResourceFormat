@@ -29,6 +29,18 @@ public class RendererContext : IDisposable
     public ShaderLoader ShaderLoader { get; }
 
     /// <summary>
+    /// Pipeline that loads Valve's compiled shaders (SPIR-V from .vcs files) as OpenGL programs.
+    /// Only consulted when <see cref="UseGameShaders"/> is enabled.
+    /// </summary>
+    public Shaders.Vcs.VcsShaderPipeline VcsShaderPipeline { get; }
+
+    /// <summary>
+    /// When enabled, allowlisted material shaders render with Valve's own compiled shaders instead of
+    /// the built-in ones, falling back per-shader on any failure.
+    /// </summary>
+    public bool UseGameShaders { get; set; }
+
+    /// <summary>
     /// GPU mesh buffer and vertex array object cache.
     /// </summary>
     public GPUMeshBufferCache MeshBufferCache { get; }
@@ -62,6 +74,7 @@ public class RendererContext : IDisposable
         MaterialLoader = new MaterialLoader(this);
         ShaderLoader = new ShaderLoader(this);
         MeshBufferCache = new GPUMeshBufferCache(this);
+        VcsShaderPipeline = new Shaders.Vcs.VcsShaderPipeline(this);
     }
 
     /// <inheritdoc/>
@@ -83,5 +96,6 @@ public class RendererContext : IDisposable
         }
 
         ShaderLoader?.Dispose();
+        VcsShaderPipeline?.Dispose();
     }
 }

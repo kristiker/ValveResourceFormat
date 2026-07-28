@@ -38,39 +38,32 @@ namespace ValveResourceFormat.Renderer
         {
         }
 
-        private int primaryProgram = -1;
-        private int primaryVao = -1;
-        private int replacementProgram = -1;
-        private int replacementVao = -1;
+        // Sized for the programs a drawcall realistically cycles through: the material shader (which with
+        // game shaders enabled can be a distinct program per dynamic combo), depth-only, picking, outline.
+        private const int MemoSize = 4;
+        private readonly int[] memoPrograms = [-1, -1, -1, -1];
+        private readonly int[] memoVaos = [-1, -1, -1, -1];
+        private int memoNext;
 
         /// <summary>Returns the VAO matching the given shader, creating it through the cache on first use.</summary>
         /// <param name="shader">The shader the geometry is about to be rendered with.</param>
         /// <returns>The OpenGL VAO handle.</returns>
         public int Get(Shader shader)
         {
-            if (shader.Program == primaryProgram)
+            for (var i = 0; i < MemoSize; i++)
             {
-                return primaryVao;
-            }
-
-            if (shader.Program == replacementProgram)
-            {
-                return replacementVao;
+                if (shader.Program == memoPrograms[i])
+                {
+                    return memoVaos[i];
+                }
             }
 
             shader.EnsureLoaded();
             var vao = meshBuffers.GetVertexArrayObject(vertexBuffers, shader, inputSignature, indexBuffer, debugLabel);
 
-            if (primaryProgram == -1)
-            {
-                primaryProgram = shader.Program;
-                primaryVao = vao;
-            }
-            else
-            {
-                replacementProgram = shader.Program;
-                replacementVao = vao;
-            }
+            memoPrograms[memoNext] = shader.Program;
+            memoVaos[memoNext] = vao;
+            memoNext = (memoNext + 1) % MemoSize;
 
             return vao;
         }
@@ -81,10 +74,9 @@ namespace ValveResourceFormat.Renderer
         {
             meshBuffers.InvalidateVertexArrayObjectsForFreedBuffers([.. Array.ConvertAll(vertexBuffers, vb => vb.Handle), indexBuffer]);
 
-            primaryProgram = -1;
-            primaryVao = -1;
-            replacementProgram = -1;
-            replacementVao = -1;
+            Array.Fill(memoPrograms, -1);
+            Array.Fill(memoVaos, -1);
+            memoNext = 0;
         }
     }
 }

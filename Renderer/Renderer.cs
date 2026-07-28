@@ -399,6 +399,11 @@ public class Renderer
         ViewBuffer.BindBufferBase();
         ViewBuffer.Update();
 
+        if (RendererContext.UseGameShaders)
+        {
+            RendererContext.VcsShaderPipeline.PerViewState.Update(camera, Uptime);
+        }
+
         // A locked cull frustum leaves the indirect buffers untouched, freezing the cull state. Disabled
         // culling still has to dispatch, otherwise the indirect draw commands keep the previous contents.
         Frustum? gpuCullFrustum = DisableAllCulling

@@ -128,6 +128,7 @@ namespace ValveResourceFormat.Renderer.Materials
         private bool disableDepthTest;
         private int textureUnit;
         private readonly List<int> boundSamplerUnits = [];
+        private Shader? activeShader;
 
         /// <summary>Initializes a new instance of the <see cref="RenderMaterial"/> class from a parsed material resource, loading its shader and applying render state.</summary>
         /// <param name="material">The parsed Source 2 material data.</param>
@@ -308,6 +309,7 @@ namespace ValveResourceFormat.Renderer.Materials
             textureUnit = TextureUnitStart;
 
             shader ??= Shader;
+            activeShader = shader;
 
             if (shader.IgnoreMaterialData)
             {
@@ -369,7 +371,15 @@ namespace ValveResourceFormat.Renderer.Materials
                 EvalStaticOverlayColorAdjust(shader);
             }
 
-            SetRenderState();
+            if (shader is Shaders.Vcs.VcsShader vcsShader)
+            {
+                // The compiled shader carries Valve's real render state for this combo.
+                vcsShader.ApplyRenderState();
+            }
+            else
+            {
+                SetRenderState();
+            }
         }
 
         private void EvalCsgoEnvironmentColorMatrices(Shader shader)
@@ -476,7 +486,17 @@ namespace ValveResourceFormat.Renderer.Materials
         /// <summary>Restores render state after the draw call for this material has completed.</summary>
         public void PostRender()
         {
-            ResetRenderState();
+            if (activeShader is Shaders.Vcs.VcsShader vcsShader)
+            {
+                vcsShader.ResetRenderState();
+            }
+            else
+            {
+                ResetRenderState();
+            }
+
+            activeShader?.PostRender();
+            activeShader = null;
 
             foreach (var unit in boundSamplerUnits)
             {

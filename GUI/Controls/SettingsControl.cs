@@ -32,6 +32,7 @@ namespace GUI.Controls
             mouseSensitivitySlider.Value = (int)(Settings.Config.MouseSensitivity * 10f);
             mouseSensitivityValueLabel.Text = Settings.Config.MouseSensitivity.ToString("0.0");
             smoothCamCheckbox.Checked = Settings.Config.SmoothCameraEnabled;
+            useGameShadersCheckbox.Checked = Settings.Config.UseGameShaders;
 
             shadowQualityComboBox.Items.AddRange(ShadowQualityNames);
             var currentShadowResolution = Settings.Config.ShadowResolution;
@@ -341,6 +342,16 @@ namespace GUI.Controls
             }
 
             Settings.Config.SmoothCameraEnabled = smoothCamCheckbox.Checked;
+        }
+
+        private void OnUseGameShadersChanged(object sender, EventArgs e)
+        {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
+            Settings.Config.UseGameShaders = useGameShadersCheckbox.Checked;
         }
 
         private void SettingsControl_Leave(object sender, EventArgs e)

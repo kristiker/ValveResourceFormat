@@ -200,6 +200,7 @@ namespace GUI.Utils
                 FieldOfView = Settings.Config.FieldOfView,
                 ViewmodelFieldOfView = Settings.Config.ViewmodelFieldOfView,
                 MaxTextureSize = Settings.Config.MaxTextureSize,
+                UseGameShaders = Settings.Config.UseGameShaders,
             };
         }
 
@@ -276,6 +277,17 @@ namespace GUI.Utils
             }
 
             return base.LoadShaderFromDisk(shaderName);
+        }
+
+        // Override to add support for parent file loaders
+        protected override ShaderCollection LoadShaderFromDisk(string shaderName, VcsPlatformType? preferredPlatform)
+        {
+            if (ParentGuiContext != null)
+            {
+                return ParentGuiContext.LoadShaderFromDisk(shaderName, preferredPlatform);
+            }
+
+            return base.LoadShaderFromDisk(shaderName, preferredPlatform);
         }
 
         // Override to add support for caching resources

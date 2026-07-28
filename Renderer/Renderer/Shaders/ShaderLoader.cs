@@ -132,6 +132,13 @@ namespace ValveResourceFormat.Renderer.Shaders
         {
             arguments ??= EmptyArgs;
 
+            if (RendererContext.UseGameShaders
+                && !shaderName.StartsWith(VrfInternalShaderPrefix, StringComparison.Ordinal)
+                && RendererContext.VcsShaderPipeline.TryLoadShader(shaderName, arguments, out var vcsShader))
+            {
+                return vcsShader!;
+            }
+
             var shaderFileName = GetShaderFileByName(shaderName);
             var parsedData = GetOrParseShader(shaderFileName);
             var shaderCacheHash = CalculateShaderCacheHash(shaderName, parsedData.Defines, arguments);

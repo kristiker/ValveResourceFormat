@@ -112,6 +112,7 @@ namespace ValveResourceFormat.Renderer
             public int MorphCompositeTexture = -1;
             public int MorphCompositeTextureSize = -1;
             public int MorphVertexIdOffset = -1;
+            public int VcsInstanceIdxAttribute = -1;
 
             public Uniforms() { }
         }
@@ -215,6 +216,13 @@ namespace ValveResourceFormat.Renderer
                         }
 
                         shader.Use();
+
+                        if (shader is Shaders.Vcs.VcsShader vcsShader)
+                        {
+                            vcsShader.BindFrameState();
+                            uniforms.VcsInstanceIdxAttribute = vcsShader.InstanceIdxAttributeLocation;
+                            context.Scene.VcsInstanceBufferGpu?.BindBufferBase();
+                        }
 
                         if (!shader.IgnoreMaterialData)
                         {
@@ -355,6 +363,13 @@ namespace ValveResourceFormat.Renderer
                 var tint = Vector4.Clamp(request.Mesh.Tint * request.Call.TintColor * instanceTint, Vector4.Zero, Vector4.One);
 
                 GL.ProgramUniform1((uint)shader.Program, uniforms.Tint, Color32.FromVector4(tint).PackedValue);
+            }
+
+            if (uniforms.VcsInstanceIdxAttribute > -1)
+            {
+                // Valve's vertex shaders read their instance index from a per-instance vertex stream
+                // the meshes do not carry; feed it the node id as a constant generic attribute instead.
+                GL.VertexAttribI1((uint)uniforms.VcsInstanceIdxAttribute, request.Node.Id);
             }
 
             var instanceCount = 1;

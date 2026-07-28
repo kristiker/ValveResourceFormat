@@ -74,6 +74,31 @@ public struct ObjectDataStandard
     public SceneEnvMap.EnvMapVisibility128 EnvMapVisibility;
 };
 
+/// <summary>
+/// Per-instance data in the 32-byte layout Valve's compiled vertex shaders unpack from
+/// <c>g_instanceBuffer</c> (see PerInstancePackedShaderData_t).
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct VcsInstanceData
+{
+    /// <summary>Packed sRGB tint color and alpha; the shader converts it to linear.</summary>
+    public uint TintAlpha;
+    /// <summary>Index into the transform buffer for this object.</summary>
+    public uint TransformIndex;
+    /// <summary>Unused.</summary>
+    public uint Unused2;
+    /// <summary>Unused.</summary>
+    public uint Unused3;
+    /// <summary>Unused.</summary>
+    public uint Unused4;
+    /// <summary>Packed flags; the low 16 bits pass through to the pixel shader, bits 16-19 select a blend mode.</summary>
+    public uint Flags;
+    /// <summary>Unused.</summary>
+    public uint Unused6;
+    /// <summary>Extra alpha multiplier applied on top of the packed tint alpha.</summary>
+    public float AlphaScale;
+};
+
 
 /// <summary>Arguments for a <c>glDrawElementsIndirect</c> GPU draw call.</summary>
 [StructLayout(LayoutKind.Sequential)]

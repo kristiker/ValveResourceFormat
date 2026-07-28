@@ -48,6 +48,8 @@ public enum ReservedBufferSlots
     BoneTransforms = 11,
     /// <summary>Barn light constants SSBO slot.</summary>
     BarnLights = 12,
+    /// <summary>Per-object data SSBO slot in the layout Valve's compiled vertex shaders expect.</summary>
+    VcsInstanceData = 13,
 
     /// <summary>Guaranteed minimum binding point count in OpenGL 4.6.</summary>
     Max = 8,
