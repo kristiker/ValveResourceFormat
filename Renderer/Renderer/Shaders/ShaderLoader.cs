@@ -432,6 +432,7 @@ namespace ValveResourceFormat.Renderer.Shaders
             "multiblend.vfx" => "multiblend",
             "csgo_effects.vfx" => "csgo_effects",
             "csgo_environment.vfx" or "csgo_environment_blend.vfx" => "csgo_environment",
+            "environment_blend.vfx" => "environment_blend",
 
             _ when shaderName.StartsWith(VrfInternalShaderPrefix, StringComparison.Ordinal) => shaderName[VrfInternalShaderPrefix.Length..],
             _ => "complex",

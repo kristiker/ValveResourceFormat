@@ -364,6 +364,10 @@ namespace ValveResourceFormat.Renderer.Materials
             {
                 EvalCsgoEnvironmentColorMatrices(shader);
             }
+            else if (shader.Name == "environment_blend.vfx")
+            {
+                EvalEnvironmentBlendColorMatrices(shader);
+            }
             else if (Material.ShaderName.EndsWith("static_overlay.vfx", StringComparison.Ordinal))
             {
                 EvalStaticOverlayColorAdjust(shader);
@@ -444,6 +448,41 @@ namespace ValveResourceFormat.Renderer.Materials
 
                 ccMatrix = Matrix4x4.Multiply(tintMatrix, ccMatrix);
                 shader.SetUniform4x4(param.Key, ccMatrix);
+            }
+        }
+
+        // environment_blend evaluates its two per layer matrices from
+        // MatrixColorCorrect2(contrast/saturation/brightness, average colour of the layer texture)
+        // and MatrixColorTint3(tint, 0.85, tint mode).
+        private void EvalEnvironmentBlendColorMatrices(Shader shader)
+        {
+            const float TintStrength = 0.85f;
+
+            for (var layer = 1; layer <= 3; layer++)
+            {
+                var correctKey = $"g_mAlbedoColorCorrect{layer}";
+                var tintKey = $"g_mTextureColorTint{layer}";
+
+                if (shader.Default.Matrices.ContainsKey(correctKey))
+                {
+                    var csb = Material.VectorParams.GetValueOrDefault($"g_vAlbedoContrastSaturationBrightness{layer}", Vector4.One).AsVector3();
+
+                    var textureAverageColor = Vector3.One;
+                    if (Textures.TryGetValue($"g_tColor{layer}", out var colorTexture))
+                    {
+                        textureAverageColor = colorTexture.Reflectivity.AsVector3();
+                    }
+
+                    shader.SetUniform4x4(correctKey, VfxEvalFunctions.MatrixColorCorrect2(csb, textureAverageColor));
+                }
+
+                if (shader.Default.Matrices.ContainsKey(tintKey))
+                {
+                    var tint = Material.VectorParams.GetValueOrDefault($"g_vColorTint{layer}", Vector4.One).AsVector3();
+                    var mode = (int)Material.IntParams.GetValueOrDefault($"g_nTextureColorTintMode{layer}", 0L);
+
+                    shader.SetUniform4x4(tintKey, VfxEvalFunctions.MatrixColorTint3(ColorSpace.SrgbGammaToLinear(tint), TintStrength, mode));
+                }
             }
         }
 
