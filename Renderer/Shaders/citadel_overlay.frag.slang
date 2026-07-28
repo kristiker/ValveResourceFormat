@@ -54,6 +54,7 @@ uniform vec2 g_vRoughnessSelfIllumAoTranslucencyOutputRange = vec2(0.0, 1.0);
 #include "common/fullbright.slang"
 #include "common/texturing.slang"
 #include "common/fog.slang"
+#include "common/deadlock.slang"
 
 // Must be last
 #include "common/lighting.slang"
@@ -126,7 +127,7 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     mat.AmbientGeometricNormal = mat.GeometricNormal;
 
     mat.DiffuseColor = mat.Albedo;
-    mat.SpecularColor = vec3(0.04);
+    mat.SpecularColor = GetDeadlockSpecularColor(mat.Albedo, mat.Metalness);
 
     mat.DiffuseAO = vec3(mat.AmbientOcclusion);
     mat.SpecularAO = mat.AmbientOcclusion;

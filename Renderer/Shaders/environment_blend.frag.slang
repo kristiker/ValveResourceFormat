@@ -202,6 +202,7 @@ uniform float g_flBorderRoughness2 = 0.5;
 #include "common/fullbright.slang"
 #include "common/texturing.slang"
 #include "common/fog.slang"
+#include "common/deadlock.slang"
 
 // Must be last
 #include "common/lighting.slang"
@@ -693,9 +694,7 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     mat.AmbientGeometricNormal = mat.GeometricNormal;
 
     mat.DiffuseColor = mat.Albedo - mat.Albedo * mat.Metalness;
-
-    const vec3 F0 = vec3(0.04);
-    mat.SpecularColor = mix(F0, mat.Albedo, mat.Metalness);
+    mat.SpecularColor = GetDeadlockSpecularColor(mat.Albedo, mat.Metalness);
 
     mat.AmbientOcclusion = 1.0;
     mat.DiffuseAO = vec3(1.0);
