@@ -366,7 +366,14 @@ namespace ValveResourceFormat.Renderer.Materials
             }
             else if (shader.Name == "environment_blend.vfx")
             {
-                EvalEnvironmentBlendColorMatrices(shader);
+                foreach (var suffix in EnvironmentBlendLayerSuffixes)
+                {
+                    EvalDeadlockColorMatrices(shader, suffix, suffix);
+                }
+            }
+            else if (shader.Name == "pbr.vfx")
+            {
+                EvalDeadlockColorMatrices(shader, string.Empty, "1");
             }
             else if (Material.ShaderName.EndsWith("static_overlay.vfx", StringComparison.Ordinal))
             {
@@ -451,38 +458,38 @@ namespace ValveResourceFormat.Renderer.Materials
             }
         }
 
-        // environment_blend evaluates its two per layer matrices from
+        private static readonly string[] EnvironmentBlendLayerSuffixes = ["1", "2", "3"];
+
+        // Deadlock's shaders derive their two colour matrices in the vfx from
         // MatrixColorCorrect2(contrast/saturation/brightness, average colour of the layer texture)
-        // and MatrixColorTint3(tint, 0.85, tint mode).
-        private void EvalEnvironmentBlendColorMatrices(Shader shader)
+        // and MatrixColorTint3(tint, 0.85, tint mode). environment_blend suffixes both the
+        // matrices and their inputs by layer; pbr has one unsuffixed pair fed by layer 1's params.
+        private void EvalDeadlockColorMatrices(Shader shader, string matrixSuffix, string paramSuffix)
         {
             const float TintStrength = 0.85f;
 
-            for (var layer = 1; layer <= 3; layer++)
+            var correctKey = $"g_mAlbedoColorCorrect{matrixSuffix}";
+            var tintKey = $"g_mTextureColorTint{matrixSuffix}";
+
+            if (shader.Default.Matrices.ContainsKey(correctKey))
             {
-                var correctKey = $"g_mAlbedoColorCorrect{layer}";
-                var tintKey = $"g_mTextureColorTint{layer}";
+                var csb = Material.VectorParams.GetValueOrDefault($"g_vAlbedoContrastSaturationBrightness{paramSuffix}", Vector4.One).AsVector3();
 
-                if (shader.Default.Matrices.ContainsKey(correctKey))
+                var textureAverageColor = Vector3.One;
+                if (Textures.TryGetValue($"g_tColor{matrixSuffix}", out var colorTexture))
                 {
-                    var csb = Material.VectorParams.GetValueOrDefault($"g_vAlbedoContrastSaturationBrightness{layer}", Vector4.One).AsVector3();
-
-                    var textureAverageColor = Vector3.One;
-                    if (Textures.TryGetValue($"g_tColor{layer}", out var colorTexture))
-                    {
-                        textureAverageColor = colorTexture.Reflectivity.AsVector3();
-                    }
-
-                    shader.SetUniform4x4(correctKey, VfxEvalFunctions.MatrixColorCorrect2(csb, textureAverageColor));
+                    textureAverageColor = colorTexture.Reflectivity.AsVector3();
                 }
 
-                if (shader.Default.Matrices.ContainsKey(tintKey))
-                {
-                    var tint = Material.VectorParams.GetValueOrDefault($"g_vColorTint{layer}", Vector4.One).AsVector3();
-                    var mode = (int)Material.IntParams.GetValueOrDefault($"g_nTextureColorTintMode{layer}", 0L);
+                shader.SetUniform4x4(correctKey, VfxEvalFunctions.MatrixColorCorrect2(csb, textureAverageColor));
+            }
 
-                    shader.SetUniform4x4(tintKey, VfxEvalFunctions.MatrixColorTint3(ColorSpace.SrgbGammaToLinear(tint), TintStrength, mode));
-                }
+            if (shader.Default.Matrices.ContainsKey(tintKey))
+            {
+                var tint = Material.VectorParams.GetValueOrDefault($"g_vColorTint{paramSuffix}", Vector4.One).AsVector3();
+                var mode = (int)Material.IntParams.GetValueOrDefault($"g_nTextureColorTintMode{paramSuffix}", 0L);
+
+                shader.SetUniform4x4(tintKey, VfxEvalFunctions.MatrixColorTint3(ColorSpace.SrgbGammaToLinear(tint), TintStrength, mode));
             }
         }
 

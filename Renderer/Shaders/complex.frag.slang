@@ -15,7 +15,6 @@
 #define GameVfx_csgo_vertexlitgeneric 0
 #define GameVfx_csgo_weapon 0
 #define GameVfx_generic 0
-#define GameVfx_pbr 0
 #define GameVfx_steampal_2way_blend_mask 0
 #define GameVfx_unlit 0
 #define GameVfx_vr_complex 0
@@ -152,10 +151,10 @@ uniform sampler2D g_tTintMask;
 
 
 #define _uniformMetalness (defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 0)
-#define _colorAlphaMetalness ((defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 1) || (GameVfx_pbr != 0))
+#define _colorAlphaMetalness ((defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 1))
 #define _colorAlphaAO ((GameVfx_vr_simple != 0) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 0)) || (defined(simple_blend_common) && (F_ENABLE_AMBIENT_OCCLUSION == 1))
 #define _metalnessTexture (defined(complex_vfx_common) && (F_METALNESS_TEXTURE == 1) && ((F_ALPHA_TEST == 1) || (F_TRANSLUCENT == 1))) || (GameVfx_csgo_weapon != 0) || (GameVfx_csgo_character != 0) || (GameVfx_csgo_vertexlitgeneric != 0)
-#define _ambientOcclusionTexture (((GameVfx_vr_simple != 0) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 1)) || defined(complex_vfx_common) || (GameVfx_csgo_foliage != 0) || (GameVfx_csgo_weapon != 0) || (GameVfx_csgo_character != 0) || defined(csgo_generic_vfx_common) || (GameVfx_pbr != 0) || (GameVfx_csgo_simple_3layer_parallax != 0))
+#define _ambientOcclusionTexture (((GameVfx_vr_simple != 0) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 1)) || defined(complex_vfx_common) || (GameVfx_csgo_foliage != 0) || (GameVfx_csgo_weapon != 0) || (GameVfx_csgo_character != 0) || defined(csgo_generic_vfx_common) || (GameVfx_csgo_simple_3layer_parallax != 0))
 
 #define unlit ((GameVfx_unlit != 0) || (GameVfx_csgo_unlitgeneric != 0) || (F_FULLBRIGHT == 1) || (F_UNLIT == 1) || (defined(static_overlay_vfx_common) && F_LIT == 0)) || (GameVfx_csgo_decalmodulate != 0)
 #define alphatest (F_ALPHA_TEST == 1) || (((GameVfx_csgo_unlitgeneric != 0) || defined(static_overlay_vfx_common)) && (F_BLEND_MODE == 2)) || (GameVfx_csgo_decalmodulate != 0)
