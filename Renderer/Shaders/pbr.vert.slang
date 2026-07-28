@@ -41,14 +41,91 @@ uniform float g_flModelTintAmount = 1.0;
 #include "common/ViewConstants.slang"
 #include "common/LightingConstants.slang"
 
+#if (F_JITTER_VERTICES > 0)
+    uniform sampler2D g_tJitterMask;
+
+    uniform vec3 g_vJitterFrequenciesA1 = vec3(0.02, 0.04, 0.08);
+    uniform vec3 g_vJitterAmplitudesXA1 = vec3(4.0, 0.0, 0.0);
+    uniform vec3 g_vJitterAmplitudesYA1 = vec3(0.0, 4.0, 0.0);
+    uniform vec3 g_vJitterAmplitudesZA1 = vec3(0.0, 0.0, 4.0);
+    uniform float g_flJitterSpeedA1 = 10.0;
+
+    uniform vec3 g_vJitterFrequenciesB1 = vec3(0.05, 0.09, 0.17);
+    uniform vec3 g_vJitterAmplitudesXB1 = vec3(0.0);
+    uniform vec3 g_vJitterAmplitudesYB1 = vec3(0.0);
+    uniform vec3 g_vJitterAmplitudesZB1 = vec3(0.0);
+    uniform float g_flJitterSpeedB1 = 7.0;
+
+    uniform float g_flJitterQuantizeTime1 = 0.0;
+    uniform float g_flJitterQuantizeDisplacement1 = 0.0;
+    uniform vec3 g_vJitterExpression = vec3(0.0);
+
+    #if (F_SECONDARY_UV == 1)
+        uniform bool g_bUseSecondaryUvForJitterMask = false;
+    #endif
+
+    // A smoothed triangle wave per axis, centred on zero. Driving its phase from the vertex
+    // position keeps neighbours in step, so the mesh sways as a sheet rather than shattering.
+    // A negative frequency runs its axis backwards; the magnitude still sets the wavelength.
+    vec3 GetJitterWave(vec3 position, vec3 frequencies, float speed, float time)
+    {
+        vec3 phase = fract(position * abs(frequencies)) + sign(frequencies) * (time * speed);
+        vec3 triangleWave = abs(fract(phase) * 2.0 - 1.0);
+
+        return triangleWave * triangleWave * (3.0 - 2.0 * triangleWave) - 0.5;
+    }
+
+    // Two waves at different frequencies, each axis mixing all three of a wave's components,
+    // so a curtain can be given a slow swing and a faster ripple at once.
+    vec3 GetJitterDisplacement(vec3 noisePosition, vec2 maskTexCoord)
+    {
+        float time = (g_flJitterQuantizeTime1 != 0.0)
+            ? round(g_flTime / g_flJitterQuantizeTime1) * g_flJitterQuantizeTime1
+            : g_flTime;
+
+        vec3 waveA = GetJitterWave(noisePosition, g_vJitterFrequenciesA1, g_flJitterSpeedA1, time);
+        vec3 waveB = GetJitterWave(noisePosition, g_vJitterFrequenciesB1, g_flJitterSpeedB1, time);
+
+        vec3 displacement = vec3(dot(g_vJitterAmplitudesXA1, waveA), dot(g_vJitterAmplitudesYA1, waveA), dot(g_vJitterAmplitudesZA1, waveA))
+            + vec3(dot(g_vJitterAmplitudesXB1, waveB), dot(g_vJitterAmplitudesYB1, waveB), dot(g_vJitterAmplitudesZB1, waveB))
+            + g_vJitterExpression;
+
+        if (g_flJitterQuantizeDisplacement1 != 0.0)
+        {
+            displacement = round(displacement / g_flJitterQuantizeDisplacement1) * g_flJitterQuantizeDisplacement1;
+        }
+
+        return displacement * textureLod(g_tJitterMask, maskTexCoord, 0.0).x;
+    }
+#endif
+
 void main()
 {
     ObjectData_t object = GetObjectData();
 
     mat4 skinTransform = object.transform * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
+
+    #if (F_JITTER_VERTICES > 0)
+        #if (F_SECONDARY_UV == 1)
+            vec2 jitterTexCoord = g_bUseSecondaryUvForJitterMask ? vTEXCOORD1.xy : vTEXCOORD.xy;
+        #else
+            vec2 jitterTexCoord = vTEXCOORD.xy;
+        #endif
+
+        #if (F_JITTER_VERTICES == 2)
+            // Object space: the noise travels with the prop, so the displacement has to be
+            // rotated into world space rather than added to it.
+            fragPosition.xyz += mat3(skinTransform) * GetJitterDisplacement(vPOSITION, jitterTexCoord);
+        #else
+            fragPosition.xyz += GetJitterDisplacement(fragPosition.xyz, jitterTexCoord);
+        #endif
+    #endif
+
     gl_Position = g_matWorldToProjection * fragPosition;
     vFragPosition = fragPosition.xyz;
+
+    // The tangent frame is left alone, exactly as the compiled shader leaves it.
 
     vec3 normal;
     vec4 tangent;
