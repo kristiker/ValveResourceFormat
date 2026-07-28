@@ -373,6 +373,8 @@ namespace ValveResourceFormat.Renderer.Materials
 
             if (shader is Shaders.Vcs.VcsShader vcsShader)
             {
+                vcsShader.SetMaterialTexCoordTransforms(Material);
+
                 // The compiled shader carries Valve's real render state for this combo.
                 vcsShader.ApplyRenderState();
             }

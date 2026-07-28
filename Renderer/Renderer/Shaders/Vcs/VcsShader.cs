@@ -306,6 +306,29 @@ public class VcsShader : Shader
         }
     }
 
+    /// <summary>
+    /// Composes and uploads the texture coordinate transform rows that the engine normally derives from
+    /// the material's scale/offset/rotation parameters. The compiled shaders read the composed
+    /// <c>g_vTexCoordXform0/1</c> rows, whose file defaults are all zero — which would collapse every
+    /// UV to a single texel.
+    /// </summary>
+    public void SetMaterialTexCoordTransforms(ValveResourceFormat.ResourceTypes.Material material)
+    {
+        if (!materialParamAliases.ContainsKey("g_vTexCoordXform0"))
+        {
+            return;
+        }
+
+        var scale = material.VectorParams.GetValueOrDefault("g_vTexCoordScale", Vector4.One);
+        var offset = material.VectorParams.GetValueOrDefault("g_vTexCoordOffset", Vector4.Zero);
+        var rotation = material.FloatParams.GetValueOrDefault("g_flTexCoordRotation", 0f);
+
+        var (sin, cos) = MathF.SinCos(rotation * (MathF.PI / 180f));
+
+        SetMaterialVector4Uniform("g_vTexCoordXform0", new Vector4(scale.X * cos, -scale.Y * sin, 0f, offset.X));
+        SetMaterialVector4Uniform("g_vTexCoordXform1", new Vector4(scale.X * sin, scale.Y * cos, 0f, offset.Y));
+    }
+
     /// <summary>Applies Valve's per-dynamic-combo render state for this program.</summary>
     public void ApplyRenderState()
     {
