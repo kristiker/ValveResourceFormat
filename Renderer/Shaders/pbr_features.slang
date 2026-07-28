@@ -24,8 +24,8 @@
 // Shading
 #define F_SELF_ILLUM 0
 #define F_UNLIT 0
-// Only the tint mask repack is honoured; the lighting itself stays PBR. See the reference
-// functions at the bottom of common/deadlock.slang.
+// Only the tint mask repack is honoured; the lighting itself stays PBR.
+// See common/deadlock.slang.
 #define F_USE_NPR_LIGHTING 0
 
 #define F_SHEEN 0

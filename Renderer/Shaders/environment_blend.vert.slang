@@ -68,7 +68,6 @@ void main()
         vPerVertexLightingOut = pow2(Light);
     #endif
 
-    // The per-instance tint is modulated by the vertex paint colour, weighted by its alpha.
     vec3 vertexPaint = mix(vec3(1.0), SrgbGammaToLinear(vCOLOR.rgb), vCOLOR.a);
     vec3 tint = mix(vec3(1.0), SrgbGammaToLinear(object.vTint.rgb) * g_vColorTint.rgb, g_flModelTintAmount);
     vVertexColorOut = vec4(tint * vertexPaint, object.vTint.a);

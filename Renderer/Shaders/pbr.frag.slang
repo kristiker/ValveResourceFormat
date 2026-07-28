@@ -45,8 +45,7 @@ uniform bool g_bMaskVertexColorTint1 = true;
 uniform bool g_bApplyTintToVertexColors = false;
 uniform float g_fVertexColorStrength1 = 1.0;
 
-// Every sampled texture can scroll on its own clock, optionally stepped so the
-// scroll snaps to a frame rate instead of sliding.
+// Every sampled texture scrolls on its own clock.
 uniform vec2 g_vAlbedoScrollSpeed1 = vec2(0.0);
 uniform float g_flAlbedoScrollQuantize1 = 0.0;
 uniform vec2 g_vNormalAndRoughnessScrollSpeed1 = vec2(0.0);
@@ -268,7 +267,6 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     }
     #endif
 
-    // Surface gradient normal, matching how the layered Deadlock shaders build theirs.
     vec3 normalTs = DecodeHemiOctahedronNormal(normalRoughness.rg);
     mat.NormalMap = normalTs;
     mat.Normal = calculateWorldNormal(normalTs, mat.GeometricNormal, mat.Tangent, mat.Bitangent);
@@ -284,8 +282,8 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
         albedo *= fresnelMask;
     #endif
 
-    // Self illumination replaces the albedo rather than adding to it; the deferred pass
-    // re-derives the emissive from the same mask, so the forward path does that here.
+    // Self illumination replaces the albedo rather than adding to it. The deferred pass
+    // re-derives the emissive from the same mask, which is what the second line does.
     float illumAmount = illumMask * saturate(illumScale);
     mat.Albedo = mix(albedo, illumTint, illumAmount);
     mat.IllumColor = mat.Albedo * (illumMask * illumScale);
@@ -346,8 +344,8 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     mat.AmbientGeometricNormal = mat.GeometricNormal;
 
     #if (F_SHEEN == 1)
-        // The sheen texture carries its colour and its own roughness, tinted through the same
-        // mask and vertex colour path the albedo uses.
+        // Sheen carries its colour and its own roughness, tinted through the same mask and
+        // vertex colour path as the albedo.
         vec4 sheen = texture(g_tSheen, albedoTexCoord);
 
         vec3 sheenColor = mix(sheen.rgb, (vec4(sheen.rgb, 1.0) * g_mSheenTextureColorTint).rgb, g_bSheenMaskColorTint1 ? tintMask : 1.0);
@@ -395,8 +393,8 @@ void main()
 
         #if (F_GLASS == 1)
             // Beer-Lambert through the albedo, thickening as the surface turns away, over
-            // whatever the scene already drew behind it. Deadlock offsets and blurs the
-            // lookup with its cloak machinery; this samples straight through.
+            // whatever the scene already drew behind it. Valve offsets and blurs the lookup
+            // with its cloak machinery; this samples straight through.
             float glassMask = texture(g_tGlass, GetAlbedoTexCoord()).x;
 
             if (glassMask > 0.0)

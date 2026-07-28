@@ -104,7 +104,7 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     mat.RoughnessTex = normalRoughness.bb;
     mat.AmbientOcclusion = occlusion;
 
-    // A decal has no metalness channel of its own; it leaves whatever it lands on alone.
+    // A decal writes no metalness of its own.
     mat.Metalness = 0.0;
 
     float translucency = vVertexColorOut.a * color.a;

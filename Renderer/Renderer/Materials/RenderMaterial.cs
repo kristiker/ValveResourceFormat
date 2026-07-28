@@ -451,10 +451,8 @@ namespace ValveResourceFormat.Renderer.Materials
             }
         }
 
-        // Deadlock's shaders derive their two colour matrices in the vfx from
-        // MatrixColorCorrect2(contrast/saturation/brightness, average colour of the layer texture)
-        // and MatrixColorTint3(tint, 0.85, tint mode). environment_blend suffixes both the
-        // matrices and their inputs by layer; pbr has one unsuffixed pair fed by layer 1's params.
+        // environment_blend suffixes both the matrices and their inputs by layer; pbr has one
+        // unsuffixed pair fed by layer 1's params.
         private void EvalDeadlockColorMatrices(Shader shader)
         {
             const float TintStrength = 0.85f;
