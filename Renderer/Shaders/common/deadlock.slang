@@ -5,11 +5,8 @@
 
 #include "utils.slang"
 
-// Deadlock's opaque shaders all write the same gbuffer, so its deferred pass derives one
-// specular colour for every surface. pbr's forward variants reimplement that pass, and this
-// is the form they use: the usual dielectric/metal mix, faded out on near black albedo.
-// Anything darker than 0.04 in its brightest channel loses its specular entirely, which is
-// what keeps Deadlock's inked-in shadow areas from picking up highlights.
+// The usual dielectric/metal mix, faded out on near black albedo: anything darker than
+// 0.04 in its brightest channel loses its specular entirely.
 vec3 GetDeadlockSpecularColor(vec3 albedo, float metalness)
 {
     const vec3 F0 = vec3(0.04);
@@ -19,33 +16,13 @@ vec3 GetDeadlockSpecularColor(vec3 albedo, float metalness)
 }
 
 // ---------------------------------------------------------------------------------------
-// NPR lighting (F_USE_NPR_LIGHTING), reconstructed from pbr_vulkan_50_ps.vcs but NOT WIRED UP.
-//
-// Nothing below is called. It is here so the reconstruction is not lost, and so the compiler
-// keeps checking that it still builds. 628 of Deadlock's 1825 pbr materials set the feature,
-// 500 of them hero models; the shader currently shades them with standard PBR.
-//
-// Every knob is a parameter rather than a uniform on purpose. In the real shader these are
-// engine supplied (m_sourceType 1) and every one of them ships defaulting to zero, so there
-// is nothing in the material or the vpk to read them from. Feeding the shipped defaults
-// straight in yields all three stages disabled and a NaN out of the specular, because
-// g_nNPRSpecularSteps is 0 and the result is divided by it. Values have to come from
-// somewhere else before any of this is worth calling.
+// Non-photorealistic lighting.
 //
 // Wiring it up means, per light in common/lighting.slang: replacing NdotL in the diffuse term
 // with NprToonDiffuse, replacing the GGX result with NprSteppedSpecular scaled by
 // NprSpecularTint, and adding NprRimLight on top. The rim's optional depth occlusion needs a
-// scene depth texture bound in the forward pass, which the renderer does not currently
-// provide for opaque draws.
+// scene depth texture bound in the forward pass.
 // ---------------------------------------------------------------------------------------
-
-// The knobs, with the names, types and defaults the shipped shader has. Nothing reads them:
-// the functions below take their inputs as arguments so they stay callable from anywhere, and
-// an unused uniform is stripped before it reaches the material system. They are declared so
-// the set is recorded in one place, and so that whoever fills them in has the spelling.
-//
-// Zero is not a resting value here. It disables all three stages, and g_nNPRSpecularSteps at 0
-// makes NprSteppedSpecular divide by zero. Deadlock overwrites every one of these at runtime.
 #if (F_USE_NPR_LIGHTING == 1)
     // Diffuse
     uniform int g_bNPRDirectDiffuse = 0;

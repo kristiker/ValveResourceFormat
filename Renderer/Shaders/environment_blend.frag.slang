@@ -131,8 +131,8 @@ uniform float g_flBorderRoughness2 = 0.5;
     #endif
 #endif
 
-// UV overlay: one shared decal-ish texture laid over every layer, plus a mask that
-// pushes layer 2 in on top of the vertex paint.
+// UV overlay: one texture laid over every layer, plus a mask that pushes layer 2 in on
+// top of the vertex paint.
 #if (F_UV_OVERLAY == 1)
     uniform sampler2D g_tColorOverlay; // SrgbRead(true)
     uniform sampler2D g_tNormalRoughnessOverlay;
@@ -207,8 +207,7 @@ uniform float g_flBorderRoughness2 = 0.5;
 // Must be last
 #include "common/lighting.slang"
 
-// Every UV in this shader is driven by a (scale, rotation in degrees, translate u, translate v)
-// vector. Valve folds it into a rotate-scale pair on the CPU; this is the same transform.
+// Every UV here is driven by a (scale, rotation in degrees, translate u, translate v) vector.
 vec2 ApplyUvTransform(vec2 texCoord, vec4 scaleRotationTranslation)
 {
     float scale = scaleRotationTranslation.x;
@@ -219,8 +218,8 @@ vec2 ApplyUvTransform(vec2 texCoord, vec4 scaleRotationTranslation)
     return vec2(rotation.y * offset.x - rotation.x * offset.y, dot(rotation, offset));
 }
 
-// The tangent frame a layer's normal map is resolved against. Layers on the interpolated
-// UVs use the mesh frame; projected ones have to derive theirs from screen derivatives.
+// The frame a layer's normal map is resolved against. Layers on the interpolated UVs use
+// the mesh frame; projected ones have to derive theirs from screen derivatives.
 struct LayerFrame_t
 {
     vec2 TexCoord;
@@ -318,9 +317,9 @@ LayerFrame_t GetDerivedFrame(vec2 texCoord, vec3 normal)
 #endif
 
 #if (ANY_BIPLANAR == 1)
-    // Layers only ever sample the dominant plane: the compiled shader swaps in the median
-    // plane's derivatives when that plane wins outright, but keeps the dominant plane's
-    // coordinate, so there is only ever one set of texels to fetch.
+    // Layers only ever sample the dominant plane. Valve swaps in the median plane's
+    // derivatives when that plane wins outright but keeps the dominant plane's coordinate,
+    // so there is only ever one set of texels to fetch.
     LayerFrame_t GetBiPlanarFrame(vec3 normal, float tiling)
     {
         PlanarAxes_t axes = GetPlanarAxes(normal);
@@ -485,8 +484,8 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     MaterialProperties_t mat;
     InitProperties(mat, vertexNormal, vFragPosition, vTangentOut, vBitangentOut);
 
-    // Layer 1 sits underneath everything. Every layer above it is revealed by its own mask
-    // weighed against a channel of the vertex paint.
+    // Every layer above the first is revealed by its own mask weighed against a channel of
+    // the vertex paint.
     float blend2 = vColorBlendValues.x;
     #if (F_LAYER_COUNT == 1)
         float blend3 = vColorBlendValues.y;

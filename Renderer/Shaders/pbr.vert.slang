@@ -64,7 +64,7 @@ uniform float g_flModelTintAmount = 1.0;
         uniform bool g_bUseSecondaryUvForJitterMask = false;
     #endif
 
-    // A smoothed triangle wave per axis, centred on zero. Driving its phase from the vertex
+    // A smoothed triangle wave per axis, centred on zero. Driving the phase from the vertex
     // position keeps neighbours in step, so the mesh sways as a sheet rather than shattering.
     // A negative frequency runs its axis backwards; the magnitude still sets the wavelength.
     vec3 GetJitterWave(vec3 position, vec3 frequencies, float speed, float time)
@@ -125,7 +125,7 @@ void main()
     gl_Position = g_matWorldToProjection * fragPosition;
     vFragPosition = fragPosition.xyz;
 
-    // The tangent frame is left alone, exactly as the compiled shader leaves it.
+    // Normals are deliberately not recomputed against the displacement.
 
     vec3 normal;
     vec4 tangent;
