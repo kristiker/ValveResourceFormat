@@ -143,6 +143,15 @@ uniform float g_flNormalAndRoughnessScrollQuantize1 = 0.0;
     uniform sampler2D g_tSceneColor;
 #endif
 
+#if (D_GLITCH == 1)
+    uniform float g_flGlitchStrength = 1.0;
+    uniform float g_flGlitchFrameRate = 15.0;
+    uniform float g_flGlitchSpeed = 1.0;
+    uniform float g_flGlitchWhiteNoiseStrength = 1.0;
+    uniform float g_flGlitchScanlineStrength = 0.5;
+    uniform float g_flGlitchBreakupStrength = 0.2;
+#endif
+
 #if (F_UNLIT == 1)
     uniform float g_flUnlitAdditiveScale1 = 1.0;
 #endif
@@ -174,6 +183,49 @@ vec2 SelectTexCoord(bool useSecondary)
 {
     return useSecondary ? vTexCoord.zw : vTexCoord.xy;
 }
+
+#if (D_GLITCH == 1)
+    // Matches the vertex half: the effect advances in frames rather than continuously.
+    float GetGlitchTime()
+    {
+        return floor(g_flTime * g_flGlitchFrameRate) / (g_flGlitchFrameRate / g_flGlitchSpeed);
+    }
+
+    float GlitchBand(float x, float scale)
+    {
+        return pow(saturate(x) * scale, 2.0);
+    }
+
+    // Noise and scanlines lift the albedo. Where the same band stack that tears the geometry
+    // gets strong enough, the albedo inverts instead, which reads as a blown out frame.
+    vec3 ApplyPixelGlitch(vec3 albedo)
+    {
+        float time = GetGlitchTime();
+        float slow = sin(time * 2.0);
+        float fast = sin(time * 7.2);
+        float wave = sin(gl_FragCoord.y * 0.2 + fast);
+        float rowWave = gl_FragCoord.y * fast;
+        float phase = sin(time * 3.5) * 200.1;
+        float drift = sin(time * 7.9) * 0.1;
+
+        float row = saturate(sin(floor(gl_FragCoord.y) * sin(time * 4.2) * 1.8 + slow * 200.1) - (0.36 + slow * 0.1));
+
+        float noise = g_flGlitchWhiteNoiseStrength
+            * fract(sin(dot(gl_FragCoord.xy * 1e-4, vec2(12.345 * time, 67.89 * time))) * 12345.679 + time);
+        float scanline = g_flGlitchScanlineStrength * sin(gl_FragCoord.y * 2.0);
+
+        albedo *= 1.0 + (noise + scanline) * g_flGlitchStrength;
+
+        float breakup = abs((GlitchBand(row, 7.0) * wave * 0.2
+            - GlitchBand(row, 8.0) * wave * 0.2
+            - pow(saturate(sin(gl_FragCoord.y * sin(time * 6.2) * 0.042 + sin(time * 3.0) * 200.1) - (0.59 + sin(time * 9.0) * 0.1)) * 11.0, 3.0)
+            - GlitchBand(sin(rowWave * 0.52 + phase) - (0.59 + drift), 7.0) * 0.05
+            - GlitchBand(sin(rowWave * 1.52 + phase) - (0.19 + drift), 3.0) * 0.05
+            + noise * 10.0 + scanline * 4.0) * (g_flGlitchBreakupStrength * g_flGlitchStrength));
+
+        return (breakup > 1.9) ? (vec3(0.1) - albedo) * 4.0 : albedo;
+    }
+#endif
 
 vec2 GetAlbedoTexCoord()
 {
@@ -224,6 +276,10 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     {
         albedo = mix(albedo, albedo * vVertexColorOut.rgb, vertexColorAmount);
     }
+
+    #if (D_GLITCH == 1)
+        albedo = ApplyPixelGlitch(albedo);
+    #endif
 
     vec3 illumTint = vec3(1.0);
     float illumMask = 1.0;

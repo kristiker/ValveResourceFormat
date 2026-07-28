@@ -41,6 +41,78 @@ uniform float g_flModelTintAmount = 1.0;
 #include "common/ViewConstants.slang"
 #include "common/LightingConstants.slang"
 
+
+#if (D_GLITCH == 1)
+    uniform float g_flGlitchStrength = 1.0;
+    uniform float g_flGlitchFrameRate = 15.0;
+    uniform float g_flGlitchSpeed = 1.0;
+
+    // The whole effect advances in frames rather than continuously, which is what makes it
+    // read as a broken signal instead of a smooth wobble.
+    float GetGlitchTime()
+    {
+        return floor(g_flTime * g_flGlitchFrameRate) / (g_flGlitchFrameRate / g_flGlitchSpeed);
+    }
+
+    // One narrow band. Subtracting a threshold before the saturate keeps it narrow, and
+    // squaring sharpens its shoulders.
+    float GlitchBand(float x, float scale)
+    {
+        return pow(saturate(x) * scale, 2.0);
+    }
+
+    uniform int g_nGlitchQuantizeType = 2; // 0="Object", 1="World", 2="Clip"
+    uniform float g_flGlitchQuantizeScale = 0.25;
+    uniform float g_flGlitchQuantizeStrength = 0.95;
+    uniform float g_flGlitchJumpStrength = 1.0;
+    uniform float g_flGlitchDistortStrength = 0.4;
+
+    // Snaps coordinates to a lattice, in whichever space g_nGlitchQuantizeType names.
+    vec3 GlitchQuantize(vec3 position, int space)
+    {
+        if (g_nGlitchQuantizeType != space)
+        {
+            return position;
+        }
+
+        float scale = mix(1.0, g_flGlitchQuantizeScale, g_flGlitchStrength);
+        return mix(position, round(position * scale) / scale, g_flGlitchQuantizeStrength * saturate(g_flGlitchStrength));
+    }
+
+    // Horizontal tearing plus a whole screen jump. The tearing is a stack of bands selected by
+    // the clip space row, so only a few scanlines slip sideways at a time.
+    vec4 ApplyVertexGlitch(vec4 clipPosition)
+    {
+        // Clip space quantization takes the raw scale, not the strength weighted one above.
+        if (g_nGlitchQuantizeType == 2)
+        {
+            clipPosition.xy = mix(clipPosition.xy,
+                round(clipPosition.xy * g_flGlitchQuantizeScale) / g_flGlitchQuantizeScale,
+                g_flGlitchQuantizeStrength * saturate(g_flGlitchStrength));
+        }
+
+        float time = GetGlitchTime();
+        float row = floor(clipPosition.y);
+        float slow = sin(time * 2.0);
+        float fast = sin(time * 7.2);
+        float wave = sin(clipPosition.y * 0.2 + fast);
+        float rowWave = clipPosition.y * fast;
+        float phase = sin(time * 3.5) * 200.1;
+        float threshold = 0.9 + sin(time * 7.9) * 0.1;
+
+        float distort = GlitchBand(sin(row * sin(time * 4.2) * 1.8 + slow * 203.0) - (0.6 + slow * 0.1), 7.0) * wave * 0.52
+            - GlitchBand(sin(row * sin(time * 4.5) * 1.7 + sin(time * 2.1) * 209.0) - (0.6 + sin(time * 2.3) * 0.1), 8.0) * wave * 0.52
+            - GlitchBand(sin(clipPosition.y * sin(time * 6.2) * 0.042 + sin(time * 3.0) * 200.1) - (0.9 + sin(time * 9.0) * 0.1), 11.0)
+            + GlitchBand(sin(rowWave * 0.52 + phase) - threshold, 7.0)
+            - GlitchBand(sin(rowWave * 1.52 + phase) - threshold, 3.0);
+
+        clipPosition.x += distort * g_flGlitchStrength * g_flGlitchDistortStrength;
+        clipPosition.xy += saturate(sin(sin(vec2(2.0, 1.2) * time) * 200.0) - 0.9) * 20.0 * g_flGlitchStrength * g_flGlitchJumpStrength;
+
+        return clipPosition;
+    }
+#endif
+
 #if (F_JITTER_VERTICES > 0)
     uniform sampler2D g_tJitterMask;
 
@@ -103,8 +175,18 @@ void main()
 {
     ObjectData_t object = GetObjectData();
 
+    #if (D_GLITCH == 1)
+        vec3 positionOs = GlitchQuantize(vPOSITION, 0);
+    #else
+        vec3 positionOs = vPOSITION;
+    #endif
+
     mat4 skinTransform = object.transform * getSkinMatrix();
-    vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
+    vec4 fragPosition = skinTransform * vec4(positionOs, 1.0);
+
+    #if (D_GLITCH == 1)
+        fragPosition.xyz = GlitchQuantize(fragPosition.xyz, 1);
+    #endif
 
     #if (F_JITTER_VERTICES > 0)
         #if (F_SECONDARY_UV == 1)
@@ -124,6 +206,10 @@ void main()
 
     gl_Position = g_matWorldToProjection * fragPosition;
     vFragPosition = fragPosition.xyz;
+
+    #if (D_GLITCH == 1)
+        gl_Position = ApplyVertexGlitch(gl_Position);
+    #endif
 
     // Normals are deliberately not recomputed against the displacement.
 

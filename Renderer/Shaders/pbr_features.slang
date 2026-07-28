@@ -14,6 +14,10 @@
 // Vertex animation
 #define F_JITTER_VERTICES 0 // 0="No", 1="World Space", 2="Object Space"
 
+// Status effect glitch. Driven by code rather than the material, so nothing switches it on
+// yet; the defaults below are the ones the game plays it at.
+#define D_GLITCH 0
+
 // Texturing
 #define F_DETAIL 0
 #define F_ENABLE_TEXTURE_TRANSFORMS 0
