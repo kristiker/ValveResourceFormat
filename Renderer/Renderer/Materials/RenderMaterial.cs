@@ -478,6 +478,17 @@ namespace ValveResourceFormat.Renderer.Materials
 
             foreach (var param in shader.Default.Matrices)
             {
+                // Sheen is tinted the same way but has no colour correct matrix, and reads
+                // its own params rather than the albedo's.
+                if (param.Key == "g_mSheenTextureColorTint")
+                {
+                    var sheenTint = Material.VectorParams.GetValueOrDefault("g_vSheenColorTint1", Vector4.One).AsVector3();
+                    var sheenMode = (int)Material.IntParams.GetValueOrDefault("g_nSheenTextureColorTintMode1", 0L);
+
+                    shader.SetUniform4x4(param.Key, VfxEvalFunctions.MatrixColorTint3(ColorSpace.SrgbGammaToLinear(sheenTint), TintStrength, sheenMode));
+                    continue;
+                }
+
                 var isAlbedoCorrect = param.Key.StartsWith(albedoCorrectPrefix, StringComparison.Ordinal);
 
                 if (!isAlbedoCorrect && !param.Key.StartsWith(colorTintPrefix, StringComparison.Ordinal))

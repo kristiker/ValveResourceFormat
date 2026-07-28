@@ -122,6 +122,20 @@ uniform float g_flNormalAndRoughnessScrollQuantize1 = 0.0;
     uniform int g_nDetailBlendMode = 0; // 0="Add to albedo", 1="Add to self illum", 2="Mod2x albedo"
 #endif
 
+#if (F_SHEEN == 1)
+    uniform sampler2D g_tSheen; // SrgbRead(true)
+    uniform mat4 g_mSheenTextureColorTint = mat4(1.0); // currently unset
+
+    uniform bool g_bSheenMaskColorTint1 = true;
+    uniform bool g_bSheenMaskVertexColorTint1 = true;
+    uniform float g_fSheenVertexColorStrength1 = 1.0;
+#endif
+
+#if (F_GLASS == 1)
+    uniform sampler2D g_tGlass; // r=glass mask
+    uniform sampler2D g_tSceneColor;
+#endif
+
 #if (F_UNLIT == 1)
     uniform float g_flUnlitAdditiveScale1 = 1.0;
 #endif
@@ -154,16 +168,26 @@ vec2 SelectTexCoord(bool useSecondary)
     return useSecondary ? vTexCoord.zw : vTexCoord.xy;
 }
 
+vec2 GetAlbedoTexCoord()
+{
+    vec2 texCoord = ScrollTexCoord(vTexCoord.xy, g_vAlbedoScrollSpeed1, g_flAlbedoScrollQuantize1);
+
+    #if (F_ENABLE_TEXTURE_TRANSFORMS == 1)
+        texCoord = RotateVector2D(texCoord, g_flAlbedoTexcoordRotation1, g_vAlbedoTexcoordScale1, g_vAlbedoTexcoordOffset1);
+    #endif
+
+    return texCoord;
+}
+
 MaterialProperties_t GetMaterial(vec3 vertexNormal)
 {
     MaterialProperties_t mat;
     InitProperties(mat, vertexNormal, vFragPosition, vTangentOut, vBitangentOut);
 
-    vec2 albedoTexCoord = ScrollTexCoord(vTexCoord.xy, g_vAlbedoScrollSpeed1, g_flAlbedoScrollQuantize1);
+    vec2 albedoTexCoord = GetAlbedoTexCoord();
     vec2 normalTexCoord = ScrollTexCoord(vTexCoord.xy, g_vNormalAndRoughnessScrollSpeed1, g_flNormalAndRoughnessScrollQuantize1);
 
     #if (F_ENABLE_TEXTURE_TRANSFORMS == 1)
-        albedoTexCoord = RotateVector2D(albedoTexCoord, g_flAlbedoTexcoordRotation1, g_vAlbedoTexcoordScale1, g_vAlbedoTexcoordOffset1);
         normalTexCoord = RotateVector2D(normalTexCoord, g_flNormalTexcoordRotation1, g_vNormalTexcoordScale1, g_vNormalTexcoordOffset1);
     #endif
 
@@ -309,8 +333,26 @@ MaterialProperties_t GetMaterial(vec3 vertexNormal)
     mat.AmbientNormal = mat.Normal;
     mat.AmbientGeometricNormal = mat.GeometricNormal;
 
+    #if (F_SHEEN == 1)
+        // The sheen texture carries its colour and its own roughness, tinted through the same
+        // mask and vertex colour path the albedo uses.
+        vec4 sheen = texture(g_tSheen, albedoTexCoord);
+
+        vec3 sheenColor = mix(sheen.rgb, (vec4(sheen.rgb, 1.0) * g_mSheenTextureColorTint).rgb, g_bSheenMaskColorTint1 ? tintMask : 1.0);
+        sheenColor = mix(sheenColor, sheenColor * vVertexColorOut.rgb,
+            (g_bSheenMaskVertexColorTint1 ? tintMask : 1.0) * g_fSheenVertexColorStrength1);
+
+        mat.SheenColor = sheenColor;
+        mat.SheenRoughness = max(sheen.a, 0.05);
+    #endif
+
     mat.DiffuseColor = mat.Albedo - mat.Albedo * mat.Metalness;
     mat.SpecularColor = GetDeadlockSpecularColor(mat.Albedo, mat.Metalness);
+
+    #if (F_GLASS == 1)
+        // Glass keeps its specular but trades diffuse for transmission.
+        mat.DiffuseColor *= 1.0 - texture(g_tGlass, albedoTexCoord).x;
+    #endif
 
     mat.DiffuseAO = vec3(mat.AmbientOcclusion);
     mat.SpecularAO = mat.AmbientOcclusion;
@@ -338,6 +380,22 @@ void main()
         vec3 specularLighting = lighting.SpecularDirect + lighting.SpecularIndirect;
 
         outputColor.rgb = mat.DiffuseColor * diffuseLighting + specularLighting + mat.IllumColor;
+
+        #if (F_GLASS == 1)
+            // Beer-Lambert through the albedo, thickening as the surface turns away, over
+            // whatever the scene already drew behind it. Deadlock offsets and blurs the
+            // lookup with its cloak machinery; this samples straight through.
+            float glassMask = texture(g_tGlass, GetAlbedoTexCoord()).x;
+
+            if (glassMask > 0.0)
+            {
+                float NoV = max(0.01, dot(mat.ViewDir, mat.Normal));
+                vec3 transmission = min(vec3(1.0), pow(max(vec3(0.01), mat.Albedo), vec3(1.0 / NoV)));
+                vec3 behind = textureLod(g_tSceneColor, gl_FragCoord.xy / vec2(textureSize(g_tSceneColor, 0)), 0.0).rgb;
+
+                outputColor.rgb += behind * transmission * (glassMask * (1.0 - mat.Metalness) * (1.0 - GetLuma(mat.SpecularColor)));
+            }
+        #endif
     #endif
 
     ApplyFog(outputColor.rgb, mat.PositionWS);
