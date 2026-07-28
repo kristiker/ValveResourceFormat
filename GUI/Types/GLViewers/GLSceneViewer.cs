@@ -630,7 +630,7 @@ namespace GUI.Types.GLViewers
             if (showDepthPyramid && GLDefaultFramebuffer != null)
             {
                 depthPyramidDebugRenderer ??= new DepthPyramidDebugRenderer(Scene.RendererContext);
-                depthPyramidDebugRenderer.Render(Scene, GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height);
+                depthPyramidDebugRenderer.Render(Scene, Renderer.Camera, GLDefaultFramebuffer.Width, GLDefaultFramebuffer.Height);
             }
 
             if (GrabbedMouse)
