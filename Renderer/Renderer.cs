@@ -352,6 +352,17 @@ public class Renderer
         Textures.Add(new(ReservedTextureSlots.FogCubeTexture, "g_tFogCubeTexture", defaultCubeTexture));
 
 
+        // Wet weather waves. CS2 only, and only the shaders that read it care, so a game without
+        // it simply never gets ripples; everything else the wetness does still works.
+        using (var wavesResource = RendererContext.FileLoader.LoadFile("materials/dev/water_waves.vtex_c"))
+        {
+            if (wavesResource != null)
+            {
+                var wavesTexture = Scene.RendererContext.MaterialLoader.LoadTexture(wavesResource);
+                Textures.Add(new(ReservedTextureSlots.WetnessWaves, "g_tWetnessWaves", wavesTexture));
+            }
+        }
+
         const string blueNoiseName = "blue_noise_256.vtex_c";
         var blueNoiseResource = RendererContext.FileLoader.LoadFile("textures/dev/" + blueNoiseName);
 

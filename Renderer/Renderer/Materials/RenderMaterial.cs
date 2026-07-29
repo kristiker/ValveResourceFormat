@@ -57,8 +57,10 @@ namespace ValveResourceFormat.Renderer.Materials
         DepthPyramid,
         /// <summary>Morph composite texture for vertex animation.</summary>
         MorphCompositeTexture,
-        /// <summary>Last reserved slot; equal to <see cref="MorphCompositeTexture"/>.</summary>
-        Last = MorphCompositeTexture,
+        /// <summary>Scrolling wave normals and blotch mask, for the CS2 wet weather effect.</summary>
+        WetnessWaves,
+        /// <summary>Last reserved slot; equal to <see cref="WetnessWaves"/>.</summary>
+        Last = WetnessWaves,
     }
 
     enum BlendMode

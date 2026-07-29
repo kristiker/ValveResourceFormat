@@ -50,10 +50,12 @@ uniform float g_flHeightMapZeroPoint1 = 0.5;
 uniform mat4 g_mTextureColorAdjust1;
 uniform mat4 g_mTextureAdjust1;
 
+// Carried on both builds. Only the blend one uses xyw to weigh its layers, but z is the painted
+// wetness coverage either way, and it is zero on a model that has no such stream.
+in vec4 vColorBlendValues;
+
 // Material 2
 #if (GameVfx_csgo_environment_blend != 0)
-    in vec4 vColorBlendValues;
-
     uniform sampler2D g_tColor2; // SrgbRead(true)
     uniform sampler2D g_tHeight2;
     uniform sampler2D g_tNormal2;
@@ -253,8 +255,12 @@ uniform float g_flModelTintAmount = 1.0;
 
 #include "common/fullbright.slang"
 #include "common/texturing.slang"
+#include "common/wetness.slang"
 
 #include "common/fog.slang"
+
+// The dielectric reflectance the specular colour is built from. Wetness pulls it toward water.
+uniform float g_flReflectance = 0.04;
 
 // Must be last
 #include "common/lighting.slang"
@@ -271,6 +277,11 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
 
     vec4 color = texture(g_tColor1, vTexCoord.xy);
     vec4 height = texture(g_tHeight1, vTexCoord.xy);
+
+    // Where the water line is judged against. The blending below rewrites height.r into a zero
+    // pointed copy of itself, but the wetness wants the height map as it was authored, so it is
+    // kept separately and carried through the same layer weights.
+    float rawHeight = height.r;
     vec4 normal = texture(g_tNormal1, vTexCoord.xy);
 
     vec3 aoLevels = g_vAmbientOcclusionLevels1.xyz;
@@ -393,6 +404,8 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
         weightBase2 = weights.x;
     }
 
+    rawHeight = (rawHeight * weightBase2) + (height2.r * weight2);
+
     height.r = baseHeight1;
     height2.r = baseHeight2;
 
@@ -459,6 +472,8 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
             weight3 = weights3.y;
         }
 
+        rawHeight = (rawHeight * (1.0 - weight3)) + (height3.r * weight3);
+
         height3.r = baseHeight3;
 
         float weightBase3 = 1.0 - weight3;
@@ -498,15 +513,21 @@ MaterialProperties_t GetMaterial(vec3 vertexNormals)
     mat.Height = height.r;
     mat.Metalness = height.a;
 
-    AdjustRoughnessByGeometricNormal(mat);
-
     mat.AmbientNormal = mat.Normal;
     mat.AmbientGeometricNormal = mat.GeometricNormal;
 
+    // Before the geometric roughness adjustment and the specular colour, which is where CS2 runs
+    // it: the wetness has its own normal derivative term, and it moves the reflectance the
+    // specular colour is about to be mixed from.
+    float reflectance = g_flReflectance;
+
+    ApplyWetness(mat, rawHeight, vColorBlendValues.z, vColorBlendValues.w, reflectance);
+
+    AdjustRoughnessByGeometricNormal(mat);
+
     mat.DiffuseColor = mat.Albedo - mat.Albedo * mat.Metalness;
 
-    const vec3 F0 = vec3(0.04);
-	mat.SpecularColor = mix(F0, mat.Albedo, mat.Metalness);
+	mat.SpecularColor = mix(vec3(reflectance), mat.Albedo, mat.Metalness);
 
     mat.DiffuseAO = vec3(mat.AmbientOcclusion);
     mat.SpecularAO = mat.AmbientOcclusion;

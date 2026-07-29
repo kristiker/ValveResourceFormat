@@ -23,10 +23,11 @@ in vec2 vTEXCOORD1;
     out vec3 vPerVertexLightingOut;
 #endif
 
-#if (GameVfx_csgo_environment_blend != 0)
-    in vec4 vTEXCOORD4;
-    out vec4 vColorBlendValues;
-#endif
+// Declared on both builds, because CS2 does: the non blend shader still takes this stream, and
+// the wetness reads its z as the painted coverage. A model without the stream leaves it at the
+// default (0, 0, 0, 1), whose zero z is what keeps unpainted geometry dry.
+in vec4 vTEXCOORD4;
+out vec4 vColorBlendValues;
 
 
 out vec3 vFragPosition;
@@ -248,9 +249,9 @@ void main()
         #endif
     #endif
 
-    #if (GameVfx_csgo_environment_blend != 0)
+    vColorBlendValues = vTEXCOORD4;
 
-        vColorBlendValues = vTEXCOORD4;
+    #if (GameVfx_csgo_environment_blend != 0)
 
         if (bGeoBlendByFacingDirection2)
         {
@@ -280,6 +281,9 @@ void main()
         #endif
 
         vColorBlendValues.a = clamp(vColorBlendValues.a + flSoftness, 0.001, 1.0);
+    #else
+        // Nothing to blend, so the clamp is all this build does to it.
+        vColorBlendValues.a = clamp(vColorBlendValues.a, 0.001, 1.0);
     #endif
 
     vCentroidNormalOut = vNormalOut;
