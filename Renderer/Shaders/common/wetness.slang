@@ -325,6 +325,78 @@ void ApplyWetness(inout MaterialProperties_t mat, float rawHeight, float wetPain
     g_flPuddleWaterScattering = puddleAmount * (0.2 + (0.15 * foam * foam * foam));
 }
 
+// Rain on characters and weapons, which is a separate system from everything above: csgo_character
+// and csgo_weapon declare no F_WETNESS, no puddles and no vertex paint. CS2 drives it from two per
+// entity render attributes the game writes, RainExposureToSkyWetness, which is the result of a
+// trace straight up for sky, and RainExposureLocalTimer, which paces the droplets.
+//
+// The droplets are refraction rather than a lighting term: they bend the texture coordinates
+// before anything is sampled, so albedo, normal and roughness all shift together under a bead of
+// water. Call GetRainDroplets first in GetMaterial and use what it returns as the coordinate for
+// the rest of the function.
+uniform float g_flRainExposureToSkyWetness = 0.0;
+uniform float g_flRainExposureLocalTimer = 0.0;
+
+// materials/dev/water_droplets: rg is the bead's normal, b is a per bead phase so they do not all
+// run down at once, and a is the bead mask.
+uniform sampler2D g_tWetnessDroplets;
+
+// Left behind by GetRainDroplets for the roughness step below.
+float g_flRainDropletAmount = 0.0;
+
+vec2 GetRainDroplets(vec2 texCoord, vec3 posWS, float upFacing)
+{
+    float exposure = g_flRainExposureToSkyWetness * g_flEnvWetnessCoverage;
+
+    if (exposure <= 0.0)
+    {
+        return texCoord;
+    }
+
+    vec2 dropletCoord = texCoord * 2.5;
+
+    // Texel density against world density. Once a surface is small enough on screen the beads
+    // would alias, so they are tiled tighter instead of being drawn at their real size.
+    float density = length(cross(vec3(dFdx(texCoord), 0.0), vec3(dFdy(texCoord), 0.0)))
+        / max(1e-4, length(cross(dFdx(posWS), dFdy(posWS))));
+
+    if (density < 0.002)
+    {
+        dropletCoord *= 3.0;
+    }
+
+    // The world space nudge keeps two objects with the same uvs from wearing identical beads.
+    vec4 droplets = texture(g_tWetnessDroplets, dropletCoord + posWS.xy * 1e-4);
+
+    vec2 dropletNormal = (droplets.xy * 2.0) - vec2(1.0);
+    dropletNormal.y = -dropletNormal.y;
+
+    float mask = droplets.w;
+    float phase = droplets.z;
+
+    // Each bead appears when the shared clock passes its own phase, and how far the clock has run
+    // past it is how formed the bead is. Rain strength is squared, the same way the environment
+    // shader squares it.
+    float amount = saturate(((exposure * 0.25)
+        - fract(phase + (g_flRainExposureLocalTimer * 0.1 * g_flEnvRainStrength * g_flEnvRainStrength)))
+        * 5.0 / (g_flEnvWetnessCoverage + 0.001)) * saturate((upFacing + 0.75) * 4.0);
+
+    g_flRainDropletAmount = amount * mask;
+
+    return texCoord + ((dropletNormal * -0.02) * amount * mask);
+}
+
+// The roughness half, run after the material is built.
+void ApplyRainDroplets(inout MaterialProperties_t mat)
+{
+    if (g_flRainDropletAmount <= 0.0)
+    {
+        return;
+    }
+
+    mat.RoughnessTex = mix(mat.RoughnessTex, vec2(0.1), vec2(g_flRainDropletAmount));
+}
+
 // NOT WIRED UP. Replaces one light's NdotL where standing water should scatter it rather than
 // reflect it off a hard surface: a wrapped lambert with a Fresnel rim, gated so it only shows on
 // the lit side, and darkened by how far the water's own normal has turned away from the light.

@@ -363,6 +363,15 @@ public class Renderer
             }
         }
 
+        using (var dropletsResource = RendererContext.FileLoader.LoadFile("materials/dev/water_droplets.vtex_c"))
+        {
+            if (dropletsResource != null)
+            {
+                var dropletsTexture = Scene.RendererContext.MaterialLoader.LoadTexture(dropletsResource);
+                Textures.Add(new(ReservedTextureSlots.WetnessDroplets, "g_tWetnessDroplets", dropletsTexture));
+            }
+        }
+
         const string blueNoiseName = "blue_noise_256.vtex_c";
         var blueNoiseResource = RendererContext.FileLoader.LoadFile("textures/dev/" + blueNoiseName);
 

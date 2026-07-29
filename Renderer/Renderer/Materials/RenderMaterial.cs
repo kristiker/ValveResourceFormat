@@ -59,8 +59,10 @@ namespace ValveResourceFormat.Renderer.Materials
         MorphCompositeTexture,
         /// <summary>Scrolling wave normals and blotch mask, for the CS2 wet weather effect.</summary>
         WetnessWaves,
-        /// <summary>Last reserved slot; equal to <see cref="WetnessWaves"/>.</summary>
-        Last = WetnessWaves,
+        /// <summary>Rain bead normals, phase and mask, for the CS2 droplet refraction.</summary>
+        WetnessDroplets,
+        /// <summary>Last reserved slot; equal to <see cref="WetnessDroplets"/>.</summary>
+        Last = WetnessDroplets,
     }
 
     enum BlendMode

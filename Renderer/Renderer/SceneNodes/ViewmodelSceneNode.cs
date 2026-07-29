@@ -29,6 +29,66 @@ public class ViewmodelSceneNode : ModelSceneNode
     readonly List<ModelSceneNode?> Items = [];
     readonly List<Material> legsMaterials = [];
 
+    /// <summary>
+    /// How exposed to the sky the player is, from a trace straight up. CS2 feeds the same value to
+    /// csgo_character and csgo_weapon as the RainExposureToSkyWetness render attribute, and it is
+    /// what decides whether rain lands on the viewmodel. Eased rather than snapped, so walking
+    /// under cover dries off instead of switching.
+    /// </summary>
+    private float rainExposureToSky;
+
+    /// <summary>Paces the droplets. CS2 calls this RainExposureLocalTimer.</summary>
+    private float rainExposureLocalTimer;
+
+    /// <summary>Far enough up to leave any playable space, and cheap since it is one ray a frame.</summary>
+    private const float SkyTraceDistance = 16384f;
+
+    /// <summary>Anything overhead further than this is taken for the skybox rather than a roof.</summary>
+    private const float IndoorCeilingDistance = 1024f;
+
+    /// <summary>Arms and legs both, since rain lands on all of the viewmodel.</summary>
+    readonly List<Material> rainMaterials = [];
+
+    /// <summary>
+    /// Traces straight up and hands the result to the viewmodel's materials, the way CS2 feeds
+    /// csgo_character and csgo_weapon their RainExposure attributes.
+    /// </summary>
+    /// <remarks>
+    /// The trace is <see cref="Rubikon.TraceRay"/> unmodified, which already ignores playerclip and
+    /// anything that does not stop bullets, so a miss is the open sky. What it cannot currently say
+    /// is what it hit: a sky brush overhead reads the same as a ceiling, and counts as indoors.
+    /// Telling those apart needs the hit's InteractAs tags carried out on the trace result.
+    /// </remarks>
+    private void UpdateRainExposure(Scene.UpdateContext context)
+    {
+        // TEMPORARY: forced fully exposed so the droplets can be looked at. Delete this line and
+        // the trace below comes back.
+        var exposed = 1f;
+
+#pragma warning disable CS0162 // Unreachable while the force above stands
+        if (false && Scene.PhysicsWorld != null)
+        {
+            var origin = PlayerTransform.Translation;
+            var hit = Scene.PhysicsWorld.TraceRay(origin, origin + Vector3.UnitZ * SkyTraceDistance);
+
+            // A miss is open sky, and so is a hit far enough up to be the skybox rather than
+            // something standing over the player. Distance stands in for reading the surface,
+            // which the trace cannot report; a roof higher than this counts as outdoors.
+            exposed = (!hit.Hit || hit.Distance > IndoorCeilingDistance) ? 1f : 0f;
+        }
+#pragma warning restore CS0162
+
+        // Snapped rather than eased while the force stands, so it is wet from the first frame.
+        rainExposureToSky = exposed;
+        rainExposureLocalTimer += context.Timestep;
+
+        foreach (var material in rainMaterials)
+        {
+            material.FloatParams["g_flRainExposureToSkyWetness"] = rainExposureToSky;
+            material.FloatParams["g_flRainExposureLocalTimer"] = rainExposureLocalTimer;
+        }
+    }
+
     ModelSceneNode? SelectedItem => Items.ElementAtOrDefault(SelectedItemIndex - 1);
 
     private int PreviousSelectedIndex;
@@ -385,6 +445,10 @@ public class ViewmodelSceneNode : ModelSceneNode
                 .Except(armsMaterials)
         );
 
+        // Rain lands on all of it, arms included, so this one keeps both.
+        rainMaterials.AddRange(armsMaterials);
+        rainMaterials.AddRange(legsMaterials);
+
         Legs.AnimationController.TwistConstraints = [];
         Legs.AnimationController.Looping = true;
 
@@ -465,6 +529,15 @@ public class ViewmodelSceneNode : ModelSceneNode
         };
         Scene.Add(model, true);
         Items.Add(model);
+
+        // Weapons and items get rained on with the rest of the viewmodel. Collected here rather
+        // than with the arms and legs because items load later than the body does.
+        rainMaterials.AddRange(
+            model.RenderableMeshes
+                .SelectMany(m => m.DrawCalls)
+                .Select(dc => dc.Material.Material)
+                .Except(rainMaterials)
+        );
 
         model.Parent = this;
 
@@ -917,6 +990,8 @@ public class ViewmodelSceneNode : ModelSceneNode
 
             Legs.Update(context);
         }
+
+        UpdateRainExposure(context);
 
         attackCooldown = MathF.Max(0f, attackCooldown - context.Timestep);
         alternateAttackCooldown = MathF.Max(0f, alternateAttackCooldown - context.Timestep);

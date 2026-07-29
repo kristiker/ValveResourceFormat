@@ -284,6 +284,10 @@ uniform sampler2D g_tTintMask;
 #include "common/texturing.slang"
 #include "common/fog.slang"
 
+#if (GameVfx_csgo_character != 0) || (GameVfx_csgo_weapon != 0)
+    #include "common/wetness.slang"
+#endif
+
 // Must be last
 #include "common/lighting.slang"
 
@@ -294,6 +298,12 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
 {
     MaterialProperties_t mat;
     InitProperties(mat, vertexNormals, vFragPosition, vTangentOut, vBitangentOut);
+
+    // Beads of rain refract whatever is under them, so this bends the coordinate every map below
+    // is then read at, rather than being mixed in afterwards.
+#if (GameVfx_csgo_character != 0) || (GameVfx_csgo_weapon != 0)
+    texCoord = GetRainDroplets(texCoord, mat.PositionWS, mat.GeometricNormal.z);
+#endif
 
 #if (GameVfx_csgo_simple_3layer_parallax != 0)
     vec4 normalTexture = texture(g_tNormal, texCoord);
@@ -616,6 +626,10 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
 #if (F_DECAL_TEXTURE == 1)
     mat.Albedo = ApplyDecalTexture(mat.Albedo);
 #endif
+
+    #if (GameVfx_csgo_character != 0) || (GameVfx_csgo_weapon != 0)
+        ApplyRainDroplets(mat);
+    #endif
 
     mat.DiffuseColor = mat.Albedo - mat.Albedo * mat.Metalness;
 
