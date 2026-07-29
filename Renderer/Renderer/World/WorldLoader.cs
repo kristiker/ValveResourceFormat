@@ -608,6 +608,19 @@ namespace ValveResourceFormat.Renderer.World
                         scene.LightingInfo.SunLightShadowCoverageScale = 4f;
                     }
                 }
+                else if (classname == "info_map_parameters")
+                {
+                    // The map's weather. raintracetoskyenabled also lives here, gating whether the game
+                    // traces upward for sky visibility before letting rain land; we have no such trace,
+                    // and the wetness is gated on painted coverage instead, so it is not read.
+                    scene.EnvWetness = new Vector4(
+                        entity.GetFloatProperty("envwetnesscoverage", 1f),
+                        entity.GetFloatProperty("envwetnessdryingamount", 0f),
+                        entity.GetFloatProperty("envrainstrength", 1f),
+                        entity.GetFloatProperty("envpuddleripplestrength", 1f));
+
+                    scene.EnvPuddleRippleDirection = entity.GetFloatProperty("envpuddlerippledirection", 0f);
+                }
                 else if (classname == "env_gradient_fog")
                 {
                     // If it has "start_disabled", only take it if we haven't found any others yet.

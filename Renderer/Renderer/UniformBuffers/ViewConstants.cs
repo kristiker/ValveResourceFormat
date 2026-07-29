@@ -90,6 +90,15 @@ namespace ValveResourceFormat.Renderer.Buffers
         /// <summary>World-to-clip transform from when the depth pyramid was last generated, used for GPU occlusion culling.</summary>
         public Matrix4x4 WorldToProjectionPrev = Matrix4x4.Identity;
 
+        /// <summary>
+        /// Wetness coverage, drying amount, rain strength and puddle ripple strength, from the map's
+        /// <c>info_map_parameters</c>. Defaults are that entity's own, for maps that do not carry one.
+        /// </summary>
+        public Vector4 EnvWetness = new(1f, 0f, 1f, 1f);
+
+        /// <summary>Puddle ripple direction in X, over 0 to 1 for a full turn. The rest is spare.</summary>
+        public Vector4 EnvWetnessRipple;
+
         /// <summary>Initializes a new <see cref="ViewConstants"/> with identity matrices and default values.</summary>
         public ViewConstants()
         {

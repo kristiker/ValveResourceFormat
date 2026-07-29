@@ -35,6 +35,12 @@ layout(std140, binding = 0) uniform ViewConstants
     vec4 g_vCubeFogCullingParams_ExposureBias_MaxOpacity;
 
     mat4 g_matPrevWorldToProjection;
+
+    // Weather, from the map's info_map_parameters. Two vec4s rather than five floats so the tail
+    // of this block stays 16 byte aligned against the struct it is marshalled from; the last three
+    // components are spare for whatever weather state comes next.
+    vec4 g_vEnvWetness;         // coverage, drying amount, rain strength, ripple strength
+    vec4 g_vEnvWetnessRipple;   // ripple direction, unused
 };
 
 bool blink()

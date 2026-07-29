@@ -60,19 +60,20 @@ uniform float g_fRippleStrength = 1.0;
 // authored signed around its zero point.
 uniform bool g_bWetnessUseHeightmapAdjustments = false;
 
-// Weather. PerViewConstantBufferCsgo_t in CS2, driven by the map; we have nowhere to read it from,
-// so these are uniforms nothing currently writes.
+// Weather. Per view rather than per material, out of the view constants, where WorldLoader puts
+// what it read from the map's info_map_parameters. PerViewConstantBufferCsgo_t is where CS2 keeps
+// the same five.
 //
-// Coverage is the knob worth reaching for first, and it is not linear. The sheen term doubles the
-// water level before clamping, so anything from about 0.75 up saturates it to fully wet and pins
-// the roughness at g_fPuddleRoughness, which reads as a mirror rather than as a wet surface. Half
-// leaves roughness to fall to roughly a quarter of the way down and still clears the 0.5 the
-// ripples need to animate. Guessed, not matched against the game.
-uniform float g_flEnvWetnessCoverage = 0.5;
-uniform float g_flEnvWetnessDryingAmount = 0.0;
-uniform float g_flEnvRainStrength = 1.0;
-uniform float g_flEnvPuddleRippleStrength = 1.0;
-uniform float g_flEnvPuddleRippleDirection = 0.0;
+// Coverage is a ceiling on the painted wetness rather than a wetness of its own, so its default of
+// 1 means the map's painting is what decides where water sits. It is also strongly non linear: the
+// sheen term doubles it before clamping, so from about 0.75 up it saturates and pins roughness at
+// g_fPuddleRoughness. That is Valve's default and correct, but it is the first thing to look at if
+// a surface reads as a mirror.
+#define g_flEnvWetnessCoverage g_vEnvWetness.x
+#define g_flEnvWetnessDryingAmount g_vEnvWetness.y
+#define g_flEnvRainStrength g_vEnvWetness.z
+#define g_flEnvPuddleRippleStrength g_vEnvWetness.w
+#define g_flEnvPuddleRippleDirection g_vEnvWetnessRipple.x
 
 // materials/dev/water_waves. Valve uses this one texture for three unrelated jobs: its alpha is
 // a metres wide blotch pattern that keeps the sheen from being uniform, and its rg is a normal

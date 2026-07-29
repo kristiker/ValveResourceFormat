@@ -1641,11 +1641,23 @@ namespace ValveResourceFormat.Renderer
             }
         }
 
-        /// <summary>Writes the scene fog parameters into the provided view constants structure.</summary>
-        /// <param name="viewConstants">The view constants to update with fog uniforms.</param>
+        /// <summary>
+        /// Wetness coverage, drying amount, rain strength and puddle ripple strength, read from the map's
+        /// <c>info_map_parameters</c>. Holds that entity's own defaults when the map has none.
+        /// </summary>
+        public Vector4 EnvWetness { get; set; } = new(1f, 0f, 1f, 1f);
+
+        /// <summary>Puddle ripple direction, over 0 to 1 for a full turn.</summary>
+        public float EnvPuddleRippleDirection { get; set; }
+
+        /// <summary>Writes the scene's fog and weather parameters into the provided view constants structure.</summary>
+        /// <param name="viewConstants">The view constants to update.</param>
         public void SetFogConstants(ViewConstants viewConstants)
         {
             FogInfo.SetFogUniforms(viewConstants, FogEnabled);
+
+            viewConstants.EnvWetness = EnvWetness;
+            viewConstants.EnvWetnessRipple = new Vector4(EnvPuddleRippleDirection, 0f, 0f, 0f);
         }
 
         /// <summary>
