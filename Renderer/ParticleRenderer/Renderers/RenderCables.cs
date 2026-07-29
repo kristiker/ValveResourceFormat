@@ -356,12 +356,16 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
         // matching the ordering the scene uses when binding probes to nodes.
         private SceneLightProbe? FindContainingProbe(Vector3 position)
         {
-            var isAtlas = scene.LightingInfo.LightProbeType == LightProbeType.ProbeAtlas;
+            if (!scene.LightingInfo.HasValidLightProbes)
+            {
+                return null;
+            }
+
             SceneLightProbe? best = null;
 
             foreach (var probe in scene.LightingInfo.LightProbes)
             {
-                if (probe.Irradiance == null || (isAtlas && probe.DirectLightShadows == null) || !probe.BoundingBox.Contains(position))
+                if (!probe.BoundingBox.Contains(position))
                 {
                     continue;
                 }
@@ -407,7 +411,6 @@ namespace ValveResourceFormat.Renderer.Particles.Renderers
             if (lightProbe is not null)
             {
                 shader.SetUniform1("uLightProbeIndex", (uint)lightProbe.ShaderIndex);
-                scene.LightingInfo.BindInstanceLightProbeTextures(lightProbe);
             }
 
             PerfStats.Active.Count(Counter.ParticleDraw);

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -1788,6 +1788,15 @@ namespace ValveResourceFormat.Renderer
                 return;
             }
 
+            LightingInfo.BuildProbeAtlasIfRequired();
+
+            if (!LightingInfo.HasValidLightProbes)
+            {
+                return;
+            }
+
+            var atlasGridSize = LightingInfo.ProbeAtlas!.GridSize;
+
             LightingInfo.LightProbes.Sort((a, b) => a.HandShake.CompareTo(b.HandShake));
 
             foreach (var node in AllNodes)
@@ -1819,16 +1828,7 @@ namespace ValveResourceFormat.Renderer
                 }
             }
 
-            var isAtlas = LightingInfo.LightProbeType == LightProbeType.ProbeAtlas;
-
-            static bool IsValid(SceneLightProbe probe, bool isAtlas) => isAtlas switch
-            {
-                true => probe is { Irradiance: not null, DirectLightShadows: not null },
-                false => true,
-            };
-
             var sortedLightProbes = LightingInfo.LightProbes
-                .Where(probe => IsValid(probe, isAtlas))
                 .OrderByDescending(static lpv => lpv.IndoorOutdoorLevel)
                 .ThenBy(static lpv => lpv.AtlasSize.LengthSquared())
                 .ToList();
@@ -1847,8 +1847,7 @@ namespace ValveResourceFormat.Renderer
                 }
 
                 probe.ShaderIndex = i;
-                var data = probe.CalculateGpuProbeData(isAtlas);
-                lpvBuffer.Data.Probes[i] = data;
+                lpvBuffer.Data.Probes[i] = probe.CalculateGpuProbeData(atlasGridSize);
 
                 nodes.Clear();
                 i++;
@@ -2102,7 +2101,7 @@ namespace ValveResourceFormat.Renderer
                 lightingBuffer?.Dispose();
                 lpvBuffer?.Dispose();
                 envMapBuffer?.Dispose();
-                LightingInfo.DisposeBarnLights();
+                LightingInfo.DisposeLighting();
             }
         }
     }

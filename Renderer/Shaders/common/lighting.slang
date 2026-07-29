@@ -5,8 +5,6 @@
 
 #include "features.slang"
 
-#define S_SCENE_PROBE_TYPE 0 // 1 = Individual, 2 = Atlas
-
 #define renderMode_Illumination 0
 #define renderMode_Diffuse 0
 #define renderMode_Specular 0

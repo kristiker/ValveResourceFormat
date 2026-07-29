@@ -232,6 +232,23 @@ namespace ValveResourceFormat.Renderer.Materials
             return tex;
         }
 
+        /// <summary>Drops a texture from the cache and deletes it. Only safe once nothing references it.</summary>
+        /// <param name="name">The compiled texture resource path.</param>
+        /// <param name="srgbRead">Which of the two caches the texture was loaded into.</param>
+        /// <returns>True if a cached texture was found and deleted.</returns>
+        public bool EvictTexture(string name, bool srgbRead = false)
+        {
+            var cache = srgbRead ? TexturesSrgb : Textures;
+
+            if (!cache.Remove(name, out var tex))
+            {
+                return false;
+            }
+
+            tex.Delete();
+            return true;
+        }
+
         /// <summary>
         /// Gets a sampler object for the supplied texture address modes, creating and caching one per <see cref="MaterialLoader" />.
         /// </summary>

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
@@ -21,19 +21,6 @@ namespace ValveResourceFormat.Renderer.World
         CubemapArray,
     }
 
-    /// <summary>
-    /// Storage format for light probe irradiance data.
-    /// </summary>
-    public enum LightProbeType : byte
-    {
-        /// <summary>No light probe data.</summary>
-        None,
-        /// <summary>Each probe has its own individual irradiance texture.</summary>
-        IndividualProbes,
-        /// <summary>All probe irradiance data is packed into a single atlas texture.</summary>
-        ProbeAtlas,
-    }
-
     /// <summary>Which light face a binned barn light slot holds, so a cull bit read back later traces to
     /// the light it was about. Rebuilt every frame, so it only holds against the frame that produced it.</summary>
     /// <param name="Light">Light owning the slot.</param>
@@ -49,6 +36,8 @@ namespace ValveResourceFormat.Renderer.World
         public Dictionary<string, RenderTexture> Lightmaps { get; } = [];
         /// <summary>Gets the list of scene light probes.</summary>
         public List<SceneLightProbe> LightProbes { get; } = [];
+        /// <summary>Gets the scene-wide probe atlas every probe samples from, once <see cref="BuildProbeAtlasIfRequired"/> has run.</summary>
+        public LightProbeAtlas? ProbeAtlas { get; private set; }
         /// <summary>Gets the list of environment map probes.</summary>
         public List<SceneEnvMap> EnvMaps { get; } = [];
         /// <summary>Gets the list of real-time barn lights.</summary>
@@ -61,6 +50,8 @@ namespace ValveResourceFormat.Renderer.World
         public bool HasValidLightmaps { get; set; }
         /// <summary>Gets or sets a value indicating whether the scene has a complete and usable light probe set.</summary>
         public bool HasValidLightProbes { get; set; }
+        /// <summary>Gets or sets a value indicating whether the scene ships a baked probe atlas rather than one texture per probe.</summary>
+        public bool HasPrebakedProbeAtlas { get; set; }
         /// <summary>Gets or sets the lightmap version number from the world data.</summary>
         public int LightmapVersionNumber { get; set; }
         /// <summary>Gets or sets the game-specific lightmap sub-version number.</summary>
@@ -73,13 +64,6 @@ namespace ValveResourceFormat.Renderer.World
         {
             get => (CubemapType)scene.RenderAttributes.GetValueOrDefault("S_SCENE_CUBEMAP_TYPE");
             set => scene.RenderAttributes["S_SCENE_CUBEMAP_TYPE"] = (byte)value;
-        }
-
-        /// <summary>Gets or sets the storage format used for light probe irradiance data in this scene.</summary>
-        public LightProbeType LightProbeType
-        {
-            get => (LightProbeType)scene.RenderAttributes.GetValueOrDefault("S_SCENE_PROBE_TYPE");
-            set => scene.RenderAttributes["S_SCENE_PROBE_TYPE"] = (byte)value;
         }
 
         /// <summary>
@@ -154,10 +138,19 @@ namespace ValveResourceFormat.Renderer.World
                 GL.BindTextureUnit((int)lightmapSlot, texture.Handle);
             }
 
-            if (LightProbeType == LightProbeType.ProbeAtlas && LightProbes.Count > 0)
+            if (ProbeAtlas != null)
             {
-                BindProbeTexture("g_tLPV_Irradiance", LightProbes[0].Irradiance);
-                BindProbeTexture("g_tLPV_Shadows", LightProbes[0].DirectLightShadows);
+                BindProbeTexture("g_tLPV_Irradiance", ProbeAtlas.Irradiance);
+
+                if (LightmapGameVersionNumber == 1)
+                {
+                    BindProbeTexture("g_tLPV_Indices", ProbeAtlas.DirectLightIndices);
+                    BindProbeTexture("g_tLPV_Scalars", ProbeAtlas.DirectLightScalars);
+                }
+                else
+                {
+                    BindProbeTexture("g_tLPV_Shadows", ProbeAtlas.DirectLightShadows);
+                }
             }
 
             // Always bind something, even when the scene has no cookies: the cookie samplers are 2D arrays,
@@ -176,24 +169,25 @@ namespace ValveResourceFormat.Renderer.World
             GL.BindSampler((int)ReservedTextureSlots.LightCookieTextureWrap, CookieSamplerWrap);
         }
 
-        /// <summary>Binds the per-draw light probe volume textures. Individual-probe scenes only.</summary>
-        public void BindInstanceLightProbeTextures(SceneLightProbe lightProbe)
+        /// <summary>Folds the scene's light probe volumes into one atlas. Call once, after every probe is added.</summary>
+        public void BuildProbeAtlasIfRequired()
         {
-            if (LightProbeType != LightProbeType.IndividualProbes)
+            if (ProbeAtlas != null || LightProbes.Count == 0)
             {
                 return;
             }
 
-            BindProbeTexture("g_tLPV_Irradiance", lightProbe.Irradiance);
-
-            if (LightmapGameVersionNumber == 1)
+            if (HasValidLightProbes)
             {
-                BindProbeTexture("g_tLPV_Indices", lightProbe.DirectLightIndices);
-                BindProbeTexture("g_tLPV_Scalars", lightProbe.DirectLightScalars);
+                ProbeAtlas = HasPrebakedProbeAtlas
+                    ? LightProbeAtlasBuilder.FromPrebaked(LightProbes[0])
+                    : LightProbeAtlasBuilder.Merge(LightProbes, scene.RendererContext.MaterialLoader, scene.RendererContext.Logger);
             }
-            else if (LightmapGameVersionNumber >= 2)
+
+            if (ProbeAtlas == null)
             {
-                BindProbeTexture("g_tLPV_Shadows", lightProbe.DirectLightShadows);
+                HasValidLightProbes = false;
+                ProbeAtlas = LightProbeAtlasBuilder.CreateEmpty();
             }
         }
 
@@ -813,9 +807,12 @@ namespace ValveResourceFormat.Renderer.World
         public ReadOnlySpan<BarnLightFaceSlot> BinnedBarnLightFaces
             => BinnedBarnLightFaceSlots.AsSpan(0, (int)LightingData.NumBarnLights);
 
-        /// <summary>Releases the barn light GPU buffer, cookie atlas texture, and sampler objects.</summary>
-        public void DisposeBarnLights()
+        /// <summary>Releases the probe atlas, barn light GPU buffer, cookie atlas texture, and sampler objects.</summary>
+        public void DisposeLighting()
         {
+            ProbeAtlas?.Delete();
+            ProbeAtlas = null;
+
             BarnLightStorageBuffer?.Delete();
 
             BarnLightCookieAtlas?.Delete();

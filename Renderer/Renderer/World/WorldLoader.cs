@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -944,6 +944,8 @@ namespace ValveResourceFormat.Renderer.World
                         var dlsName = entity.GetStringProperty("lightprobetexture_dls");
                         var dlsdName = entity.GetStringProperty("lightprobetexture_dlshd");
 
+                        lightProbe.TexturePaths = (lightProbeTextureName, dliName, dlsName, dlsdName);
+
                         if (dlsName != null)
                         {
                             lightProbe.DirectLightScalars = RendererContext.MaterialLoader.GetTexture(dlsName);
@@ -957,17 +959,18 @@ namespace ValveResourceFormat.Renderer.World
                             lightProbe.DirectLightIndices.SetWrapMode(TextureWrapMode.ClampToEdge);
                         }
 
-                        scene.LightingInfo.LightProbeType = entity.ContainsKey("light_probe_atlas_x") switch
-                        {
-                            false => LightProbeType.IndividualProbes,
-                            true => LightProbeType.ProbeAtlas,
-                        };
+                        var isPrebakedAtlas = entity.ContainsKey("light_probe_atlas_x");
+
+                        scene.LightingInfo.HasPrebakedProbeAtlas = isPrebakedAtlas;
 
                         if (dlsdName != null)
                         {
                             lightProbe.DirectLightShadows = RendererContext.MaterialLoader.GetTexture(dlsdName);
                             lightProbe.DirectLightShadows.SetWrapMode(TextureWrapMode.ClampToEdge);
+                        }
 
+                        if (isPrebakedAtlas)
+                        {
                             lightProbe.AtlasSize = new Vector3(
                                 entity.GetFloatProperty("light_probe_size_x"),
                                 entity.GetFloatProperty("light_probe_size_y"),

@@ -1,4 +1,4 @@
-#version 460
+﻿#version 460
 
 #ifndef VRF_LIGHTING_LPV_INCLUDE
 #define VRF_LIGHTING_LPV_INCLUDE
@@ -41,12 +41,7 @@ vec3 CalculateProbeSampleCoords(vec3 fragPosition)
 vec3 CalculateProbeShadowCoords(vec3 fragPosition)
 {
     vec3 vLightProbeLocalPos = CalculateProbeSampleCoords(fragPosition);
-
-    #if (S_SCENE_PROBE_TYPE == 2)
-        vLightProbeLocalPos = fma(saturate(vLightProbeLocalPos), g_LPV[g_nVisibleLPV].AtlasScale.xyz, g_LPV[g_nVisibleLPV].AtlasOffset.xyz);
-    #endif
-
-    return vLightProbeLocalPos;
+    return fma(saturate(vLightProbeLocalPos), g_LPV[g_nVisibleLPV].AtlasScale.xyz, g_LPV[g_nVisibleLPV].AtlasOffset.xyz);
 }
 
 vec3 CalculateProbeIndirectCoords(vec3 fragPosition)
@@ -54,18 +49,12 @@ vec3 CalculateProbeIndirectCoords(vec3 fragPosition)
     LightProbeVolume lpv = g_LPV[g_nVisibleLPV];
     vec3 indirectCoords = CalculateProbeSampleCoords(fragPosition);
 
-    #if (S_SCENE_PROBE_TYPE == 1)
-        indirectCoords.z /= 6;
-        // clamp(indirectCoords, lpv.Layer0TextureMin.xyz, lpv.Layer0TextureMax.xyz);
-    #elif (S_SCENE_PROBE_TYPE == 2)
-        indirectCoords.z /= 6;
-        indirectCoords = clamp(indirectCoords, lpv.BorderMin.xyz, lpv.BorderMax.xyz);
+    indirectCoords.z /= 6;
+    indirectCoords = clamp(indirectCoords, lpv.BorderMin.xyz, lpv.BorderMax.xyz);
 
-        indirectCoords.z *= 6;
-        indirectCoords = fma(indirectCoords, lpv.AtlasScale.xyz, lpv.AtlasOffset.xyz);
-
-        indirectCoords.z /= 6;
-    #endif
+    indirectCoords.z *= 6;
+    indirectCoords = fma(indirectCoords, lpv.AtlasScale.xyz, lpv.AtlasOffset.xyz);
+    indirectCoords.z /= 6;
 
     return indirectCoords;
 }
