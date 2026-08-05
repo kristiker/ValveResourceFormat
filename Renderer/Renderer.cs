@@ -1040,6 +1040,12 @@ public class Renderer
         PerfStats?.Dispose();
         ResolvedSceneColor?.Delete();
         ResolvedSceneDepth?.Delete();
+        Skybox2D?.Delete();
+
+        if (BaseBackground != Skybox2D && BaseBackground != null)
+        {
+            BaseBackground.Delete();
+        }
     }
 
     /// <summary>
