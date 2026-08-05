@@ -23,13 +23,13 @@ layout(std140, binding = 3) uniform LightProbeVolumeArray
     LightProbeVolume g_LPV[MAX_LIGHT_PROBES];
 };
 
-uniform sampler3D g_tLPV_Irradiance; // SrgbRead(true)
+uniform sampler3D g_tLPV_Irradiance; // SrgbRead(true) ReservedTextureSlots.Lightmap1
 
 #if (S_LIGHTMAP_VERSION_MINOR == 1)
-    uniform sampler3D g_tLPV_Indices;
-    uniform sampler3D g_tLPV_Scalars;
+    uniform sampler3D g_tLPV_Indices; // ReservedTextureSlots.Lightmap3
+    uniform sampler3D g_tLPV_Scalars; // ReservedTextureSlots.Lightmap4
 #elif (S_LIGHTMAP_VERSION_MINOR >= 2)
-    uniform sampler3D g_tLPV_Shadows;
+    uniform sampler3D g_tLPV_Shadows; // ReservedTextureSlots.Lightmap5
 #endif
 
 vec3 CalculateProbeSampleCoords(vec3 fragPosition)

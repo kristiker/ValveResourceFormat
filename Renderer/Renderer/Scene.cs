@@ -1184,8 +1184,8 @@ namespace ValveResourceFormat.Renderer
             shader.SetUniform("g_flDepthRangeMin", Renderer.DepthRange.Scene.Near);
             shader.SetUniform("g_flDepthRangeMax", Renderer.DepthRange.Scene.Far);
 
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(pyramid.Target, pyramid.Handle);
+            // Only the cull compute shaders read it, and they bind nothing else.
+            shader.SetTexture(RenderMaterial.TextureUnitStart, "g_tDepthPyramid", pyramid);
 
             return true;
         }

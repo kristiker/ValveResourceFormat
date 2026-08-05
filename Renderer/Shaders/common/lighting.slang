@@ -19,20 +19,20 @@
 
 #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
     centroid in vec3 vLightmapUVScaled;
-    uniform sampler2DArray g_tIrradiance;
-    uniform sampler2DArray g_tIrradianceDebugChart;
+    uniform sampler2DArray g_tIrradiance; // ReservedTextureSlots.Lightmap1
+    uniform sampler2DArray g_tIrradianceDebugChart; // ReservedTextureSlots.Lightmap6
     #if (S_LIGHTMAP_VERSION_MINOR >= 3)
-        uniform sampler2DArray g_tDirectionalIrradianceR;
-        uniform sampler2DArray g_tDirectionalIrradianceG;
-        uniform sampler2DArray g_tDirectionalIrradianceB;
+        uniform sampler2DArray g_tDirectionalIrradianceR; // ReservedTextureSlots.Lightmap2
+        uniform sampler2DArray g_tDirectionalIrradianceG; // ReservedTextureSlots.Lightmap3
+        uniform sampler2DArray g_tDirectionalIrradianceB; // ReservedTextureSlots.Lightmap4
     #else
-        uniform sampler2DArray g_tDirectionalIrradiance;
+        uniform sampler2DArray g_tDirectionalIrradiance; // ReservedTextureSlots.Lightmap2
     #endif
     #if (S_LIGHTMAP_VERSION_MINOR == 1)
-        uniform sampler2DArray g_tDirectLightIndices;
-        uniform sampler2DArray g_tDirectLightStrengths;
+        uniform sampler2DArray g_tDirectLightIndices; // ReservedTextureSlots.Lightmap3
+        uniform sampler2DArray g_tDirectLightStrengths; // ReservedTextureSlots.Lightmap4
     #elif (S_LIGHTMAP_VERSION_MINOR >= 2)
-        uniform sampler2DArray g_tDirectLightShadows;
+        uniform sampler2DArray g_tDirectLightShadows; // ReservedTextureSlots.Lightmap5
     #endif
 #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
     #include "lighting.lpv.slang"

@@ -140,7 +140,7 @@ uniform float g_flNormalAndRoughnessScrollQuantize1 = 0.0;
 
 #if (F_GLASS == 1)
     uniform sampler2D g_tGlass; // r=glass mask
-    uniform sampler2D g_tSceneColor;
+    uniform sampler2D g_tSceneColor; // ReservedTextureSlots.SceneColor
 #endif
 
 #if (F_UNLIT == 1)
