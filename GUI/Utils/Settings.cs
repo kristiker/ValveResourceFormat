@@ -103,6 +103,17 @@ namespace GUI.Utils
             public int _VERSION_DO_NOT_MODIFY { get; set; }
             /// <summary>Gets or sets the application update check state.</summary>
             public AppUpdateState Update { get; set; } = new();
+            /// <summary>
+            /// Gets or sets remembered user interface state, as a free-form block of keys and values.
+            /// Deliberately untyped and not covered by <see cref="SettingsFileCurrentVersion"/> migrations:
+            /// a key that is absent is simply not applied, leaving whatever the UI set up in code, so new
+            /// state can be added and removed without ever needing an upgrader. Read and write it through
+            /// <see cref="GetUiState(string, bool)"/> and <see cref="SetUiState(string, bool)"/>.
+            /// This block is read and written by hand in <see cref="Load"/> and <see cref="Save"/>,
+            /// because the typed serializer cannot map a <see cref="KVObject"/> property.
+            /// </summary>
+            [KVIgnore]
+            public KVObject UiState { get; set; } = KVObject.Collection();
         }
 
         /// <summary>Gets whether this is the first time the application has been launched (no prior settings were found).</summary>
@@ -134,8 +145,19 @@ namespace GUI.Utils
             {
                 if (File.Exists(SettingsFilePath))
                 {
+                    var serializer = KVSerializer.Create(KVSerializationFormat.KeyValues1Text);
+
                     using var stream = new FileStream(SettingsFilePath, FileMode.Open, FileAccess.Read);
-                    Config = KVSerializer.Create(KVSerializationFormat.KeyValues1Text).Deserialize<AppConfig>(stream, KVSerializerOptions.DefaultOptions);
+                    Config = serializer.Deserialize<AppConfig>(stream, KVSerializerOptions.DefaultOptions);
+
+                    // AppConfig.UiState is [KVIgnore]d, so read it out of the document itself
+                    stream.Seek(0, SeekOrigin.Begin);
+                    KVObject document = serializer.Deserialize(stream, KVSerializerOptions.DefaultOptions);
+
+                    if (document.TryGetValue(nameof(AppConfig.UiState), out var uiState) && uiState.IsCollection)
+                    {
+                        Config.UiState = uiState;
+                    }
                 }
             }
             catch (Exception e)
@@ -182,6 +204,7 @@ namespace GUI.Utils
             Config.BookmarkedFiles ??= [];
             Config.RecentFiles ??= new(RecentFilesLimit);
             Config.Update ??= new();
+            Config.UiState ??= KVObject.Collection();
 
             if (string.IsNullOrEmpty(Config.OpenDirectory))
             {
@@ -309,14 +332,74 @@ namespace GUI.Utils
         /// </summary>
         public static void Save()
         {
+            var serializer = KVSerializer.Create(KVSerializationFormat.KeyValues1Text);
+
+            // The typed serializer skips the untyped UiState block, so serialize everything else,
+            // read it back as a document, and graft the block on before writing it out.
+            KVObject document;
+
+            using (var memory = new MemoryStream())
+            {
+                serializer.Serialize(memory, Config, nameof(ValveResourceFormat));
+                memory.Seek(0, SeekOrigin.Begin);
+                document = serializer.Deserialize(memory, KVSerializerOptions.DefaultOptions);
+            }
+
+            // Can still be null here when saving a reset of a corrupted file, before Load normalizes it
+            if (Config.UiState is { Count: > 0 })
+            {
+                document[nameof(AppConfig.UiState)] = Config.UiState;
+            }
+
             var tempFile = Path.GetTempFileName();
 
             using (var stream = new FileStream(tempFile, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                KVSerializer.Create(KVSerializationFormat.KeyValues1Text).Serialize(stream, Config, nameof(ValveResourceFormat));
+                serializer.Serialize(stream, document, nameof(ValveResourceFormat));
             }
 
             File.Move(tempFile, SettingsFilePath, overwrite: true);
+        }
+
+        /// <summary>
+        /// Reads a remembered UI state flag out of <see cref="AppConfig.UiState"/>.
+        /// </summary>
+        /// <param name="key">Key the flag was stored under.</param>
+        /// <param name="whenNeverSaved">
+        /// Value to return when <paramref name="key"/> was never saved, or holds something that is not a
+        /// flag. Pass the value the UI already set up in code, so that a missing key changes nothing.
+        /// </param>
+        public static bool GetUiState(string key, bool whenNeverSaved)
+        {
+            if (!Config.UiState.TryGetValue(key, out var value))
+            {
+                return whenNeverSaved;
+            }
+
+            try
+            {
+                return value.ToBoolean();
+            }
+            catch (Exception e) when (e is FormatException or NotSupportedException or InvalidCastException)
+            {
+                // Settings are hand editable, fall back to what the caller wanted
+                return whenNeverSaved;
+            }
+        }
+
+        /// <summary>
+        /// Remembers a UI state flag under <paramref name="key"/> and saves, unless it is already the
+        /// stored value.
+        /// </summary>
+        public static void SetUiState(string key, bool value)
+        {
+            if (Config.UiState.ContainsKey(key) && GetUiState(key, whenNeverSaved: !value) == value)
+            {
+                return; // Already stored, do not rewrite the file
+            }
+
+            Config.UiState[key] = new KVObject(value);
+            Save();
         }
 
         /// <summary>

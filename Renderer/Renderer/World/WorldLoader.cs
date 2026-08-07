@@ -475,7 +475,11 @@ namespace ValveResourceFormat.Renderer.World
             || cls == "point_camera_vertical_fov"
             || cls == "point_camera";
 
-        internal const string ToolEntitiesLayerName = "Entities (editor only)";
+        /// <summary>
+        /// Layer that collects entities which only exist for the editor, and which is therefore not
+        /// enabled by any map data. Viewers decide whether to show it.
+        /// </summary>
+        public const string ToolEntitiesLayerName = "Entities (editor only)";
 
         private void LoadEntitiesFromLump(EntityLump entityLump, string originalLayerName, Matrix4x4 rootTransform)
         {

@@ -26,6 +26,8 @@ namespace GUI.Types.GLViewers
     /// </summary>
     class GLWorldViewer : GLSceneViewer
     {
+        private const string ShowToolEntitiesUiState = "WorldShowToolEntities";
+
         private readonly World? world;
         private readonly WorldNode? worldNode;
         private readonly ResourceExtRefList? mapExternalReferences;
@@ -382,7 +384,10 @@ namespace GUI.Types.GLViewers
                     return;
                 }
 
-                SetEnabledLayers([.. worldLayers]);
+                var enabledLayers = worldLayers.ToHashSet();
+
+                Settings.SetUiState(ShowToolEntitiesUiState, enabledLayers.Contains(WorldLoader.ToolEntitiesLayerName));
+                SetEnabledLayers(enabledLayers);
             });
             physicsGroupsComboBox = UiControl.AddMultiSelection("Physics Groups", null, (physicsGroups) =>
             {
@@ -447,11 +452,23 @@ namespace GUI.Types.GLViewers
                 {
                     Debug.Assert(worldLayersComboBox != null);
 
+                    var enabledLayers = new HashSet<string>(LoadedWorld.DefaultEnabledLayers)
+                    {
+                        // No map data enables the tool entities layer, we show it by default
+                        WorldLoader.ToolEntitiesLayerName,
+                    };
+
+                    // Whatever the user last toggled wins over the defaults picked above
+                    if (!Settings.GetUiState(ShowToolEntitiesUiState, whenNeverSaved: true))
+                    {
+                        enabledLayers.Remove(WorldLoader.ToolEntitiesLayerName);
+                    }
+
                     worldLayersComboBox.BeginUpdate();
 
                     SetAvailableLayers(uniqueWorldLayers);
 
-                    foreach (var worldLayer in LoadedWorld.DefaultEnabledLayers)
+                    foreach (var worldLayer in enabledLayers)
                     {
                         var checkboxIndex = worldLayersComboBox.FindStringExact(worldLayer);
 
@@ -463,8 +480,8 @@ namespace GUI.Types.GLViewers
 
                     worldLayersComboBox.EndUpdate();
 
-                    Scene.SetEnabledLayers(LoadedWorld.DefaultEnabledLayers);
-                    SkyboxScene?.SetEnabledLayers(LoadedWorld.DefaultEnabledLayers);
+                    Scene.SetEnabledLayers(enabledLayers);
+                    SkyboxScene?.SetEnabledLayers(enabledLayers);
                 }
 
                 if (uniquePhysicsGroups.Count > 0)
