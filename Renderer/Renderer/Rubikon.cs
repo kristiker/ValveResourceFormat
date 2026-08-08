@@ -720,27 +720,48 @@ public class Rubikon
     /// </summary>
     public const string DefaultGeometry = "default";
 
+    /// <summary>Collision name for thrown grenades, which are clipped by grenadeclip rather than by
+    /// playerclip. Pass this to the trace methods instead of <see cref="PlayerCollisionName"/>.</summary>
+    public const string GrenadeCollisionName = "grenade";
+
+    /// <summary>Collision name for the player.</summary>
+    public const string PlayerCollisionName = "player";
+
     private static bool SkipsCollision(string collisionName, string[] interactAs, string[] interactExclude)
     {
+        // Untagged only, so this one answers before the tag rules below get a say.
         if (collisionName == DefaultGeometry)
         {
             return interactAs.Length > 0;
         }
 
-        if (collisionName != "player")
-        {
-            return false;
-        }
-
-        if (ContainsString(interactExclude, "player"))
+        if (ContainsString(interactExclude, collisionName))
         {
             return true;
         }
 
-        return interactAs.Length > 0
-            && !ContainsString(interactAs, "playerclip")
-            && !ContainsString(interactAs, "passbullets")
-            && !ContainsString(interactAs, "window");
+        // Untagged geometry is world collision and stops everything; a tagged shape only stops
+        // what its tags name.
+        if (interactAs.Length == 0)
+        {
+            return false;
+        }
+
+        return collisionName switch
+        {
+            PlayerCollisionName => !ContainsString(interactAs, "playerclip")
+                && !ContainsString(interactAs, "passbullets")
+                && !ContainsString(interactAs, "window"),
+
+            // Same shape as the player rule with the clip brush swapped: a grenade is stopped by
+            // csgo_grenadeclip and passes through playerclip, and it bounces off the glass and
+            // fences tagged passbullets/window rather than flying through them.
+            GrenadeCollisionName => !ContainsString(interactAs, "csgo_grenadeclip")
+                && !ContainsString(interactAs, "passbullets")
+                && !ContainsString(interactAs, "window"),
+
+            _ => false,
+        };
     }
 
     private static bool ContainsString(string[] values, string value)
