@@ -46,6 +46,9 @@ public class UserInput
     private Vector3? _orbitTarget;
     private bool _forceUpdate = true;
 
+    // Set when alt was pressed on a grenade that was in the air, and cleared when alt comes up.
+    private bool followingGrenade;
+
     // Orbit controls
     /// <summary>Gets a value indicating whether the camera is currently in orbit mode.</summary>
     public bool OrbitMode => _orbitTarget != null;
@@ -64,6 +67,12 @@ public class UserInput
             OrbitDistance = Vector3.Distance(Camera.Location, value ?? Vector3.Zero);
         }
     }
+
+    /// <summary>
+    /// Moves the orbit pivot without re-deriving <see cref="OrbitDistance"/> from the camera the way
+    /// <see cref="OrbitTarget"/> does, so following something that is moving keeps the zoom as set.
+    /// </summary>
+    private void MoveOrbitTarget(Vector3 target) => _orbitTarget = target;
 
     /// <summary>Gets the current distance from the camera to the orbit target.</summary>
     public float OrbitDistance { get; private set; }
@@ -187,6 +196,7 @@ public class UserInput
             if (!Holding(TrackedKeys.Alt))
             {
                 OrbitTarget = null;
+                followingGrenade = false;
 
                 if (Released(TrackedKeys.Alt))
                 {
@@ -203,21 +213,40 @@ public class UserInput
             {
                 OrbitTarget = null;
 
-                var traceResult = PhysicsWorld?.TraceRay(Camera.Location, Camera.Location + Camera.Forward * 10000f);
-                if (traceResult is { Hit: true, HitPosition: var hitPosition })
-                {
-                    OrbitTarget = hitPosition;
-                }
+                // A grenade still in the air takes the orbit for itself. Only on the way there:
+                // once it has gone off there is nothing to chase and alt goes back to picking
+                // whatever the view is pointed at.
+                var grenadePosition = Viewmodel?.GrenadeInFlightPosition;
+                followingGrenade = grenadePosition.HasValue;
 
-                if (OrbitTarget == null && OrbitTargetProvider != null)
+                if (followingGrenade)
                 {
-                    OrbitTarget = OrbitTargetProvider();
-                    if (OrbitTarget != null)
+                    OrbitTarget = grenadePosition;
+                }
+                else
+                {
+                    var traceResult = PhysicsWorld?.TraceRay(Camera.Location, Camera.Location + Camera.Forward * 10000f);
+                    if (traceResult is { Hit: true, HitPosition: var hitPosition })
                     {
-                        // the target might not be in front of the camera, so we need to transition
-                        TransitionCamera();
+                        OrbitTarget = hitPosition;
+                    }
+
+                    if (OrbitTarget == null && OrbitTargetProvider != null)
+                    {
+                        OrbitTarget = OrbitTargetProvider();
+                        if (OrbitTarget != null)
+                        {
+                            // the target might not be in front of the camera, so we need to transition
+                            TransitionCamera();
+                        }
                     }
                 }
+            }
+            else if (followingGrenade && Viewmodel?.GrenadeInFlightPosition is { } flying)
+            {
+                // Ride it down. When it detonates there is no position to read any more, so the
+                // orbit simply stays on the last one - the spot it went off.
+                MoveOrbitTarget(flying);
             }
         }
 
