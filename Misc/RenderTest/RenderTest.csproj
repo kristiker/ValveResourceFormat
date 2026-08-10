@@ -1,8 +1,18 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Silk.NET's OpenAL bindings pass device and context handles as raw pointers -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The Silk.NET assemblies are not strong named. Only matters on .NET Framework, where a signed
+         assembly could not reference an unsigned one; .NET does not enforce it. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+  </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="OpenTK" Version="4.9.4" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.10" />
+    <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenAL.Extensions.EXT" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
     <ProjectReference Include="..\..\ValveResourceFormat\ValveResourceFormat.csproj" />
     <ProjectReference Include="..\..\Renderer\Renderer.csproj" />
   </ItemGroup>

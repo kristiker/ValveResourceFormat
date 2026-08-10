@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ValveKeyValue;
 using ValveResourceFormat.IO;
+using ValveResourceFormat.Renderer.SceneNodes;
 using ValveResourceFormat.Renderer.Utils;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
@@ -832,6 +833,117 @@ public sealed class SoundEventPlayer : IDisposable
             CacheScripted(soundscapeName);
             soundscapes.Add(new Soundscape(position, radius, soundscapeName, Scripted: true));
         }
+    }
+
+    /// <summary>
+    /// Registers the scene's soundscapes and starts its <c>point_soundevent</c> entities that have
+    /// "Start On Spawn" set. The rest require entity I/O, which the viewer does not simulate.
+    /// </summary>
+    /// <param name="scene">The loaded scene whose entities are scanned.</param>
+    public void StartMapSoundEvents(Scene scene)
+    {
+        ArgumentNullException.ThrowIfNull(scene);
+
+        // Collect named entities first, to resolve "Source Entity Name" emitters
+        var namedEntities = new Dictionary<string, SceneNode>(StringComparer.OrdinalIgnoreCase);
+        var pointSoundEvents = new List<EntityLump.Entity>();
+
+        foreach (var node in scene.AllNodes)
+        {
+            var entityData = node.EntityData;
+
+            if (entityData == null)
+            {
+                continue;
+            }
+
+            var targetname = entityData.GetStringProperty("targetname");
+
+            if (!string.IsNullOrEmpty(targetname))
+            {
+                namedEntities.TryAdd(targetname, node);
+            }
+
+            switch (entityData.GetStringProperty("classname"))
+            {
+                case "point_soundevent" or "snd_event_point":
+                    pointSoundEvents.Add(entityData);
+                    break;
+
+                case "env_soundscape" or "snd_soundscape":
+                    if (entityData.GetBooleanProperty("startdisabled"))
+                    {
+                        break;
+                    }
+
+                    if (entityData.GetBooleanProperty("enablesoundevent"))
+                    {
+                        AddSoundscape(
+                            entityData.GetVector3Property("origin"),
+                            entityData.GetFloatProperty("radius"),
+                            entityData.GetStringProperty("soundevent"));
+                    }
+                    else
+                    {
+                        // Classic script-based soundscape (see SoundscapeBank), e.g. "amb.park"
+                        AddScriptedSoundscape(
+                            entityData.GetVector3Property("origin"),
+                            entityData.GetFloatProperty("radius"),
+                            entityData.GetStringProperty("soundscape"));
+                    }
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        foreach (var entityData in pointSoundEvents)
+        {
+            var soundName = entityData.GetStringProperty("soundname");
+
+            if (string.IsNullOrEmpty(soundName) || !entityData.GetBooleanProperty("startonspawn"))
+            {
+                continue;
+            }
+
+            Play(soundName, GetSoundEventPosition(entityData, namedEntities));
+        }
+    }
+
+    /// <summary>
+    /// Resolves where a point_soundevent emits from: null for "To Local Player" events, otherwise the source entity's position.
+    /// </summary>
+    private static Vector3? GetSoundEventPosition(EntityLump.Entity entityData, Dictionary<string, SceneNode> namedEntities)
+    {
+        if (entityData.GetBooleanProperty("tolocalplayer"))
+        {
+            return null;
+        }
+
+        var sourceEntityName = entityData.GetStringProperty("sourceentityname");
+
+        if (string.IsNullOrEmpty(sourceEntityName) || !namedEntities.TryGetValue(sourceEntityName, out var sourceNode))
+        {
+            return entityData.GetVector3Property("origin");
+        }
+
+        var attachmentName = entityData.GetStringProperty("sourceentityattachment");
+
+        if (!string.IsNullOrEmpty(attachmentName)
+            && sourceNode is ModelSceneNode sourceModel
+            && sourceModel.Attachments.ContainsKey(attachmentName))
+        {
+            return sourceModel.GetAttachmentTransform(attachmentName).Translation;
+        }
+
+        if (entityData.GetBooleanProperty("uselocaloffset"))
+        {
+            // Entities do not move in the viewer, so the source entity plus local offset is just this entity's origin
+            return entityData.GetVector3Property("origin");
+        }
+
+        return sourceNode.Transform.Translation;
     }
 
     private void CacheScripted(string soundscapeName)
