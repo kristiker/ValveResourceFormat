@@ -196,9 +196,10 @@ public class UserInput
             if (!Holding(TrackedKeys.Alt))
             {
                 OrbitTarget = null;
-                followingGrenade = false;
 
-                if (Released(TrackedKeys.Alt))
+                // Following a grenade never moved the player, so there is nothing to put back.
+                // Reinitializing here would teleport them to wherever the camera ended up.
+                if (Released(TrackedKeys.Alt) && !followingGrenade)
                 {
                     PlayerMovement.Initialize = !NoClip;
 
@@ -208,20 +209,27 @@ public class UserInput
                         SettleCamera();
                     }
                 }
+
+                followingGrenade = false;
             }
             else if (Pressed(TrackedKeys.Alt))
             {
                 OrbitTarget = null;
 
-                // A grenade still in the air takes the orbit for itself. Only on the way there:
-                // once it has gone off there is nothing to chase and alt goes back to picking
-                // whatever the view is pointed at.
-                var grenadePosition = Viewmodel?.GrenadeInFlightPosition;
-                followingGrenade = grenadePosition.HasValue;
+                // A throw on its way takes the orbit for itself, whether or not the grenade is in
+                // the air yet - pressing alt during the throw's wind-up latches onto it and
+                // attaches when it appears. Once it has gone off there is nothing left to chase
+                // and alt goes back to picking whatever the view is pointed at.
+                followingGrenade = Viewmodel?.GrenadeThrowInProgress == true;
 
                 if (followingGrenade)
                 {
-                    OrbitTarget = grenadePosition;
+                    // Nothing to attach to until it leaves the hand, in which case LateUpdate
+                    // picks it up on first sight.
+                    if (Viewmodel!.GrenadeInFlightPosition is { } alreadyFlying)
+                    {
+                        AttachOrbitToGrenade(alreadyFlying);
+                    }
                 }
                 else
                 {
@@ -241,12 +249,6 @@ public class UserInput
                         }
                     }
                 }
-            }
-            else if (followingGrenade && Viewmodel?.GrenadeInFlightPosition is { } flying)
-            {
-                // Ride it down. When it detonates there is no position to read any more, so the
-                // orbit simply stays on the last one - the spot it went off.
-                MoveOrbitTarget(flying);
             }
         }
 
@@ -271,7 +273,11 @@ public class UserInput
 
         Camera.Roll = 0f;
 
-        if (OrbitMode)
+        if (followingGrenade && OrbitTarget is { } grenadeOrbitTarget)
+        {
+            HandleGrenadeOrbit(grenadeOrbitTarget);
+        }
+        else if (OrbitMode)
         {
             HandleOrbitControls(deltaTime, keyboardState, !NoClip);
         }
@@ -301,6 +307,13 @@ public class UserInput
 
         Viewmodel?.ProcessInput(this, Renderer.Uptime);
 
+        ApplyToRenderCamera(renderCamera);
+
+        PreviousKeys = keyboardState;
+    }
+
+    private void ApplyToRenderCamera(Camera renderCamera)
+    {
         var finalCamera = GetInterpolatedCamera();
 
         // The landing punch tilts the rendered view down without touching the stored aim.
@@ -310,8 +323,46 @@ public class UserInput
         renderCamera.ClampRotation();
 
         renderCamera.Roll = Camera.Roll;
+    }
 
-        PreviousKeys = keyboardState;
+    /// <summary>
+    /// Re-places a camera that is following a thrown grenade, after the scene has stepped it.
+    /// </summary>
+    /// <remarks>
+    /// The grenade advances during the scene update, which runs after <see cref="Tick"/> - so a
+    /// follow camera placed in the tick would trail the grenade's rendered position by a frame, and
+    /// because the flight steps on a fixed tick rather than per frame, by a varying amount. That
+    /// reads as the grenade jittering against the view chasing it. Call this once the scene has
+    /// updated and before drawing; it does nothing when no grenade is being followed.
+    /// </remarks>
+    /// <param name="renderCamera">The camera the frame is drawn with.</param>
+    public void LateUpdate(Camera renderCamera)
+    {
+        if (!followingGrenade)
+        {
+            return;
+        }
+
+        if (Viewmodel?.GrenadeInFlightPosition is { } flying)
+        {
+            if (OrbitTarget == null)
+            {
+                // First sight of a grenade alt latched onto before it was thrown.
+                AttachOrbitToGrenade(flying);
+            }
+            else
+            {
+                MoveOrbitTarget(flying);
+            }
+        }
+
+        // Once it detonates there is no position left to read, so the orbit holds the last one -
+        // the spot it went off.
+        if (OrbitTarget is { } target)
+        {
+            PlaceGrenadeOrbitCamera(target);
+            ApplyToRenderCamera(renderCamera);
+        }
     }
 
     private CameraLite CameraPositionAngles
@@ -377,6 +428,47 @@ public class UserInput
         var yaw = MathUtils.LerpAngle(StartingCamera.Yaw, Camera.Yaw, time);
 
         return new(location, pitch, yaw);
+    }
+
+    /// <summary>
+    /// Orbits a thrown grenade. Deliberately not <see cref="HandleOrbitControls"/>: that one clips the
+    /// camera against the world, which is wrong here twice over - the camera is meant to be able to
+    /// sit inside a smoke cloud, and a grenade resting against geometry leaves the clip trace starting
+    /// solid, where it never finds a position and the orbit never attaches. Nothing here touches the
+    /// player either, so letting go leaves them where they were standing.
+    /// </summary>
+    /// <param name="target">World position to orbit, held at the detonation point once it goes off.</param>
+    private void HandleGrenadeOrbit(Vector3 target)
+    {
+        Camera.Yaw -= MouseDeltaPitchYaw.Y;
+        Camera.Pitch -= MouseDeltaPitchYaw.X;
+        Camera.ClampRotation();
+
+        PlaceGrenadeOrbitCamera(target);
+
+        // The player is standing still watching; the grenade's speed is not theirs to bob with.
+        Velocity = Vector3.Zero;
+    }
+
+    private void PlaceGrenadeOrbitCamera(Vector3 target)
+    {
+        Camera.RecalculateDirectionVectors();
+        Camera.Location = target - Camera.Forward * OrbitDistance;
+    }
+
+    /// <summary>How far the camera sits from a grenade it latches onto, in world units.</summary>
+    private const float GrenadeOrbitDistance = 64f;
+
+    /// <summary>
+    /// Snaps the orbit onto a grenade, close up. Not through <see cref="OrbitTarget"/>, whose setter
+    /// would keep however far away the camera happened to be standing when it latched on - a grenade
+    /// already most of the way down the map would otherwise be orbited from where it was thrown.
+    /// The wheel still zooms from here.
+    /// </summary>
+    private void AttachOrbitToGrenade(Vector3 target)
+    {
+        MoveOrbitTarget(target);
+        OrbitDistance = GrenadeOrbitDistance;
     }
 
     private void HandleOrbitControls(float deltaTime, TrackedKeys keyboardState, bool walking)

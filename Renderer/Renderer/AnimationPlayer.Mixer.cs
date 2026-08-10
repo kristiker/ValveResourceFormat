@@ -66,6 +66,7 @@ namespace ValveResourceFormat.Renderer
         private PlaybackClip? activeClip;
         private PlaybackClip? previousClip;
         private readonly Dictionary<string, PlaybackClip> clips = [];
+        private const string WarpSuffix = ".warp";
         private readonly Frame BlendedFrame;
         private float currentBlendTime;
 
@@ -313,9 +314,23 @@ namespace ValveResourceFormat.Renderer
         /// <param name="animation">The animation to transition to.</param>
         /// <param name="blendTime">The blend time in seconds. 0 for instant transition, -1 for manual blending.</param>
         /// <param name="looping">Whether the clip should loop when reaching the end.</param>
-        private void TransitionToClip(Animation animation, float blendTime, bool looping)
+        /// <param name="allowWarp">Whether re-entering the animation already playing should cross
+        /// over into a second instance of it rather than restarting it in place.</param>
+        private void TransitionToClip(Animation animation, float blendTime, bool looping, bool allowWarp)
         {
             var animName = animation.Name;
+
+            // Warping a clip into itself takes two instances of it, so the second is filed under its
+            // own key and the ordinary two-clip transition below does the rest. Only when asked for:
+            // every other animation keeps one clip per name, which is what the by-name weight and
+            // property lookups elsewhere rely on. Both instances share one Animation, so the frame
+            // cache - keyed by frame index - stays coherent across the two.
+            if (allowWarp && blendTime > 0f && activeClip?.Animation == animation)
+            {
+                animName = clips.TryGetValue(animName, out var primary) && primary == activeClip
+                    ? animName + WarpSuffix
+                    : animName;
+            }
 
             // Check if clip already exists
             if (!clips.TryGetValue(animName, out var newClip))
@@ -338,7 +353,8 @@ namespace ValveResourceFormat.Renderer
             // Handle blending
             if (activeClip == newClip)
             {
-                // Re-setting the same animation should not create a self-blend transition.
+                // Re-setting the same animation should not blend it against itself; a caller that
+                // wants that asks for a warp, which lands on a second clip and never gets here.
                 previousClip = null;
 
                 foreach (var clip in clips.Values)

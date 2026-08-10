@@ -506,10 +506,15 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         }
 
         /// <summary>Activates the animation with the given name, or stops animation if not found.</summary>
-        public void SetAnimationByName(string animationName, float blendTime = 0f)
+        /// <param name="animationName">Name of the animation to activate.</param>
+        /// <param name="blendTime">Blend time in seconds; 0 is an instant cut.</param>
+        /// <param name="allowWarp">Whether re-activating the animation already playing should cross
+        /// over into a second instance of it rather than restarting it in place. Off by default:
+        /// only clips that can be retriggered mid-play (an inspect, say) want it.</param>
+        public void SetAnimationByName(string animationName, float blendTime = 0f, bool allowWarp = false)
         {
             Animations.TryGetValue(animationName, out var activeAnimation);
-            SetAnimation(activeAnimation, blendTime);
+            SetAnimation(activeAnimation, blendTime, allowWarp);
         }
 
         /// <summary>
@@ -540,9 +545,11 @@ namespace ValveResourceFormat.Renderer.SceneNodes
         /// <summary>Activates the given animation instance with a blend-in time, or clears the active animation when <see langword="null"/>.</summary>
         /// <param name="activeAnimation">The animation to activate, or <see langword="null"/> to clear.</param>
         /// <param name="blendTime">The time in seconds to blend from the current animation to the new one.</param>
-        public void SetAnimation(Animation? activeAnimation, float blendTime = 0f)
+        /// <param name="allowWarp">Whether re-activating the animation already playing should cross over
+        /// into a second instance of it rather than restarting it in place.</param>
+        public void SetAnimation(Animation? activeAnimation, float blendTime = 0f, bool allowWarp = false)
         {
-            AnimationController.SetAnimation(activeAnimation, blendTime);
+            AnimationController.SetAnimation(activeAnimation, blendTime, allowWarp);
             UpdateBoundingBox();
 
             if (activeAnimation != default)

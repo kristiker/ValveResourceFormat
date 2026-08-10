@@ -648,6 +648,10 @@ namespace GUI.Types.GLViewers
 
                 Renderer.Update(updateContext);
 
+                // A camera following something the scene just moved is placed here rather than in
+                // the input tick, which ran before that move.
+                Input.LateUpdate(Renderer.Camera);
+
                 SelectedNodeRenderer.Update(renderContext, updateContext);
             }
 

@@ -63,6 +63,7 @@ public class ViewmodelSceneNode : ModelSceneNode
             field = value;
 
             CancelGrenadeThrow();
+            deployTimeLeft = DeployDuration;
             SetState(AnimationState.Draw);
         }
     } = 3;
@@ -249,17 +250,17 @@ public class ViewmodelSceneNode : ModelSceneNode
                 {
                     AnimationState.Idle => anim.Idle,
                     AnimationState.Draw => anim.Draw,
-                    AnimationState.LookAt => anim.LookAt,
+                    AnimationState.LookAt => lookAtVariant == 1 ? anim.LookAt2 ?? anim.LookAt : anim.LookAt,
                     AnimationState.Attack => anim.Attack,
                     AnimationState.AlternateAttack => anim.AltAttack,
                     AnimationState.PullPin => anim.PullPin,
 
                     // The three throwcharge clips are the three throw strengths held ready, not
                     // three view pitches: low is the underhand lob, high the full overhand throw.
-                    AnimationState.ThrowCharge => throwStrength switch
+                    AnimationState.ThrowCharge => ChargeState switch
                     {
-                        >= 1f => anim.ChargeHigh,
-                        <= 0f => anim.ChargeLow,
+                        2 => anim.ChargeHigh,
+                        0 => anim.ChargeLow,
                         _ => anim.ChargeMid,
                     },
 
@@ -359,28 +360,39 @@ public class ViewmodelSceneNode : ModelSceneNode
     // the grenade leaves the hand a tenth of a second after every fire button comes back up, and
     // how hard it is thrown depends on which of them were held while the pin was out.
 
-    /// <summary>Launch speed cap, <c>m_flThrowVelocity</c> in weapons.vdata (750 for every grenade).</summary>
+    /// <summary><c>m_flThrowVelocity</c> in weapons.vdata (750 for every grenade).</summary>
     private const float GrenadeThrowVelocity = 750f;
 
     /// <summary>Delay between letting go and the grenade leaving the hand (CBaseCSGrenade::StartGrenadeThrow).</summary>
     private const float GrenadeThrowDelay = 0.1f;
 
-    /// <summary>The grenade is thrown from the hand rather than the eye, 16 units out along the throw.</summary>
-    private const float GrenadeThrowOffset = 16f;
+    /// <summary>What the throw velocity is scaled by before the strength dampening, and the range it
+    /// is held to. Note the launch speed does not depend on the view angle at all: the pitch term
+    /// CS:S used is gone, leaving a flat 675 u/s for a full throw.</summary>
+    private const float ThrowVelocityScale = 0.9f;
+    private const float MinThrowVelocity = 15f;
+    private const float MaxThrowVelocity = 750f;
 
-    /// <summary>
-    /// Fraction of the launch speed an underhand lob keeps. The remap CS:GO applies to
-    /// <c>m_flThrowStrength</c> is not in the public source, so this is the throw's feel, not its data.
-    /// Looking level launches at 600 u/s, so the lob leaves at 150 and - aimed
-    /// <see cref="UnderhandAimDrop"/> below the overhand line, from an eye 64 units up, under the
-    /// grenade's 320 u/s^2 - first lands about 80 units out. Halving this roughly halves that reach.
-    /// </summary>
-    private const float UnderhandThrowScale = 0.25f;
+    /// <summary>Fraction of the launch speed an underhand lob keeps (<c>GRENADE_SECONDARY_DAMPENING</c>).</summary>
+    private const float UnderhandThrowDampening = 0.3f;
 
-    /// <summary>Degrees an underhand lob is aimed below the line an overhand throw takes, scaled by
-    /// how far off full strength the throw is. The pitch remap below is left alone because it also
-    /// sets the launch speed: dropping the aim afterwards shortens the lob without touching that.</summary>
-    private const float UnderhandAimDrop = 20f;
+    /// <summary>How far below the eye an underhand throw leaves the hand (<c>GRENADE_SECONDARY_LOWER</c>).</summary>
+    private const float UnderhandThrowLower = 12f;
+
+    /// <summary>How fast the throw strength walks toward what the held buttons ask for, per second
+    /// (<c>GRENADE_SECONDARY_TRANSITION</c>).</summary>
+    private const float ThrowStrengthTransition = 1.3f;
+
+    /// <summary>Degrees of upward bias given to a level throw, tapering to none at the pitch extremes.</summary>
+    private const float ThrowPitchBias = 10f;
+
+    /// <summary>The throw is traced this far out and then pulled back <see cref="ThrowPullback"/>,
+    /// landing at 16 units in the open and clear of a thin wall when there is one.</summary>
+    private const float ThrowTraceDistance = 22f;
+    private const float ThrowPullback = 6f;
+
+    /// <summary>The thrower's own speed carries into the grenade, and then some.</summary>
+    private const float ThrownPlayerVelocityScale = 1.25f;
 
     /// <summary>Enough grenades to keep several smokes up at once without spawning nodes forever.</summary>
     private const int MaxProjectiles = 8;
@@ -396,13 +408,76 @@ public class ViewmodelSceneNode : ModelSceneNode
     private bool grenadeInHand = true;
     private float throwStrength = 1f;
     private float throwTimer;
+    private float deployTimeLeft;
+    private float frameTime;
+
+    /// <summary>
+    /// Whether the item in hand has finished coming up and can be used.
+    /// </summary>
+    /// <remarks>
+    /// The button state is read once a frame, so a press happened somewhere in the frame just gone
+    /// rather than at the instant it is seen. Waiting for the deploy to be strictly over therefore
+    /// runs late by however far into the frame it finished - up to a whole frame, half of one on
+    /// average, which at a low framerate is felt as the item being slow off the mark. Opening half a
+    /// frame early puts that error either side of zero instead of always behind it. A press carrying
+    /// its own timestamp within the frame, the way subtick input does, would not need the fudge.
+    /// </remarks>
+    private bool Deployed => deployTimeLeft <= frameTime * 0.5f;
 
     private void CancelGrenadeThrow()
     {
         pinPulled = false;
         throwTimer = 0f;
-        throwStrength = 1f;
+        throwStrength = 1f; // Deploy hands the grenade over ready for a full throw
         grenadeInHand = true;
+    }
+
+    /// <summary>Moves <paramref name="value"/> toward <paramref name="target"/> by at most
+    /// <paramref name="speed"/>, without overshooting it.</summary>
+    private static float Approach(float target, float value, float speed)
+    {
+        var delta = target - value;
+
+        return delta > speed ? value + speed
+            : delta < -speed ? value - speed
+            : target;
+    }
+
+    /// <summary>Which of the three charge poses the current throw strength holds.</summary>
+    private int ChargeState => throwStrength switch
+    {
+        > 0.75f => 2,
+        < 0.25f => 0,
+        _ => 1,
+    };
+
+    /// <summary>Which lookat clip is playing, where the item has more than one.</summary>
+    private int lookAtVariant;
+
+    /// <summary>
+    /// Whether the item can be inspected right now. An inspect already under way holds off a second
+    /// one until it is halfway through, so tapping the key does not leave the item stuck at the
+    /// opening frames of the animation.
+    /// </summary>
+    private bool CanInspect
+    {
+        get
+        {
+            if (pinPulled || throwTimer > 0f || !grenadeInHand)
+            {
+                return false;
+            }
+
+            if (State != AnimationState.LookAt)
+            {
+                return true;
+            }
+
+            var animation = AnimationController.ActiveAnimation;
+
+            return animation is not { Duration: > 0f }
+                || AnimationController.Time >= animation.Duration * 0.5f;
+        }
     }
 
     private void ProcessGrenadeInput(UserInput input, float dt)
@@ -420,41 +495,57 @@ public class ViewmodelSceneNode : ModelSceneNode
             return;
         }
 
+        // Held, not pressed: the game dispatches these off the button state every frame, so a
+        // button already down when the grenade finishes coming up pulls the pin there and then,
+        // without having to be released and pressed again.
+        var attack = input.Holding(TrackedKeys.MouseLeft);
+        var attack2 = input.Holding(TrackedKeys.MouseRight);
+
         if (!pinPulled)
         {
-            if (grenadeInHand && (input.Pressed(TrackedKeys.MouseLeft) || input.Pressed(TrackedKeys.MouseRight)))
+            // Nothing comes out until the grenade is all the way up.
+            if (grenadeInHand && Deployed && (attack || attack2))
             {
                 pinPulled = true;
-                throwStrength = 1f;
+
+                // Drawing the grenade left the strength at full, which is where a primary pull
+                // starts from. Secondary is dispatched ahead of primary, so holding both still
+                // drops it to nothing first and the ramp climbs back out of a lob.
+                if (attack2)
+                {
+                    throwStrength = 0f;
+                }
+
                 SetState(AnimationState.PullPin);
             }
 
             return;
         }
 
-        var attack = input.Holding(TrackedKeys.MouseLeft);
-        var attack2 = input.Holding(TrackedKeys.MouseRight);
-
         if (attack || attack2)
         {
-            // Primary alone throws overhand at full strength, secondary alone lobs it underhand,
-            // and holding both lands between the two.
-            var strength = (attack, attack2) switch
-            {
-                (true, true) => 0.5f,
-                (true, false) => 1f,
-                _ => 0f,
-            };
+            // Primary raises the strength, secondary lowers it, holding both sits between the two.
+            var idealStrength = 0.5f;
 
-            if (strength != throwStrength)
+            if (attack)
             {
-                throwStrength = strength;
+                idealStrength += 0.5f;
+            }
 
-                // Adding or dropping a button mid-charge switches which charge pose is held.
-                if (State == AnimationState.ThrowCharge)
-                {
-                    SetState(AnimationState.ThrowCharge);
-                }
+            if (attack2)
+            {
+                idealStrength -= 0.5f;
+            }
+
+            // It walks there rather than snapping, so tapping the other button mid-charge only
+            // bends the throw as far as the time it was held for.
+            var previousCharge = ChargeState;
+            throwStrength = Approach(idealStrength, throwStrength, dt * ThrowStrengthTransition);
+
+            // Only re-enter on a pose change; the strength itself moves every frame.
+            if (State == AnimationState.ThrowCharge && ChargeState != previousCharge)
+            {
+                SetState(AnimationState.ThrowCharge);
             }
 
             return;
@@ -462,7 +553,7 @@ public class ViewmodelSceneNode : ModelSceneNode
 
         pinPulled = false;
         throwTimer = GrenadeThrowDelay;
-        SetState(throwStrength > 0f ? AnimationState.Attack : AnimationState.AlternateAttack);
+        SetState(ChargeState == 0 ? AnimationState.AlternateAttack : AnimationState.Attack);
     }
 
     private void ThrowGrenade(UserInput input)
@@ -494,8 +585,17 @@ public class ViewmodelSceneNode : ModelSceneNode
     public Vector3? GrenadeInFlightPosition => lastThrown is { InFlight: true } grenade ? grenade.Position : null;
 
     /// <summary>
-    /// CBaseCSGrenade::ThrowGrenade, which does not throw the grenade along the view: it tilts the
-    /// throw ten degrees above it and squeezes the range either side, so looking level still lobs.
+    /// Whether a grenade is on its way or about to be: in the air, or thrown and still waiting out
+    /// the throw delay, or held with the pin out. Alt latches onto the throw from any of those, and
+    /// attaches to the grenade when it appears.
+    /// </summary>
+    public bool GrenadeThrowInProgress => GrenadeInFlightPosition.HasValue || throwTimer > 0f || pinPulled;
+
+    /// <summary>
+    /// CBaseCSGrenade::ThrowGrenade. The launch speed is the same whichever way you are looking -
+    /// only the throw strength changes it - and the aim is biased upward by
+    /// <see cref="ThrowPitchBias"/> degrees when level, tapering to nothing looking straight up or
+    /// down. A weak throw also leaves the hand lower.
     /// </summary>
     private static (Vector3 Origin, Vector3 Velocity) CalculateThrow(UserInput input, float throwStrength)
     {
@@ -503,38 +603,36 @@ public class ViewmodelSceneNode : ModelSceneNode
 
         // Source measures pitch downward from level; the camera measures it upward.
         var pitch = -float.RadiansToDegrees(camera.Pitch);
+        var throwPitch = pitch - ThrowPitchBias * (90f - MathF.Abs(pitch)) / 90f;
 
-        var throwPitch = pitch < 0f
-            ? -10f + pitch * ((90f - 10f) / 90f)
-            : -10f + pitch * ((90f + 10f) / 90f);
+        var speed = Math.Clamp(GrenadeThrowVelocity * ThrowVelocityScale, MinThrowVelocity, MaxThrowVelocity);
+        speed *= float.Lerp(UnderhandThrowDampening, 1f, throwStrength);
 
-        var speed = MathF.Min((90f - throwPitch) * 6f, GrenadeThrowVelocity);
-        speed *= float.Lerp(UnderhandThrowScale, 1f, throwStrength);
-
-        // Only now, after the speed is settled, is the lob aimed lower than the overhand line.
-        var aimPitch = throwPitch + UnderhandAimDrop * (1f - throwStrength);
-
-        var (pitchSin, pitchCos) = MathF.SinCos(float.DegreesToRadians(-aimPitch));
+        var (pitchSin, pitchCos) = MathF.SinCos(float.DegreesToRadians(-throwPitch));
         var (yawSin, yawCos) = MathF.SinCos(camera.Yaw);
         var forward = new Vector3(yawCos * pitchCos, yawSin * pitchCos, pitchSin);
 
-        var eye = input.PlayerMovement.EyePosition;
-        var origin = eye + forward * GrenadeThrowOffset;
+        var origin = input.PlayerMovement.EyePosition;
+        origin.Z += float.Lerp(-UnderhandThrowLower, 0f, throwStrength);
 
-        // Sweep the grenade's own hull out to the hand so a throw made with your back against a
-        // wall cannot put the grenade on the far side of it, or start it inside the wall - a
-        // projectile that begins overlapping geometry has no honest surface to bounce off.
+        // Traced past where the grenade is wanted and then pulled back, rather than traced to it:
+        // a throw made facing a thin wall then starts clear of the wall instead of hard against it,
+        // where it would be free to penetrate.
+        var reach = origin + forward * ThrowTraceDistance;
+
         if (input.PhysicsWorld is { } physics)
         {
-            var trace = GrenadeProjectileSceneNode.SweepHull(physics, eye, origin);
+            var trace = GrenadeProjectileSceneNode.SweepHull(physics, origin, reach);
 
             if (trace is { Hit: true, IsValid: true })
             {
-                origin = trace.HitPosition;
+                reach = trace.HitPosition;
             }
         }
 
-        return (origin, forward * speed + input.Velocity);
+        origin = reach - forward * ThrowPullback;
+
+        return (origin, forward * speed + input.Velocity * ThrownPlayerVelocityScale);
     }
 
     private GrenadeProjectileSceneNode? AcquireProjectile(GrenadeProjectileSceneNode.GrenadeKind kind)
@@ -599,6 +697,17 @@ public class ViewmodelSceneNode : ModelSceneNode
             _ => 250f,
         };
 
+    /// <summary>
+    /// Gets how long after this item is drawn before it can be used, <c>m_flDeployDuration</c> in
+    /// weapons.vdata. A second for everything here bar the rifle.
+    /// </summary>
+    public float DeployDuration
+        => SelectedItemIndex switch
+        {
+            1 => 1.133333f, // m4a1_silencer
+            _ => 1f,
+        };
+
     void SetState(AnimationState newState)
     {
         State = newState;
@@ -610,15 +719,20 @@ public class ViewmodelSceneNode : ModelSceneNode
             ? 0f
             : 0.35f;
 
+        // An inspect is the one state that can be re-entered while it is still playing, and an item
+        // with a single lookat clip re-enters the very clip it is on. Warping keeps that from
+        // snapping back to the first frame.
+        var allowWarp = newState == AnimationState.LookAt;
+
         AnimationController.IsPaused = false;
         AnimationController.Looping = looping;
         AnimationController.FrametimeMultiplier = timeScale;
-        SetAnimationByName(TargetAnimation, fadeIn);
+        SetAnimationByName(TargetAnimation, fadeIn, allowWarp);
 
         SelectedItem?.AnimationController.IsPaused = false;
         SelectedItem?.AnimationController.Looping = looping;
         SelectedItem?.AnimationController.FrametimeMultiplier = timeScale;
-        SelectedItem?.SetAnimationByName(TargetAnimation, fadeIn);
+        SelectedItem?.SetAnimationByName(TargetAnimation, fadeIn, allowWarp);
     }
 
     internal const string WorldLayerName = "Internal - First Person Model";
@@ -715,7 +829,7 @@ public class ViewmodelSceneNode : ModelSceneNode
     }
 
     record struct Anim(string Idle, string Draw, string LookAt, string Attack, string? AltAttack = null, string? Attack2 = null, string? AltAttack2 = null,
-        string? PullPin = null, string? ChargeLow = null, string? ChargeMid = null, string? ChargeHigh = null);
+        string? PullPin = null, string? ChargeLow = null, string? ChargeMid = null, string? ChargeHigh = null, string? LookAt2 = null);
 
     readonly Dictionary<int, Anim> ItemAnimations = new()
     {
@@ -750,7 +864,8 @@ public class ViewmodelSceneNode : ModelSceneNode
             PullPin: "grenade/grenade_smokegrenade/pullpin_smoke.vnmclip",
             ChargeLow: "grenade/grenade_smokegrenade/throwcharge_low_smoke.vnmclip",
             ChargeMid: "grenade/grenade_smokegrenade/throwcharge_mid_smoke.vnmclip",
-            ChargeHigh: "grenade/grenade_smokegrenade/throwcharge_high_smoke.vnmclip"
+            ChargeHigh: "grenade/grenade_smokegrenade/throwcharge_high_smoke.vnmclip",
+            LookAt2: "grenade/grenade_smokegrenade/lookat02_smoke.vnmclip"
         ),
         [ExplosiveItemIndex] = new Anim(
             "grenade/grenade_hegrenade/idle_hegrenade.vnmclip",
@@ -761,7 +876,8 @@ public class ViewmodelSceneNode : ModelSceneNode
             PullPin: "grenade/grenade_hegrenade/pullpin_hegrenade.vnmclip",
             ChargeLow: "grenade/grenade_hegrenade/throwcharge_low_hegrenade.vnmclip",
             ChargeMid: "grenade/grenade_hegrenade/throwcharge_mid_hegrenade.vnmclip",
-            ChargeHigh: "grenade/grenade_hegrenade/throwcharge_high_hegrenade.vnmclip"
+            ChargeHigh: "grenade/grenade_hegrenade/throwcharge_high_hegrenade.vnmclip",
+            LookAt2: "grenade/grenade_hegrenade/lookat02_hegrenade.vnmclip"
         ),
     };
 
@@ -772,7 +888,9 @@ public class ViewmodelSceneNode : ModelSceneNode
     /// </summary>
     private static readonly string[] UnreferencedClips = [
         "animation/anims/viewmodel/grenade/grenade_smokegrenade/lookat01_smoke.vnmclip",
+        "animation/anims/viewmodel/grenade/grenade_smokegrenade/lookat02_smoke.vnmclip",
         "animation/anims/viewmodel/grenade/grenade_hegrenade/lookat01_hegrenade.vnmclip",
+        "animation/anims/viewmodel/grenade/grenade_hegrenade/lookat02_hegrenade.vnmclip",
     ];
 
     // Called before the items are added, so each one picks up these clips' secondary (weapon bone)
@@ -1130,6 +1248,14 @@ public class ViewmodelSceneNode : ModelSceneNode
             legsController.SetAnimationWeight(BreathingClip, 1f);
         }
 
+        // Nothing is usable until it is all the way up, whichever item it is.
+        if (deployTimeLeft > 0f)
+        {
+            deployTimeLeft = MathF.Max(0f, deployTimeLeft - dt);
+        }
+
+        frameTime = dt;
+
         if (IsGrenadeSelected)
         {
             ProcessGrenadeInput(input, dt);
@@ -1138,9 +1264,9 @@ public class ViewmodelSceneNode : ModelSceneNode
         {
             var (fireDelay, altFireDelay) = GetWeaponFireDelays();
 
-            var requestedFire = SelectedItemIndex == 2
+            var requestedFire = Deployed && (SelectedItemIndex == 2
                 ? input.Pressed(TrackedKeys.MouseLeft)
-                : input.Holding(TrackedKeys.MouseLeft);
+                : input.Holding(TrackedKeys.MouseLeft));
 
             if (requestedFire && attackCooldown <= 0f)
             {
@@ -1152,7 +1278,7 @@ public class ViewmodelSceneNode : ModelSceneNode
                     muzzleFlashParticle.Restart();
                 }
             }
-            else if (input.Holding(TrackedKeys.MouseRight) && alternateAttackCooldown <= 0f)
+            else if (input.Holding(TrackedKeys.MouseRight) && alternateAttackCooldown <= 0f && Deployed)
             {
                 SetState(AnimationState.AlternateAttack);
 
@@ -1179,8 +1305,8 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
         else if (input.Pressed(TrackedKeys.Slot4))
         {
-            // Slot 4 holds both grenades; pressing it again cycles to the other one.
-            SelectedItemIndex = SelectedItemIndex == SmokeItemIndex ? ExplosiveItemIndex : SmokeItemIndex;
+            // Slot 4 holds both grenades: the HE comes up first, and pressing it again cycles.
+            SelectedItemIndex = SelectedItemIndex == ExplosiveItemIndex ? SmokeItemIndex : ExplosiveItemIndex;
         }
         else if (input.Pressed(TrackedKeys.Q))
         {
@@ -1188,8 +1314,15 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
 
         // Not while a pin is out: the grenade is on its way, not up for inspection.
-        if (input.Pressed(TrackedKeys.F) && !pinPulled && throwTimer <= 0f && grenadeInHand)
+        if (input.Pressed(TrackedKeys.F) && CanInspect)
         {
+            // Where there are two lookats, swap to the other one, so the blend crosses between two
+            // different animations rather than warping one into itself.
+            if (ItemAnimations.TryGetValue(SelectedItemIndex, out var itemAnim) && itemAnim.LookAt2 != null)
+            {
+                lookAtVariant ^= 1;
+            }
+
             SetState(AnimationState.LookAt);
         }
     }
@@ -1285,6 +1418,7 @@ public class ViewmodelSceneNode : ModelSceneNode
         // while the camera is off in noclip.
         foreach (var projectile in projectiles)
         {
+            projectile.Simulate(context.Timestep);
             projectile.Update(context);
         }
 
@@ -1325,8 +1459,10 @@ public class ViewmodelSceneNode : ModelSceneNode
                 }
                 else if (State is AnimationState.Attack or AnimationState.AlternateAttack && !grenadeInHand)
                 {
-                    // The thrown grenade is gone, so bring the next one out.
+                    // The thrown grenade is gone, so bring the next one out - and it is no readier
+                    // to be thrown than one just switched to.
                     grenadeInHand = true;
+                    deployTimeLeft = DeployDuration;
                     SetState(AnimationState.Draw);
                 }
                 else if (State is not AnimationState.Idle and not AnimationState.ThrowCharge)

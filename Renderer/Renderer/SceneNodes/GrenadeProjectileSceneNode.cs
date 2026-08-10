@@ -93,8 +93,10 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     /// <summary>Gets whether the grenade is still on its way - thrown, and not yet gone off.</summary>
     public bool InFlight => Live && !detonated;
 
-    /// <summary>Gets the grenade's world position. After it detonates this is where it went off.</summary>
-    public Vector3 Position => position;
+    /// <summary>Gets the grenade's world position as drawn - interpolated between simulation ticks,
+    /// so a camera reading it agrees with the model exactly. After it detonates this is where it
+    /// went off.</summary>
+    public Vector3 Position => renderPosition;
 
     private readonly ParticleSceneNode? detonationEffect;
     private readonly string bounceSound;
@@ -102,9 +104,12 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     private readonly float effectDuration;
 
     private Vector3 position;
+    private Vector3 previousTickPosition;
+    private Vector3 renderPosition;
     private Vector3 velocity;
     private Vector3 tumbleAxis = Vector3.UnitY;
     private Quaternion orientation = Quaternion.Identity;
+    private float spinAngle;
     private bool onGround;
 
     private float fuse;
@@ -155,6 +160,9 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     public void Launch(Vector3 origin, Vector3 velocity)
     {
         position = origin;
+        previousTickPosition = origin;
+        renderPosition = origin;
+        spinAngle = 0f;
         this.velocity = velocity;
         onGround = false;
         detonated = false;
@@ -174,10 +182,21 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     }
 
     /// <summary>
-    /// Advances the flight, the fuse and the detonation effect. Called by the viewmodel that threw
-    /// this grenade rather than by the scene, because the projectile is parented to it.
+    /// The camera-dependent half of the frame; <see cref="Simulate"/> does the flight.
     /// </summary>
     public override void Update(Scene.UpdateContext context)
+    {
+        if (Live && LayerEnabled)
+        {
+            base.Update(context);
+        }
+    }
+
+    /// <summary>
+    /// Advances the flight, the fuse and the detonation effect.
+    /// </summary>
+    /// <param name="timestep">Elapsed time in seconds since the last frame.</param>
+    public void Simulate(float timestep)
     {
         if (!Live)
         {
@@ -186,45 +205,38 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
 
         if (detonated)
         {
-            effectTimeLeft -= context.Timestep;
+            effectTimeLeft -= timestep;
 
-            if (effectTimeLeft > 0f)
+            if (effectTimeLeft <= 0f)
             {
-                if (LayerEnabled)
+                Live = false;
+                LayerEnabled = false;
+
+                if (detonationEffect != null)
                 {
-                    // The canister is still lying there, so it still needs its LOD picked.
-                    base.Update(context);
+                    detonationEffect.LayerEnabled = false;
                 }
-
-                return;
-            }
-
-            Live = false;
-            LayerEnabled = false;
-
-            if (detonationEffect != null)
-            {
-                detonationEffect.LayerEnabled = false;
             }
 
             return;
         }
 
-        flightTime += context.Timestep;
+        flightTime += timestep;
 
         // Catch up on whole ticks only; the remainder carries into the next frame, so the
         // simulation advances at a steady rate whatever the framerate does.
-        tickAccumulator += context.Timestep;
+        tickAccumulator += timestep;
 
         var ticks = 0;
-        var moving = false;
 
         while (tickAccumulator >= TickInterval && ticks < MaxTicksPerFrame)
         {
             tickAccumulator -= TickInterval;
             ticks++;
 
-            moving |= !onGround || velocity != Vector3.Zero;
+            // Where the grenade was at the start of this tick, so the frames in between can be
+            // drawn along the way rather than waiting on the next one.
+            previousTickPosition = position;
 
             PhysicsToss();
 
@@ -249,16 +261,21 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
             return;
         }
 
-        if (moving)
-        {
-            orientation = Quaternion.Normalize(
-                Quaternion.CreateFromAxisAngle(tumbleAxis, float.DegreesToRadians(TumbleRate * TickInterval * ticks)) * orientation);
+        // Drawn between the two most recent tick positions rather than snapped to the newer one.
+        // The flight steps at a fixed rate and the frames do not line up with it, so without this
+        // the grenade lurches once every couple of frames - and a camera following it drags the
+        // whole world along with the lurch.
+        renderPosition = Vector3.Lerp(previousTickPosition, position, MathUtils.Saturate(tickAccumulator / TickInterval));
 
-            ApplyTransform();
+        // The tumble is decoration, so it runs off frame time and stays smooth on its own.
+        if (!onGround || velocity != Vector3.Zero)
+        {
+            spinAngle += float.DegreesToRadians(TumbleRate * timestep);
         }
 
-        // Always, even on a frame with no whole tick in it: the model's LOD is picked here.
-        base.Update(context);
+        orientation = Quaternion.CreateFromAxisAngle(tumbleAxis, spinAngle);
+
+        ApplyTransform();
     }
 
     // A smoke grenade's fuse only arms it: CSmokeGrenadeProjectile::Think_Detonate holds off while
@@ -278,7 +295,7 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     {
         var previousBounds = BoundingBox;
 
-        Transform = Matrix4x4.CreateFromQuaternion(orientation) * Matrix4x4.CreateTranslation(position);
+        Transform = Matrix4x4.CreateFromQuaternion(orientation) * Matrix4x4.CreateTranslation(renderPosition);
 
         if (LayerEnabled && !previousBounds.Equals(BoundingBox))
         {
