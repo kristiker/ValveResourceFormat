@@ -46,8 +46,23 @@ public class UserInput
     private Vector3? _orbitTarget;
     private bool _forceUpdate = true;
 
-    // Set when alt was pressed on a grenade that was in the air, and cleared when alt comes up.
-    private bool followingGrenade;
+    // Latched when alt goes down on something worth following, cleared when alt comes up.
+    private bool following;
+
+    /// <summary>
+    /// Something in the world worth orbiting in place of the point under the crosshair, reported by
+    /// an <see cref="OrbitFollowProvider"/>.
+    /// </summary>
+    /// <param name="Wanted">Whether the orbit should follow it. Reported before it has a position of
+    /// its own, so the camera can latch onto something that is about to exist and take it up when it
+    /// appears.</param>
+    /// <param name="Position">Where it is, or <see langword="null"/> while it does not exist. A
+    /// followed target that stops reporting one holds the orbit on the last position it gave.</param>
+    public readonly record struct OrbitFollow(bool Wanted, Vector3? Position)
+    {
+        /// <summary>Nothing to follow; the orbit falls back to the point under the crosshair.</summary>
+        public static readonly OrbitFollow None;
+    }
 
     // Orbit controls
     /// <summary>Gets a value indicating whether the camera is currently in orbit mode.</summary>
@@ -56,6 +71,12 @@ public class UserInput
     public bool OrbitModeAlways { get; set; }
     /// <summary>Gets or sets an optional callback that provides a world-space orbit target point.</summary>
     public Func<Vector3?>? OrbitTargetProvider { get; set; }
+
+    /// <summary>
+    /// Gets or sets a callback asked, while the orbit key is held, whether something should be
+    /// followed in place of the point under the crosshair, and where it is.
+    /// </summary>
+    public Func<OrbitFollow>? OrbitFollowProvider { get; set; }
 
     /// <summary>Gets or sets the world-space point the camera orbits around; setting this also updates <see cref="OrbitDistance"/>.</summary>
     public Vector3? OrbitTarget
@@ -197,9 +218,11 @@ public class UserInput
             {
                 OrbitTarget = null;
 
-                // Following a grenade never moved the player, so there is nothing to put back.
-                // Reinitializing here would teleport them to wherever the camera ended up.
-                if (Released(TrackedKeys.Alt) && !followingGrenade)
+                // Following never moved the player, so there is nothing to put back; reinitializing
+                // would teleport them to wherever the camera ended up.
+                // Following never moved the player, so there is nothing to put back; reinitializing
+                // would teleport them to wherever the camera ended up.
+                if (Released(TrackedKeys.Alt) && !following)
                 {
                     PlayerMovement.Initialize = !NoClip;
 
@@ -210,25 +233,21 @@ public class UserInput
                     }
                 }
 
-                followingGrenade = false;
+                following = false;
             }
             else if (Pressed(TrackedKeys.Alt))
             {
                 OrbitTarget = null;
 
-                // A throw on its way takes the orbit for itself, whether or not the grenade is in
-                // the air yet - pressing alt during the throw's wind-up latches onto it and
-                // attaches when it appears. Once it has gone off there is nothing left to chase
-                // and alt goes back to picking whatever the view is pointed at.
-                followingGrenade = Viewmodel?.GrenadeThrowInProgress == true;
+                var follow = OrbitFollowProvider?.Invoke() ?? OrbitFollow.None;
+                following = follow.Wanted;
 
-                if (followingGrenade)
+                if (following)
                 {
-                    // Nothing to attach to until it leaves the hand, in which case LateUpdate
-                    // picks it up on first sight.
-                    if (Viewmodel!.GrenadeInFlightPosition is { } alreadyFlying)
+                    // A target that has no position yet is taken up by LateUpdate on first sight.
+                    if (follow.Position is { } position)
                     {
-                        AttachOrbitToGrenade(alreadyFlying);
+                        AttachFollowOrbit(position);
                     }
                 }
                 else
@@ -273,9 +292,9 @@ public class UserInput
 
         Camera.Roll = 0f;
 
-        if (followingGrenade && OrbitTarget is { } grenadeOrbitTarget)
+        if (following && OrbitTarget is { } followTarget)
         {
-            HandleGrenadeOrbit(grenadeOrbitTarget);
+            HandleFollowOrbit(followTarget);
         }
         else if (OrbitMode)
         {
@@ -326,41 +345,38 @@ public class UserInput
     }
 
     /// <summary>
-    /// Re-places a camera that is following a thrown grenade, after the scene has stepped it.
+    /// Re-places a camera that is following a moving target, after the scene has stepped it.
     /// </summary>
     /// <remarks>
-    /// The grenade advances during the scene update, which runs after <see cref="Tick"/> - so a
-    /// follow camera placed in the tick would trail the grenade's rendered position by a frame, and
-    /// because the flight steps on a fixed tick rather than per frame, by a varying amount. That
-    /// reads as the grenade jittering against the view chasing it. Call this once the scene has
-    /// updated and before drawing; it does nothing when no grenade is being followed.
+    /// A followed target moves during the scene update, which runs after <see cref="Tick"/> - so a
+    /// camera placed in the tick would trail its drawn position by a frame. Call this once the scene
+    /// has updated and before drawing; it does nothing when nothing is being followed.
     /// </remarks>
     /// <param name="renderCamera">The camera the frame is drawn with.</param>
     public void LateUpdate(Camera renderCamera)
     {
-        if (!followingGrenade)
+        if (!following)
         {
             return;
         }
 
-        if (Viewmodel?.GrenadeInFlightPosition is { } flying)
+        if (OrbitFollowProvider?.Invoke().Position is { } position)
         {
             if (OrbitTarget == null)
             {
-                // First sight of a grenade alt latched onto before it was thrown.
-                AttachOrbitToGrenade(flying);
+                // First sight of a target latched onto before it existed.
+                AttachFollowOrbit(position);
             }
             else
             {
-                MoveOrbitTarget(flying);
+                MoveOrbitTarget(position);
             }
         }
 
-        // Once it detonates there is no position left to read, so the orbit holds the last one -
-        // the spot it went off.
+        // A target that stops reporting a position leaves the orbit on the last one it gave.
         if (OrbitTarget is { } target)
         {
-            PlaceGrenadeOrbitCamera(target);
+            PlaceFollowOrbitCamera(target);
             ApplyToRenderCamera(renderCamera);
         }
     }
@@ -431,44 +447,44 @@ public class UserInput
     }
 
     /// <summary>
-    /// Orbits a thrown grenade. Deliberately not <see cref="HandleOrbitControls"/>: that one clips the
-    /// camera against the world, which is wrong here twice over - the camera is meant to be able to
-    /// sit inside a smoke cloud, and a grenade resting against geometry leaves the clip trace starting
-    /// solid, where it never finds a position and the orbit never attaches. Nothing here touches the
-    /// player either, so letting go leaves them where they were standing.
+    /// Orbits a followed target. Deliberately not <see cref="HandleOrbitControls"/>: that one clips
+    /// the camera against the world, which is wrong for something the camera may need to sit inside,
+    /// and a target resting against geometry leaves the clip trace starting solid, where it never
+    /// finds a position and the orbit never attaches. Nothing here touches the player either, so
+    /// letting go leaves them where they were standing.
     /// </summary>
-    /// <param name="target">World position to orbit, held at the detonation point once it goes off.</param>
-    private void HandleGrenadeOrbit(Vector3 target)
+    /// <param name="target">World position to orbit.</param>
+    private void HandleFollowOrbit(Vector3 target)
     {
         Camera.Yaw -= MouseDeltaPitchYaw.Y;
         Camera.Pitch -= MouseDeltaPitchYaw.X;
         Camera.ClampRotation();
 
-        PlaceGrenadeOrbitCamera(target);
+        PlaceFollowOrbitCamera(target);
 
-        // The player is standing still watching; the grenade's speed is not theirs to bob with.
+        // The player is standing still watching; what they are watching does not move them.
         Velocity = Vector3.Zero;
     }
 
-    private void PlaceGrenadeOrbitCamera(Vector3 target)
+    private void PlaceFollowOrbitCamera(Vector3 target)
     {
         Camera.RecalculateDirectionVectors();
         Camera.Location = target - Camera.Forward * OrbitDistance;
     }
 
-    /// <summary>How far the camera sits from a grenade it latches onto, in world units.</summary>
-    private const float GrenadeOrbitDistance = 64f;
+    /// <summary>How far the camera sits from a target it latches onto, in world units.</summary>
+    private const float FollowOrbitDistance = 64f;
 
     /// <summary>
-    /// Snaps the orbit onto a grenade, close up. Not through <see cref="OrbitTarget"/>, whose setter
-    /// would keep however far away the camera happened to be standing when it latched on - a grenade
-    /// already most of the way down the map would otherwise be orbited from where it was thrown.
-    /// The wheel still zooms from here.
+    /// Snaps the orbit onto a target, close up. Not through <see cref="OrbitTarget"/>, whose setter
+    /// would keep however far away the camera happened to be standing when it latched on - something
+    /// already most of the way down the map would otherwise be orbited from across it. The wheel
+    /// still zooms from here.
     /// </summary>
-    private void AttachOrbitToGrenade(Vector3 target)
+    private void AttachFollowOrbit(Vector3 target)
     {
         MoveOrbitTarget(target);
-        OrbitDistance = GrenadeOrbitDistance;
+        OrbitDistance = FollowOrbitDistance;
     }
 
     private void HandleOrbitControls(float deltaTime, TrackedKeys keyboardState, bool walking)
@@ -704,6 +720,13 @@ public class UserInput
     public bool TryLoadViewmodel(Scene scene)
     {
         Viewmodel = ViewmodelSceneNode.TryLoadCs2Viewmodel(scene);
-        return Viewmodel != null;
+
+        if (Viewmodel == null)
+        {
+            return false;
+        }
+
+        OrbitFollowProvider = Viewmodel.GetOrbitFollow;
+        return true;
     }
 }

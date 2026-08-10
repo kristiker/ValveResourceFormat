@@ -578,18 +578,24 @@ public class ViewmodelSceneNode : ModelSceneNode
     }
 
     /// <summary>
-    /// Gets the world position of the grenade last thrown while it is still on its way, or
-    /// <see langword="null"/> once it has gone off (or if none has been thrown). Lets the camera
-    /// chase a grenade in the air, and stop chasing when there is no longer one to chase.
+    /// World position of the grenade last thrown while it is still on its way, or <see langword="null"/>
+    /// once it has gone off, or if none has been thrown.
     /// </summary>
-    public Vector3? GrenadeInFlightPosition => lastThrown is { InFlight: true } grenade ? grenade.Position : null;
+    private Vector3? GrenadeInFlightPosition => lastThrown is { InFlight: true } grenade ? grenade.Position : null;
+
+    /// <summary>
+    /// Offers a grenade on its way as something for the camera to orbit, so a throw can be watched
+    /// down. It is offered from the moment the throw starts rather than from the moment the grenade
+    /// exists, so latching on during the wind-up catches the throw from the hand; and it stops being
+    /// offered once the grenade goes off, leaving the camera on the spot where it did.
+    /// </summary>
+    public UserInput.OrbitFollow GetOrbitFollow() => new(GrenadeThrowInProgress, GrenadeInFlightPosition);
 
     /// <summary>
     /// Whether a grenade is on its way or about to be: in the air, or thrown and still waiting out
-    /// the throw delay, or held with the pin out. Alt latches onto the throw from any of those, and
-    /// attaches to the grenade when it appears.
+    /// the throw delay, or held with the pin out.
     /// </summary>
-    public bool GrenadeThrowInProgress => GrenadeInFlightPosition.HasValue || throwTimer > 0f || pinPulled;
+    private bool GrenadeThrowInProgress => GrenadeInFlightPosition.HasValue || throwTimer > 0f || pinPulled;
 
     /// <summary>
     /// CBaseCSGrenade::ThrowGrenade. The launch speed is the same whichever way you are looking -
