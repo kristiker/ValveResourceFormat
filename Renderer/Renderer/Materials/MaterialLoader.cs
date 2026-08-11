@@ -323,6 +323,20 @@ namespace ValveResourceFormat.Renderer.Materials
 
             var tex = new RenderTexture(target, data);
             var format = GetTextureFormat(data.Format);
+
+            // Block compressed formats that TEXTURE_3D can not hold get decompressed on the cpu and uploaded as RGBA8.
+            var decompressVolume = target == TextureTarget.Texture3D && data.RequiresVolumeDecompression;
+
+            if (decompressVolume)
+            {
+                format = new TextureFormatMapping(
+                    SizedInternalFormat.Rgba8,
+                    PixelFormat.Rgba,
+                    PixelType.UnsignedByte,
+                    format.InternalSrgbFormat is not null ? SizedInternalFormat.Srgb8Alpha8 : null
+                );
+            }
+
             var sizedInternalFormat = srgbRead && format.InternalSrgbFormat is not null ? format.InternalSrgbFormat.Value : format.InternalFormat;
 
 #if DEBUG
@@ -368,12 +382,22 @@ namespace ValveResourceFormat.Renderer.Materials
             }
 
             var buffer = ArrayPool<byte>.Shared.Rent(data.GetBiggestBufferSize());
+            var decodedBuffer = decompressVolume
+                ? ArrayPool<byte>.Shared.Rent(Texture.CalculateRgba8VolumeSize(texWidth, texHeight, texDepth))
+                : null;
 
             try
             {
                 foreach (var (level, width, height, depth, bufferSize) in data.GetEveryMipLevelTexture(buffer, minMipLevelAllowed))
                 {
                     var realLevel = (int)level - minMipLevelAllowed;
+                    var uploadBuffer = buffer;
+
+                    if (decodedBuffer != null)
+                    {
+                        data.DecodeVolumeToRgba8(buffer.AsSpan(0, bufferSize), decodedBuffer, width, height, depth);
+                        uploadBuffer = decodedBuffer;
+                    }
 
                     if (format.PixelType is not null)
                     {
@@ -381,22 +405,22 @@ namespace ValveResourceFormat.Renderer.Materials
 
                         if (is3d)
                         {
-                            GL.TextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, format.PixelFormat.Value, format.PixelType.Value, buffer);
+                            GL.TextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, format.PixelFormat.Value, format.PixelType.Value, uploadBuffer);
                         }
                         else
                         {
-                            GL.TextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, format.PixelFormat.Value, format.PixelType.Value, buffer);
+                            GL.TextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, format.PixelFormat.Value, format.PixelType.Value, uploadBuffer);
                         }
                     }
                     else
                     {
                         if (is3d)
                         {
-                            GL.CompressedTextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, (PixelFormat)sizedInternalFormat, bufferSize, buffer);
+                            GL.CompressedTextureSubImage3D(tex.Handle, realLevel, 0, 0, 0, width, height, depth, (PixelFormat)sizedInternalFormat, bufferSize, uploadBuffer);
                         }
                         else
                         {
-                            GL.CompressedTextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, (PixelFormat)sizedInternalFormat, bufferSize, buffer);
+                            GL.CompressedTextureSubImage2D(tex.Handle, realLevel, 0, 0, width, height, (PixelFormat)sizedInternalFormat, bufferSize, uploadBuffer);
                         }
                     }
                 }
@@ -404,6 +428,11 @@ namespace ValveResourceFormat.Renderer.Materials
             finally
             {
                 ArrayPool<byte>.Shared.Return(buffer);
+
+                if (decodedBuffer != null)
+                {
+                    ArrayPool<byte>.Shared.Return(decodedBuffer);
+                }
             }
 
             if (!isViewerRequest)

@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using K4os.Compression.LZ4;
 using SkiaSharp;
+using TinyBCSharp;
 using ValveResourceFormat.TextureDecoders;
 
 namespace ValveResourceFormat.ResourceTypes
@@ -694,6 +695,61 @@ namespace ValveResourceFormat.ResourceTypes
             {
                 ArrayPool<byte>.Shared.Return(buf);
                 skiaBitmap?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Whether this texture has to be decompressed on the cpu before it can be used as a hardware 3D texture.
+        /// Of the block compressed formats only BPTC is specified to work with 3D textures, as a stack of
+        /// independently compressed 2D slices. S3TC and RGTC are two-dimensional only: NVIDIA accepts them through
+        /// NV_texture_compression_vtc, which reuses the very same format enums but expects 4x4x4 VTC tiling, so the
+        /// slices get read back scrambled, and other drivers reject the upload outright.
+        /// </summary>
+        public bool RequiresVolumeDecompression => GetVolumeBlockFormat() is not null;
+
+        private BlockFormat? GetVolumeBlockFormat() => Format switch
+        {
+            VTexFormat.DXT1 => BlockFormat.BC1NoAlpha,
+            VTexFormat.DXT5 => BlockFormat.BC3,
+            VTexFormat.ATI1N => BlockFormat.BC4U,
+            VTexFormat.ATI2N => BlockFormat.BC5U,
+            _ => null,
+        };
+
+        /// <summary>
+        /// Size in bytes of the volume produced by <see cref="DecodeVolumeToRgba8"/>.
+        /// </summary>
+        /// <param name="width">Width of the mip level.</param>
+        /// <param name="height">Height of the mip level.</param>
+        /// <param name="depth">Depth of the mip level.</param>
+        public static int CalculateRgba8VolumeSize(int width, int height, int depth) => width * height * depth * 4;
+
+        /// <summary>
+        /// Decompress every slice of one block compressed mip level into a tightly packed RGBA8 volume.
+        /// Only valid when <see cref="RequiresVolumeDecompression"/> is true.
+        /// </summary>
+        /// <param name="source">Compressed mip level, as returned by <see cref="GetEveryMipLevelTexture"/>.</param>
+        /// <param name="destination">Buffer of at least <see cref="CalculateRgba8VolumeSize"/> bytes.</param>
+        /// <param name="width">Width of the mip level.</param>
+        /// <param name="height">Height of the mip level.</param>
+        /// <param name="depth">Depth of the mip level.</param>
+        public void DecodeVolumeToRgba8(ReadOnlySpan<byte> source, Span<byte> destination, int width, int height, int depth)
+        {
+            var blockFormat = GetVolumeBlockFormat()
+                ?? throw new NotSupportedException($"Texture format {Format} can not be decompressed to a RGBA8 volume.");
+
+            var decoder = BlockDecoder.Create(blockFormat);
+            var sourceSliceSize = BlockDecoder.SourceSize(width, height, blockFormat);
+            var destinationSliceSize = width * height * 4;
+
+            for (var slice = 0; slice < depth; slice++)
+            {
+                decoder.Decode(
+                    source.Slice(slice * sourceSliceSize, sourceSliceSize),
+                    width,
+                    height,
+                    destination.Slice(slice * destinationSliceSize, destinationSliceSize)
+                );
             }
         }
 
