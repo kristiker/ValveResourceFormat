@@ -58,33 +58,49 @@ record struct ParticleDefinitionParser(KVObject Data, ILogger Logger, int[] Inpu
         return [.. Data.GetArray(k).Select(item => new ParticleDefinitionParser(item, logger, ordinal))];
     }
 
-    private readonly float Float(string k)
+    private readonly float? ReadFloat(string k)
     {
         // Newer content authors many scalar fields as full float-input structures; the call site
-        // must read those with NumberProvider instead of as a literal.
-        if (Data.GetSubCollection(k) is { IsCollection: true })
+        // must read those with NumberProvider instead of as a literal. Where one has not been
+        // updated yet, take whatever literal the structure carries and otherwise leave the caller's
+        // default standing - reading it as a scalar throws, and one stale call site is no reason to
+        // fail the whole effect.
+        if (Data.GetSubCollection(k) is { IsCollection: true } numberProvider)
         {
             Logger.LogWarning("Field {Key} is authored as a number provider, but is parsed as a literal float; it should be read with NumberProvider", k);
+
+            return numberProvider.ContainsKey("m_flLiteralValue")
+                ? numberProvider.GetFloatProperty("m_flLiteralValue")
+                : null;
         }
 
         return Data.GetFloatProperty(k);
     }
 
-    /// <summary>Reads a float property, returning <paramref name="default"/> if the key is absent.</summary>
-    public readonly float Float(string key, float @default = default) => GetValueOrDefault(key, Float, @default);
+    /// <summary>Reads a float property, returning <paramref name="default"/> if the key is absent, or
+    /// holds a number provider carrying no literal.</summary>
+    public readonly float Float(string key, float @default = default)
+        => Data.ContainsKey(key) ? ReadFloat(key) ?? @default : @default;
 
-    private readonly int Int32(string k)
+    private readonly int? ReadInt32(string k)
     {
-        if (Data.GetSubCollection(k) is { IsCollection: true })
+        // See Float: the same fields turn up authored as structures, and the same fallback applies.
+        if (Data.GetSubCollection(k) is { IsCollection: true } numberProvider)
         {
             Logger.LogWarning("Field {Key} is authored as a number provider, but is parsed as a literal int; it should be read with NumberProvider", k);
+
+            return numberProvider.ContainsKey("m_flLiteralValue")
+                ? (int)numberProvider.GetFloatProperty("m_flLiteralValue")
+                : null;
         }
 
         return Data.GetInt32Property(k);
     }
 
-    /// <summary>Reads an int property, returning <paramref name="default"/> if the key is absent.</summary>
-    public readonly int Int32(string key, int @default = default) => GetValueOrDefault(key, Int32, @default);
+    /// <summary>Reads an int property, returning <paramref name="default"/> if the key is absent, or
+    /// holds a number provider carrying no literal.</summary>
+    public readonly int Int32(string key, int @default = default)
+        => Data.ContainsKey(key) ? ReadInt32(key) ?? @default : @default;
 
     private readonly long Long(string k) => Data.GetIntegerProperty(k);
     /// <summary>Reads a long property, returning <paramref name="default"/> if the key is absent.</summary>

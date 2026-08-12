@@ -17,6 +17,9 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
 
         /// <summary>A high explosive grenade: detonates when its fuse runs out, wherever it is.</summary>
         Explosive,
+
+        /// <summary>A molotov: has no fuse, and breaks on the first surface flat enough to burn on.</summary>
+        Fire,
     }
 
     /// <summary>Layer shared by every projectile and detonation effect. The "Internal - " prefix keeps
@@ -68,6 +71,18 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     /// A smoke cloud is spent after about 17 seconds; the canister lies there venting until then.</summary>
     private const float SmokeEffectDuration = 17f;
     private const float ExplosionEffectDuration = 6f;
+    private const float FireEffectDuration = 7f;
+
+    /// <summary>A molotov breaks on any surface no steeper than this, and rolls off steeper ones
+    /// without lighting (<c>weapon_molotov_maxdetonateslope</c>).</summary>
+    private const float FireMaxDetonateSlopeDegrees = 30f;
+
+    /// <summary>Below this speed a molotov counts as lying still (CMolotovProjectile::DetonateThink).</summary>
+    private const float FireStillSpeed = 5f;
+
+    /// <summary>How long it may lie still before breaking anyway (<c>StillDetonateTime</c>), which is
+    /// what lights one that came to rest without ever landing on a surface flat enough.</summary>
+    private const float FireStillDetonateTime = 0.5f;
 
     /// <summary>A grenade that never settles (thrown out of the world, say) gives up after this long.</summary>
     private const float MaxFlightTime = 20f;
@@ -81,6 +96,8 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
         "BaseSmokeEffect.Sound",
         "HEGrenade.Bounce",
         "BaseGrenade.Explode",
+        "Molotov.Bounce",
+        "Molotov.Start",
     ];
 
     /// <summary>Gets the kind of grenade this projectile is.</summary>
@@ -113,6 +130,8 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
     private bool onGround;
 
     private float fuse;
+    private float stillTime;
+    private bool shattered;
     private float flightTime;
     private bool detonated;
     private float effectTimeLeft;
@@ -136,6 +155,7 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
         (bounceSound, detonateSound, effectDuration) = kind switch
         {
             GrenadeKind.Smoke => ("SmokeGrenade.Bounce", "BaseSmokeEffect.Sound", SmokeEffectDuration),
+            GrenadeKind.Fire => ("Molotov.Bounce", "Molotov.Start", FireEffectDuration),
             _ => ("HEGrenade.Bounce", "BaseGrenade.Explode", ExplosionEffectDuration),
         };
 
@@ -168,6 +188,8 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
         detonated = false;
         Live = true;
         fuse = GrenadeTimer;
+        stillTime = 0f;
+        shattered = false;
         flightTime = 0f;
         effectTimeLeft = 0f;
         tickAccumulator = 0f;
@@ -242,6 +264,8 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
 
             fuse -= TickInterval;
 
+            stillTime = velocity.Length() > FireStillSpeed ? 0f : stillTime + TickInterval;
+
             if (ShouldDetonate())
             {
                 Detonate();
@@ -280,9 +304,16 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
 
     // A smoke grenade's fuse only arms it: CSmokeGrenadeProjectile::Think_Detonate holds off while
     // the grenade is still moving, which is why a smoke rolled down a corridor pops where it came
-    // to rest. An HE grenade goes off wherever it happens to be when its fuse runs out.
+    // to rest. An HE grenade goes off wherever it happens to be when its fuse runs out. A molotov
+    // has no fuse at all - it breaks on the first surface flat enough to spread over, or once it
+    // has lain still long enough that it is not going to find one.
     private bool ShouldDetonate()
     {
+        if (Kind == GrenadeKind.Fire)
+        {
+            return shattered || stillTime > FireStillDetonateTime;
+        }
+
         if (fuse > 0f)
         {
             return false;
@@ -427,6 +458,14 @@ public sealed class GrenadeProjectileSceneNode : ModelSceneNode
         if (trace.HitNormal.LengthSquared() < 0.5f)
         {
             return; // degenerate triangle: nothing sensible to reflect off
+        }
+
+        // A molotov is a bottle: it breaks against anything it can burn on, and only bounces off
+        // what is too steep to hold a fire.
+        if (Kind == GrenadeKind.Fire
+            && trace.HitNormal.Z >= MathF.Cos(float.DegreesToRadians(FireMaxDetonateSlopeDegrees)))
+        {
+            shattered = true;
         }
 
         var impactSpeed = MathF.Abs(Vector3.Dot(velocity, trace.HitNormal));

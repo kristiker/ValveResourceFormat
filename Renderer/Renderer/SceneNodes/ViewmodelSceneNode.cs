@@ -38,13 +38,16 @@ public class ViewmodelSceneNode : ModelSceneNode
 
     private int PreviousSelectedIndex;
 
-    /// <summary>Item index of the smoke grenade. Slot 4 cycles between this and <see cref="ExplosiveItemIndex"/>.</summary>
+    /// <summary>Item index of the smoke grenade.</summary>
     private const int SmokeItemIndex = 4;
 
-    /// <summary>Item index of the high explosive grenade.</summary>
+    /// <summary>Item index of the high explosive grenade, first up on slot 4.</summary>
     private const int ExplosiveItemIndex = 5;
 
-    private bool IsGrenadeSelected => SelectedItemIndex is SmokeItemIndex or ExplosiveItemIndex;
+    /// <summary>Item index of the molotov, last in slot 4's cycle.</summary>
+    private const int FireItemIndex = 6;
+
+    private bool IsGrenadeSelected => SelectedItemIndex is SmokeItemIndex or ExplosiveItemIndex or FireItemIndex;
 
     /// <summary>
     /// The selected item slot.
@@ -399,10 +402,9 @@ public class ViewmodelSceneNode : ModelSceneNode
 
     private readonly List<GrenadeProjectileSceneNode> projectiles = [];
     private GrenadeProjectileSceneNode? lastThrown;
-    private Model? smokeModel;
-    private Model? explosiveModel;
-    private ParticleSystem? smokeEffect;
-    private ParticleSystem? explosionEffect;
+
+    /// <summary>What each kind of grenade is thrown as, and what its detonation spawns.</summary>
+    private readonly Dictionary<GrenadeProjectileSceneNode.GrenadeKind, (Model Model, ParticleSystem? Effect)> grenadeResources = [];
 
     private bool pinPulled;
     private bool grenadeInHand = true;
@@ -560,9 +562,12 @@ public class ViewmodelSceneNode : ModelSceneNode
     {
         grenadeInHand = false;
 
-        var kind = SelectedItemIndex == SmokeItemIndex
-            ? GrenadeProjectileSceneNode.GrenadeKind.Smoke
-            : GrenadeProjectileSceneNode.GrenadeKind.Explosive;
+        var kind = SelectedItemIndex switch
+        {
+            SmokeItemIndex => GrenadeProjectileSceneNode.GrenadeKind.Smoke,
+            FireItemIndex => GrenadeProjectileSceneNode.GrenadeKind.Fire,
+            _ => GrenadeProjectileSceneNode.GrenadeKind.Explosive,
+        };
 
         var projectile = AcquireProjectile(kind);
 
@@ -651,9 +656,7 @@ public class ViewmodelSceneNode : ModelSceneNode
             }
         }
 
-        var model = kind == GrenadeProjectileSceneNode.GrenadeKind.Smoke ? smokeModel : explosiveModel;
-
-        if (model == null)
+        if (!grenadeResources.TryGetValue(kind, out var resources))
         {
             return null;
         }
@@ -665,8 +668,7 @@ public class ViewmodelSceneNode : ModelSceneNode
             return projectiles.Find(projectile => projectile.Kind == kind);
         }
 
-        var effect = kind == GrenadeProjectileSceneNode.GrenadeKind.Smoke ? smokeEffect : explosionEffect;
-        var node = new GrenadeProjectileSceneNode(Scene, model, kind, effect)
+        var node = new GrenadeProjectileSceneNode(Scene, resources.Model, kind, resources.Effect)
         {
             // Parented so the scene leaves it alone: this node drives it, the way it drives the
             // held items, and the scene cannot have nodes coming and going mid-update.
@@ -700,6 +702,7 @@ public class ViewmodelSceneNode : ModelSceneNode
             3 => 250f, // knife
             SmokeItemIndex => 245f,     // weapon_smokegrenade
             ExplosiveItemIndex => 245f, // weapon_hegrenade
+            FireItemIndex => 245f,      // weapon_molotov
             _ => 250f,
         };
 
@@ -885,6 +888,18 @@ public class ViewmodelSceneNode : ModelSceneNode
             ChargeHigh: "grenade/grenade_hegrenade/throwcharge_high_hegrenade.vnmclip",
             LookAt2: "grenade/grenade_hegrenade/lookat02_hegrenade.vnmclip"
         ),
+        [FireItemIndex] = new Anim(
+            "grenade/grenade_molotov/idle_molotov.vnmclip",
+            "grenade/grenade_molotov/draw_molotov.vnmclip",
+            "grenade/grenade_molotov/lookat01_molotov.vnmclip",
+            "grenade/grenade_molotov/throw_overhand_molotov.vnmclip",
+            "grenade/grenade_molotov/throw_underhand_molotov.vnmclip",
+            PullPin: "grenade/grenade_molotov/pullpin_molotov.vnmclip",
+            ChargeLow: "grenade/grenade_molotov/throwcharge_low_molotov.vnmclip",
+            ChargeMid: "grenade/grenade_molotov/throwcharge_mid_molotov.vnmclip",
+            ChargeHigh: "grenade/grenade_molotov/throwcharge_high_molotov.vnmclip",
+            LookAt2: "grenade/grenade_molotov/lookat02_molotov.vnmclip"
+        ),
     };
 
     /// <summary>
@@ -897,6 +912,8 @@ public class ViewmodelSceneNode : ModelSceneNode
         "animation/anims/viewmodel/grenade/grenade_smokegrenade/lookat02_smoke.vnmclip",
         "animation/anims/viewmodel/grenade/grenade_hegrenade/lookat01_hegrenade.vnmclip",
         "animation/anims/viewmodel/grenade/grenade_hegrenade/lookat02_hegrenade.vnmclip",
+        "animation/anims/viewmodel/grenade/grenade_molotov/lookat01_molotov.vnmclip",
+        "animation/anims/viewmodel/grenade/grenade_molotov/lookat02_molotov.vnmclip",
     ];
 
     // Called before the items are added, so each one picks up these clips' secondary (weapon bone)
@@ -951,6 +968,7 @@ public class ViewmodelSceneNode : ModelSceneNode
             "weapons/models/knife/knife_karambit/weapon_knife_karambit.vmdl",
             "weapons/models/grenade/smokegrenade/weapon_smokegrenade.vmdl",
             "weapons/models/grenade/hegrenade/weapon_hegrenade.vmdl",
+            "weapons/models/grenade/molotov/weapon_molotov.vmdl",
         ];
 
         List<Model> models = [];
@@ -982,16 +1000,20 @@ public class ViewmodelSceneNode : ModelSceneNode
         scene.Add(stattrakModule, true);
         primary.AttachNode(stattrakModule, "stattrak");
 
-        // The grenade world models and their detonation effects. Both projectiles are built now
-        // rather than on the first throw, so standing up a particle renderer does not stall the
+        // The grenade world models and their detonation effects. One projectile of each is built
+        // now rather than on the first throw, so standing up a particle renderer does not stall the
         // frame the grenade leaves the hand on.
-        viewmodel.smokeModel = models[5];
-        viewmodel.explosiveModel = models[6];
-        viewmodel.smokeEffect = loader.LoadFileCompiled("particles/explosions_fx/explosion_smokegrenade.vpcf")?.DataBlock as ParticleSystem;
-        viewmodel.explosionEffect = loader.LoadFileCompiled("particles/explosions_fx/explosion_hegrenade.vpcf")?.DataBlock as ParticleSystem;
+        Span<(GrenadeProjectileSceneNode.GrenadeKind Kind, Model Model, string Effect)> grenades = [
+            (GrenadeProjectileSceneNode.GrenadeKind.Smoke, models[5], "particles/explosions_fx/explosion_smokegrenade.vpcf"),
+            (GrenadeProjectileSceneNode.GrenadeKind.Explosive, models[6], "particles/explosions_fx/explosion_hegrenade.vpcf"),
+            (GrenadeProjectileSceneNode.GrenadeKind.Fire, models[7], "particles/inferno_fx/molotov_explosion.vpcf"),
+        ];
 
-        viewmodel.AcquireProjectile(GrenadeProjectileSceneNode.GrenadeKind.Smoke);
-        viewmodel.AcquireProjectile(GrenadeProjectileSceneNode.GrenadeKind.Explosive);
+        foreach (var (kind, model, effect) in grenades)
+        {
+            viewmodel.grenadeResources[kind] = (model, loader.LoadFileCompiled(effect)?.DataBlock as ParticleSystem);
+            viewmodel.AcquireProjectile(kind);
+        }
 
         viewmodel.SelectedItemIndex = 2;
         viewmodel.SelectedItemIndex = 3;
@@ -1311,8 +1333,13 @@ public class ViewmodelSceneNode : ModelSceneNode
         }
         else if (input.Pressed(TrackedKeys.Slot4))
         {
-            // Slot 4 holds both grenades: the HE comes up first, and pressing it again cycles.
-            SelectedItemIndex = SelectedItemIndex == ExplosiveItemIndex ? SmokeItemIndex : ExplosiveItemIndex;
+            // Slot 4 holds the grenades: the HE comes up first, then the smoke, then the molotov.
+            SelectedItemIndex = SelectedItemIndex switch
+            {
+                ExplosiveItemIndex => SmokeItemIndex,
+                SmokeItemIndex => FireItemIndex,
+                _ => ExplosiveItemIndex,
+            };
         }
         else if (input.Pressed(TrackedKeys.Q))
         {
