@@ -457,7 +457,7 @@ public class UserInput
     private void HandleFollowOrbit(Vector3 target)
     {
         Camera.Yaw -= MouseDeltaPitchYaw.Y;
-        Camera.Pitch -= MouseDeltaPitchYaw.X;
+        Camera.Pitch += MouseDeltaPitchYaw.X;
         Camera.ClampRotation();
 
         PlaceFollowOrbitCamera(target);

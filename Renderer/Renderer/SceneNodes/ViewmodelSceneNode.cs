@@ -612,16 +612,18 @@ public class ViewmodelSceneNode : ModelSceneNode
     {
         var camera = input.Camera;
 
-        // Source measures pitch downward from level; the camera measures it upward.
-        var pitch = -float.RadiansToDegrees(camera.Pitch);
+        // Both measure pitch downward from level, so this needs no conversion: +90 is straight down.
+        var pitch = float.RadiansToDegrees(camera.Pitch);
         var throwPitch = pitch - ThrowPitchBias * (90f - MathF.Abs(pitch)) / 90f;
 
         var speed = Math.Clamp(GrenadeThrowVelocity * ThrowVelocityScale, MinThrowVelocity, MaxThrowVelocity);
         speed *= float.Lerp(UnderhandThrowDampening, 1f, throwStrength);
 
-        var (pitchSin, pitchCos) = MathF.SinCos(float.DegreesToRadians(-throwPitch));
+        // Built exactly as Camera.RecalculateDirectionVectors builds its own forward, at the pitch
+        // the throw leaves on rather than the one being looked along.
+        var (pitchSin, pitchCos) = MathF.SinCos(float.DegreesToRadians(throwPitch));
         var (yawSin, yawCos) = MathF.SinCos(camera.Yaw);
-        var forward = new Vector3(yawCos * pitchCos, yawSin * pitchCos, pitchSin);
+        var forward = new Vector3(yawCos * pitchCos, yawSin * pitchCos, -pitchSin);
 
         var origin = input.PlayerMovement.EyePosition;
         origin.Z += float.Lerp(-UnderhandThrowLower, 0f, throwStrength);
