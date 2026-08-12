@@ -444,7 +444,12 @@ public static partial class ShaderSpirvReflection
 
         if (vertexLayout is not null && dynamicComboIndex >= 0 && dynamicComboIndex < staticComboData.VsInputSignatureIndices.Length)
         {
-            vsInputSignature = program.VsInputSignatures[staticComboData.VsInputSignatureIndices[dynamicComboIndex]].Elements;
+            var inputSignatureIndex = staticComboData.VsInputSignatureIndices[dynamicComboIndex];
+
+            if (inputSignatureIndex >= 0 && inputSignatureIndex < program.VsInputSignatures.Length)
+            {
+                vsInputSignature = program.VsInputSignatures[inputSignatureIndex].Elements;
+            }
         }
 
         // Fallback (set, binding) for the synthesized _Globals_ uniform buffer when VCS has no matching Cbuffer variable:
