@@ -516,7 +516,8 @@ public static partial class ShaderSpirvReflection
             : null;
 
         if (vertexLayout is not null && renderState != null
-            && staticComboData.GetVsInputSignatureIndex(renderState.DynamicComboId) is >= 0 and var vsInputSignatureIndex)
+            && staticComboData.GetVsInputSignatureIndex(renderState.DynamicComboId) is >= 0 and var vsInputSignatureIndex
+            && vsInputSignatureIndex < program.VsInputSignatures.Length)
         {
             vsInputSignature = program.VsInputSignatures[vsInputSignatureIndex].Elements;
         }
