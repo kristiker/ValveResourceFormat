@@ -274,7 +274,9 @@ void main()
     }
     else if (g_iRenderMode == renderMode_Cubemaps)
     {
-        outputColor.rgb = GetEnvironment(mat).rgb;
+        // No bumpmaps, full reflectivity
+        vec3 viewmodeEnvMap = GetEnvironment(mat).rgb;
+        outputColor.rgb = SrgbLinearToGamma(viewmodeEnvMap);
     }
     else if (g_iRenderMode == renderMode_Tint)
     {
