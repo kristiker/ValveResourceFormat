@@ -14,6 +14,9 @@ public class SceneEnvMap : SceneNode
     /// </summary>
     public const float BoundsExtend = 0.02f;
 
+    /// <summary>Edge fade given to probes that author none, so older scenes still blend across a boundary.</summary>
+    public const float DefaultEdgeFadeDist = 8f;
+
     /// <summary>Gets the handshake value used to match this env map to scene nodes during precomputation.</summary>
     public int HandShake { get; init; }
 

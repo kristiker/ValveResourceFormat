@@ -51,6 +51,9 @@ vec4 g_vEnvMapNormalizationSH = vec4(0.0);
 uniform samplerCubeArray g_tEnvironmentMap; // SrgbRead(true) reserved
 flat in uvec4 g_nEnvMapVisibility;
 
+// The single probe bound to this object, for scenes with no edge fade to blend across.
+flat in uint g_nEnvMapIndex;
+
 vec3 CubemapParallaxCorrection(vec3 envMapLocalPos, vec3 localReflectionVector, vec3 envMapBoxMin, vec3 envMapBoxMax)
 {
     // https://seblagarde.wordpress.com/2012/09/29/image-based-lighting-approaches-and-parallax-corrected-cubemap/
@@ -259,8 +262,16 @@ vec3 GetEnvironmentNoBRDF(MaterialProperties_t mat, float reflectionCorrectionAm
 
             float weight = 1.0f;
 
-            const bool bUseCubemapBlending = S_LIGHTMAP_VERSION_MINOR >= 2;
-            if (bUseCubemapBlending && isBoxProjection)
+            // Newer scenes author a fade and only box projected probes carry one. Older scenes author
+            // none, so the loader hands them a default and every probe fades on it, since those scenes
+            // are mostly sphere projected and would otherwise never blend at all.
+        #if (S_LIGHTMAP_VERSION_MINOR >= 2)
+            bool bFadeThisProbe = isBoxProjection;
+        #else
+            bool bFadeThisProbe = true;
+        #endif
+
+            if (bFadeThisProbe)
             {
                 vec3 envInvEdgeWidth = envData.InvEdgeWidth.xyz;
                 vec3 envmapClampedFadeMax = clamp((envMapBoxMax - envMapLocalPos) * envInvEdgeWidth, vec3(0.0), vec3(1.0));
@@ -289,6 +300,27 @@ vec3 GetEnvironmentNoBRDF(MaterialProperties_t mat, float reflectionCorrectionAm
             }
         }
     }
+
+#if (S_LIGHTMAP_VERSION_MINOR < 2)
+    // The default fade leaves a fragment near a boundary, or outside every box, short of a full weight.
+    // Fill the rest from the probe the compiler bound to this object, sampled whole with no fade of its
+    // own, so these scenes never reflect a partial or black sample.
+    if (flTotalWeight < 0.99)
+    {
+        EnvMapData envData = envMaps[g_nEnvMapIndex];
+        bool isBoxProjection = envData.ProjectionType == 1u;
+        mat4x3 envMapWorldToLocal = mat4x3(envData.WorldToLocal);
+        vec3 envMapLocalPos = envMapWorldToLocal * vec4(vFragPosition, 1.0);
+
+        float weight = 1.0 - flTotalWeight;
+        flTotalWeight += weight;
+
+        vec3 coords = GetCorrectedSampleCoords(R, envMapWorldToLocal, envMapLocalPos, isBoxProjection, envData.BoxMins, envData.BoxMaxs);
+
+        envMap += DecodeEnvMapSample(textureLod(g_tEnvironmentMap, vec4(coords, envData.ArrayIndex), lod)) * envData.Color * weight;
+        normalizationSH += envData.NormalizationSH * weight;
+    }
+#endif
 
     g_vEnvMapNormalizationSH = normalizationSH / max(flTotalWeight, 1e-4);
 

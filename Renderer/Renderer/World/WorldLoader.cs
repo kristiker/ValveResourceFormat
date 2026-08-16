@@ -898,7 +898,7 @@ namespace ValveResourceFormat.Renderer.World
                         if (envMapTexture != null)
                         {
                             var arrayIndex = entity.GetInt32Property("array_index");
-                            var edgeFadeDists = entity.GetVector3Property("edge_fade_dists"); // TODO: Not available on all entities
+                            var edgeFadeDists = entity.GetVector3Property("edge_fade_dists", new Vector3(SceneEnvMap.DefaultEdgeFadeDist));
                             var isCustomTexture = entity.GetStringProperty("customcubemaptexture") != null;
 
                             var envMap = new SceneEnvMap(scene, bounds)

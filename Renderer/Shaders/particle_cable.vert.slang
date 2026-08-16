@@ -19,6 +19,7 @@ in vec4 vCOLOR;
 #endif
 
 flat out uvec4 g_nEnvMapVisibility;
+flat out uint g_nEnvMapIndex;
 
 out vec3 vFragPosition;
 out vec3 vNormalOut;
@@ -45,6 +46,7 @@ void main(void)
 #endif
 
     g_nEnvMapVisibility = uvec4(0u);
+    g_nEnvMapIndex = 0u;
 
     gl_Position = g_matWorldToProjection * vec4(vPOSITION, 1.0);
 }
