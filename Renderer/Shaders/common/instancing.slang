@@ -1,4 +1,4 @@
-#version 460
+﻿#version 460
 
 #ifndef VRF_INSTANCING_INCLUDE
 #define VRF_INSTANCING_INCLUDE
@@ -7,11 +7,7 @@ uniform mat3x4 transform;
 uniform uint vTint;
 uniform bool bIsInstancing = false;
 
-#if (S_SCENE_CUBEMAP_TYPE == 1)
-    flat out uint g_nEnvMapIndex;
-#elif (S_SCENE_CUBEMAP_TYPE == 2)
-    flat out uvec4 g_nEnvMapVisibility;
-#endif
+flat out uvec4 g_nEnvMapVisibility;
 
 #if (D_BAKED_LIGHTING_FROM_PROBE > 0)
     flat out uint g_nVisibleLPV;
@@ -78,11 +74,7 @@ mat3x4 ConcatTransforms(mat3x4 first, mat3x4 second)
 
 void SetObjectInterpolators(ObjectDataStandard objectData)
 {
-    #if (S_SCENE_CUBEMAP_TYPE == 1)
-        g_nEnvMapIndex = objectData.VisibleLPV >> 16u;
-    #elif (S_SCENE_CUBEMAP_TYPE == 2)
-        g_nEnvMapVisibility = objectData.EnvMapVisibility;
-    #endif
+    g_nEnvMapVisibility = objectData.EnvMapVisibility;
 
     #if (D_BAKED_LIGHTING_FROM_PROBE > 0)
         g_nVisibleLPV = objectData.VisibleLPV & 0xFFFFu;

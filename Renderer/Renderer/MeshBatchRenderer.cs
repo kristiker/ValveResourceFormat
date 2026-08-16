@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using OpenTK.Graphics.OpenGL;
 using ValveResourceFormat.Renderer.Buffers;
@@ -121,7 +121,6 @@ namespace ValveResourceFormat.Renderer
         private ref struct Uniforms
         {
             public int AnimationData = -1;
-            public int EnvmapTexture = -1;
             public int Transform = -1;
             public int IsInstancing = -1;
             public int Tint = -1;
@@ -135,7 +134,6 @@ namespace ValveResourceFormat.Renderer
 
         private ref struct Config
         {
-            public bool NeedsCubemapBinding;
             public int LightmapGameVersionNumber;
             public bool IndirectDraw;
         }
@@ -154,7 +152,6 @@ namespace ValveResourceFormat.Renderer
             Uniforms uniforms = new();
             Config config = new()
             {
-                NeedsCubemapBinding = context.Scene.LightingInfo.CubemapType == CubemapType.IndividualCubemaps,
                 LightmapGameVersionNumber = context.Scene.LightingInfo.LightmapGameVersionNumber,
                 IndirectDraw = context.Scene.DrawMeshletsIndirect && context.RenderPass < RenderPass.Opaque,
             };
@@ -214,11 +211,6 @@ namespace ValveResourceFormat.Renderer
                             IsInstancing = shader.GetUniformLocation("bIsInstancing"),
                             Tint = shader.GetUniformLocation("vTint"),
                         };
-
-                        if (shader.Parameters.ContainsKey("S_SCENE_CUBEMAP_TYPE"))
-                        {
-                            uniforms.EnvmapTexture = shader.GetUniformLocation("g_tEnvironmentMap");
-                        }
 
                         if (shader.Parameters.ContainsKey("F_MORPH_SUPPORTED"))
                         {
@@ -329,12 +321,6 @@ namespace ValveResourceFormat.Renderer
                     GL.MultiDrawElementsIndirect(request.Call.PrimitiveType, request.Call.IndexType, agg.IndirectDrawByteOffset, agg.IndirectDrawCount, 0);
                     return;
                 }
-            }
-
-            if (config.NeedsCubemapBinding && uniforms.EnvmapTexture != -1 && request.Node.EnvMaps.Count > 0)
-            {
-                var envmap = request.Node.EnvMaps[0];
-                BindInstanceTexture(ReservedTextureSlots.EnvironmentMap, envmap.EnvMapTexture);
             }
 
             if (uniforms.MorphVertexIdOffset != -1)

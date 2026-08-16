@@ -1884,23 +1884,24 @@ namespace ValveResourceFormat.Renderer
         /// </summary>
         public void CalculateEnvironmentMaps()
         {
-            if (LightingInfo.EnvMaps.Count == 0)
+            LightingInfo.BuildEnvMapArrayIfRequired();
+
+            var array = LightingInfo.EnvMapArrayTexture;
+
+            if (array == null)
             {
                 return;
             }
 
-            var firstTexture = LightingInfo.EnvMaps.First().EnvMapTexture;
-
-            LightingInfo.LightingData.EnvMapSizeConstants = new Vector4(firstTexture.NumMipLevels - 1, firstTexture.Depth, 0, 0);
+            LightingInfo.LightingData.EnvMapSizeConstants = new Vector4(array.NumMipLevels - 1, array.Depth, 0, 0);
 
             int IndoorPriorityCompare(SceneEnvMap a, SceneEnvMap b) => b.IndoorOutdoorLevel.CompareTo(a.IndoorOutdoorLevel);
             int HandShakeCompare(SceneEnvMap a, SceneEnvMap b) => a.HandShake.CompareTo(b.HandShake);
 
-            LightingInfo.EnvMaps.Sort(LightingInfo.CubemapType switch
-            {
-                CubemapType.CubemapArray => IndoorPriorityCompare,
-                _ => HandShakeCompare
-            });
+            // SteamVR Home indexes this list by handshake, so it has to stay in that order.
+            LightingInfo.EnvMaps.Sort(LightingInfo.LightmapGameVersionNumber == 0
+                ? HandShakeCompare
+                : IndoorPriorityCompare);
 
             var nodes = new List<SceneNode>();
             var i = 0;
@@ -1941,7 +1942,7 @@ namespace ValveResourceFormat.Renderer
                 }
                 else if (precomputedHandshake > 0)
                 {
-                    if (LightingInfo.CubemapType == CubemapType.IndividualCubemaps
+                    if (LightingInfo.LightmapGameVersionNumber == 0
                         && precomputedHandshake <= LightingInfo.EnvMaps.Count)
                     {
                         // SteamVR Home node handshake as envmap index
@@ -2039,11 +2040,8 @@ namespace ValveResourceFormat.Renderer
                         anyIndex > 0 ? $" (however it's still binned at a higher iterate index {anyIndex})" : string.Empty);
                 }
 #endif
-                if (LightingInfo.CubemapType == CubemapType.CubemapArray)
-                {
-                    node.EnvMaps.Clear(); // no longer needed
-                    node.EnvMaps.TrimExcess();
-                }
+                node.EnvMaps.Clear(); // no longer needed
+                node.EnvMaps.TrimExcess();
             }
         }
 

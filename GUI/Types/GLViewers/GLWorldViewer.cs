@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -179,7 +179,7 @@ namespace GUI.Types.GLViewers
             {
                 base.LoadDefaultLighting();
 
-                Scene.LightingInfo.CubemapType = CubemapType.None; // default envmap actually looks bad
+                Scene.LightingInfo.RemoveEnvironmentMaps(); // default envmap actually looks bad
                 Scene.LightingInfo.UseSceneBoundsForSunLightFrustum = false;
                 Scene.LightingInfo.SunLightShadowCoverageScale = 2f;
 

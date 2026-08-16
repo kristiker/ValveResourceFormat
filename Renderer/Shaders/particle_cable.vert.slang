@@ -1,4 +1,4 @@
-#version 460
+﻿#version 460
 
 #include "common/utils.slang"
 #include "common/ViewConstants.slang"
@@ -18,11 +18,7 @@ in vec4 vCOLOR;
     out vec3 vPerVertexLightingOut;
 #endif
 
-#if (S_SCENE_CUBEMAP_TYPE == 1)
-    flat out uint g_nEnvMapIndex;
-#elif (S_SCENE_CUBEMAP_TYPE == 2)
-    flat out uvec4 g_nEnvMapVisibility;
-#endif
+flat out uvec4 g_nEnvMapVisibility;
 
 out vec3 vFragPosition;
 out vec3 vNormalOut;
@@ -48,11 +44,7 @@ void main(void)
     vPerVertexLightingOut = vec3(0.0);
 #endif
 
-#if (S_SCENE_CUBEMAP_TYPE == 1)
-    g_nEnvMapIndex = 0u;
-#elif (S_SCENE_CUBEMAP_TYPE == 2)
-    g_nEnvMapVisibility = uvec4(0u); // no envmap fetch?
-#endif
+    g_nEnvMapVisibility = uvec4(0u);
 
     gl_Position = g_matWorldToProjection * vec4(vPOSITION, 1.0);
 }

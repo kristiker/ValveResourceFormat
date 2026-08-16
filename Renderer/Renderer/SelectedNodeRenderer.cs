@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Linq;
 using ValveResourceFormat.Renderer.SceneEnvironment;
 using ValveResourceFormat.Renderer.SceneNodes;
@@ -212,19 +212,14 @@ namespace ValveResourceFormat.Renderer
 
                 if (debugCubeMaps)
                 {
-                    IEnumerable<SceneEnvMap> tiedEnvmaps = node.EnvMaps;
-                    if (renderContext.Scene.LightingInfo.CubemapType == CubemapType.CubemapArray)
+                    var tiedEnvmaps = new List<SceneEnvMap>();
+                    foreach (var shaderId in node.ShaderEnvMapVisibility.GetVisibleShaderIndices())
                     {
-                        var list = new List<SceneEnvMap>();
-                        foreach (var shaderId in node.ShaderEnvMapVisibility.GetVisibleShaderIndices())
+                        var env = renderContext.Scene.LightingInfo.EnvMaps.FirstOrDefault(e => e.ShaderIndex == shaderId);
+                        if (env is SceneEnvMap sem)
                         {
-                            var env = renderContext.Scene.LightingInfo.EnvMaps.FirstOrDefault(e => e.ShaderIndex == shaderId);
-                            if (env is SceneEnvMap sem)
-                            {
-                                list.Add(sem);
-                            }
+                            tiedEnvmaps.Add(sem);
                         }
-                        tiedEnvmaps = list;
                     }
 
                     var i = 0;
@@ -232,13 +227,6 @@ namespace ValveResourceFormat.Renderer
                     foreach (var tiedEnvMap in tiedEnvmaps)
                     {
                         AddBox(renderContext.Camera, updateContext.TextRenderer, vertices, tiedEnvMap.Transform, tiedEnvMap.LocalBoundingBox, new(0.7f, 0.0f, 1.0f, 1.0f));
-
-                        if (renderContext.Scene.LightingInfo.CubemapType is CubemapType.IndividualCubemaps && i == 0)
-                        {
-                            ShapeSceneNode.AddLine(vertices, tiedEnvMap.Transform.Translation, node.BoundingBox.Center, new(0.0f, 1.0f, 0.0f, 1.0f));
-                            i++;
-                            continue;
-                        }
 
                         var fractionToTen = Math.Min((float)i / 10, 1.0f);
                         var color = new Color32(1.0f, fractionToTen, fractionToTen, 1.0f);

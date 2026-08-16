@@ -8,19 +8,6 @@ using ValveResourceFormat.Renderer.SceneEnvironment;
 
 namespace ValveResourceFormat.Renderer.World
 {
-    /// <summary>
-    /// Storage format for environment map cubemap textures.
-    /// </summary>
-    public enum CubemapType : byte
-    {
-        /// <summary>No environment cubemap data.</summary>
-        None,
-        /// <summary>Each probe has its own individual cubemap texture.</summary>
-        IndividualCubemaps,
-        /// <summary>All probe cubemaps are packed into a single texture array.</summary>
-        CubemapArray,
-    }
-
     /// <summary>Which light face a binned barn light slot holds, so a cull bit read back later traces to
     /// the light it was about. Rebuilt every frame, so it only holds against the frame that produced it.</summary>
     /// <param name="Light">Light owning the slot.</param>
@@ -40,6 +27,9 @@ namespace ValveResourceFormat.Renderer.World
         public LightProbeAtlas? ProbeAtlas { get; private set; }
         /// <summary>Gets the list of environment map probes.</summary>
         public List<SceneEnvMap> EnvMaps { get; } = [];
+        /// <summary>Gets the scene-wide cube map array every env map samples from, once <see cref="BuildEnvMapArrayIfRequired"/> has run.</summary>
+        public RenderTexture? EnvMapArrayTexture { get; private set; }
+        private bool OwnsEnvMapArray;
         /// <summary>Gets the list of real-time barn lights.</summary>
         public List<SceneLight> BarnLights { get; } = [];
         /// <summary>Gets the environment map lookup by handshake ID.</summary>
@@ -58,13 +48,6 @@ namespace ValveResourceFormat.Renderer.World
         public int LightmapGameVersionNumber { get; set; }
         /// <summary>Gets or sets the GPU lighting constants buffer for the scene.</summary>
         public LightingConstants LightingData { get; set; } = new();
-
-        /// <summary>Gets or sets the storage format used for environment map cubemaps in this scene.</summary>
-        public CubemapType CubemapType
-        {
-            get => (CubemapType)scene.RenderAttributes.GetValueOrDefault("S_SCENE_CUBEMAP_TYPE");
-            set => scene.RenderAttributes["S_SCENE_CUBEMAP_TYPE"] = (byte)value;
-        }
 
         /// <summary>
         /// Gets or sets whether barn, rect and omni lights take their intensity from <c>brightness_legacy</c>.
@@ -138,6 +121,11 @@ namespace ValveResourceFormat.Renderer.World
                 GL.BindTextureUnit((int)lightmapSlot, texture.Handle);
             }
 
+            if (EnvMapArrayTexture != null)
+            {
+                BindProbeTexture("g_tEnvironmentMap", EnvMapArrayTexture);
+            }
+
             if (ProbeAtlas != null)
             {
                 BindProbeTexture("g_tLPV_Irradiance", ProbeAtlas.Irradiance);
@@ -167,6 +155,66 @@ namespace ValveResourceFormat.Renderer.World
 
             GL.BindTextureUnit((int)ReservedTextureSlots.LightCookieTextureWrap, cookieAtlas.Handle);
             GL.BindSampler((int)ReservedTextureSlots.LightCookieTextureWrap, CookieSamplerWrap);
+        }
+
+        /// <summary>Folds the scene's cube maps into one array. Call once, after every env map is added.</summary>
+        public void BuildEnvMapArrayIfRequired()
+        {
+            if (EnvMapArrayTexture != null)
+            {
+                return;
+            }
+
+            if (EnvMaps.Count > 0 && EnvMaps[0].EnvMapTexture?.Target == TextureTarget.TextureCubeMapArray)
+            {
+                EnvMapArrayTexture = EnvMaps[0].EnvMapTexture;
+                return;
+            }
+
+            if (EnvMaps.Count > 0)
+            {
+                EnvMapArrayTexture = EnvMapArrayBuilder.Merge(EnvMaps, scene.RendererContext.MaterialLoader, scene.RendererContext.Logger);
+                OwnsEnvMapArray = EnvMapArrayTexture != null;
+            }
+
+            if (EnvMapArrayTexture == null)
+            {
+                EnvMaps.Clear();
+                EnvMapHandshakes.Clear();
+                AddEnvironmentMap(CreateFallbackEnvMap());
+                EnvMapArrayTexture = EnvMapArrayBuilder.CreateWhite();
+                OwnsEnvMapArray = true;
+            }
+        }
+
+        /// <summary>Drops every env map, so the scene falls back to the flat grey reflection.</summary>
+        public void RemoveEnvironmentMaps()
+        {
+            foreach (var envMap in EnvMaps)
+            {
+                if (envMap.TexturePath == null)
+                {
+                    envMap.EnvMapTexture?.Delete();
+                }
+
+                envMap.EnvMapTexture = null;
+            }
+
+            EnvMaps.Clear();
+            EnvMapHandshakes.Clear();
+        }
+
+        /// <summary>Stands in for a scene with no cube maps, tinted to the flat grey reflection they used to get.</summary>
+        private SceneEnvMap CreateFallbackEnvMap()
+        {
+            return new SceneEnvMap(scene, new AABB(new Vector3(float.MinValue), new Vector3(float.MaxValue)))
+            {
+                Transform = Matrix4x4.Identity,
+                EdgeFadeDists = Vector3.Zero,
+                ProjectionMode = 0,
+                Tint = new Vector3(0.3f),
+                EnvMapTexture = null,
+            };
         }
 
         /// <summary>Folds the scene's light probe volumes into one atlas. Call once, after every probe is added.</summary>
@@ -203,33 +251,14 @@ namespace ValveResourceFormat.Renderer.World
             GL.BindTextureUnit((int)slot, texture.Handle);
         }
 
-        /// <summary>
-        /// Registers an environment map with the scene, setting the cubemap type on the first entry.
-        /// </summary>
+        /// <summary>Registers an environment map with the scene.</summary>
         /// <param name="envmap">The environment map to add.</param>
         public void AddEnvironmentMap(SceneEnvMap envmap)
         {
-            if (EnvMaps.Count == 0)
+            if (EnvMaps.Count > 0 && envmap.EnvMapTexture?.Target != EnvMaps[0].EnvMapTexture?.Target)
             {
-                CubemapType = envmap.EnvMapTexture.Target switch
-                {
-                    TextureTarget.TextureCubeMapArray => CubemapType.CubemapArray,
-                    TextureTarget.TextureCubeMap => CubemapType.IndividualCubemaps,
-                    _ => CubemapType.None,
-                };
-
-                if (CubemapType == CubemapType.CubemapArray)
-                {
-                    Lightmaps.TryAdd("g_tEnvironmentMap", envmap.EnvMapTexture);
-                }
-            }
-            else
-            {
-                var first = EnvMaps[0];
-                if (envmap.EnvMapTexture.Target != first.EnvMapTexture.Target)
-                {
-                    scene.RendererContext.Logger.LogError("Envmap texture target mismatch {EnvMapTarget} != {FirstTarget}", envmap.EnvMapTexture.Target, first.EnvMapTexture.Target);
-                }
+                scene.RendererContext.Logger.LogError("Envmap texture target mismatch {EnvMapTarget} != {FirstTarget}",
+                    envmap.EnvMapTexture?.Target, EnvMaps[0].EnvMapTexture?.Target);
             }
 
             EnvMaps.Add(envmap);
@@ -812,6 +841,14 @@ namespace ValveResourceFormat.Renderer.World
         {
             ProbeAtlas?.Delete();
             ProbeAtlas = null;
+
+            if (OwnsEnvMapArray)
+            {
+                EnvMapArrayTexture?.Delete();
+            }
+
+            EnvMapArrayTexture = null;
+            OwnsEnvMapArray = false;
 
             BarnLightStorageBuffer?.Delete();
 

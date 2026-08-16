@@ -17,16 +17,17 @@ public class SceneEnvMap : SceneNode
     /// <summary>Gets the handshake value used to match this env map to scene nodes during precomputation.</summary>
     public int HandShake { get; init; }
 
-    /// <summary>Gets the cubemap or cubemap-array texture for this environment map.</summary>
-    public required RenderTexture EnvMapTexture { get; init; }
+    /// <summary>Gets or sets this env map's own cube map, until it is merged into the scene's array.</summary>
+    public required RenderTexture? EnvMapTexture { get; set; }
+
+    /// <summary>Gets or sets the resource path the cube map was loaded from.</summary>
+    public string? TexturePath { get; init; }
 
     /// <summary>Gets the color tint applied to reflections from this env map.</summary>
     public Vector3 Tint { get; init; } = Vector3.One;
 
-    /// <summary>
-    /// If <see cref="EnvMapTexture"/> is an array, this is the depth index.
-    /// </summary>
-    public int ArrayIndex { get; init; }
+    /// <summary>Gets or sets this env map's layer in the scene's cube map array.</summary>
+    public int ArrayIndex { get; set; }
 
     /// <summary>
     /// If multiple volumes contain an object, the highest priority volume takes precedence.
