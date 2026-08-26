@@ -89,12 +89,12 @@ namespace ValveResourceFormat.Compression
         {
             if (indexCount % 3 != 0)
             {
-                throw new ArgumentException("Expected indexCount to be a multiple of 3.");
+                throw new ArgumentException($"Expected indexCount to be a multiple of 3, but it is {indexCount}. This buffer does not describe a triangle list.");
             }
 
             if (indexSize != 2 && indexSize != 4)
             {
-                throw new ArgumentException("Expected indexSize to be either 2 or 4");
+                throw new ArgumentException($"Expected indexSize to be either 2 or 4, but it is {indexSize}.");
             }
 
             var dataOffset = 1 + (indexCount / 3);
@@ -102,19 +102,19 @@ namespace ValveResourceFormat.Compression
             // the minimum valid encoding is header, 1 byte per triangle and a 16-byte codeaux table
             if (buffer.Length < dataOffset + 16)
             {
-                throw new ArgumentException("Index buffer is too short.");
+                throw new ArgumentException($"Index buffer is {buffer.Length} bytes, but {indexCount / 3} triangles need at least {dataOffset + 16}.");
             }
 
             if ((buffer[0] & 0xF0) != IndexHeader)
             {
-                throw new ArgumentException($"Invalid index buffer header, expected {IndexHeader} but got {buffer[0]}.");
+                throw new ArgumentException($"Invalid index buffer header 0x{buffer[0]:X2}, expected 0x{IndexHeader:X2} in its high nibble. This buffer is not meshoptimizer index encoded.");
             }
 
             var version = buffer[0] & 0x0F;
 
             if (version > DecodeIndexVersion)
             {
-                throw new ArgumentException($"Incorrect index buffer encoding version, got {version}.");
+                throw new ArgumentException($"Incorrect index buffer encoding version, got {version} but only up to {DecodeIndexVersion} is supported.");
             }
 
             Span<(uint, uint)> edgeFifo = stackalloc (uint, uint)[16];

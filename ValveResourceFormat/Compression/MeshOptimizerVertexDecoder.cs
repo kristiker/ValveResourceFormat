@@ -362,29 +362,29 @@ namespace ValveResourceFormat.Compression
         {
             if (vertexSize <= 0 || vertexSize > 256)
             {
-                throw new ArgumentException("Vertex size is expected to be between 1 and 256");
+                throw new ArgumentException($"Vertex size is expected to be between 1 and 256, but it is {vertexSize}.");
             }
 
             if (vertexSize % 4 != 0)
             {
-                throw new ArgumentException("Vertex size is expected to be a multiple of 4.");
+                throw new ArgumentException($"Vertex size is expected to be a multiple of 4, but it is {vertexSize}.");
             }
 
             if (buffer.Length < 1)
             {
-                throw new ArgumentException("Vertex buffer is too short.");
+                throw new ArgumentException($"Vertex buffer is {buffer.Length} bytes, too short to hold even a header.");
             }
 
             if ((buffer[0] & 0xF0) != VertexHeader)
             {
-                throw new ArgumentException($"Invalid vertex buffer header, expected {VertexHeader} but got {buffer[0]}.");
+                throw new ArgumentException($"Invalid vertex buffer header 0x{buffer[0]:X2}, expected 0x{VertexHeader:X2} in its high nibble. This buffer is not meshoptimizer vertex encoded.");
             }
 
             var version = buffer[0] & 0x0F;
 
             if (version > DecodeVertexVersion)
             {
-                throw new ArgumentException($"Incorrect vertex buffer encoding version, got {version}.");
+                throw new ArgumentException($"Incorrect vertex buffer encoding version, got {version} but only up to {DecodeVertexVersion} is supported.");
             }
 
             buffer = buffer[1..];
