@@ -52,9 +52,17 @@ namespace ValveResourceFormat.Blocks
             public RenderInputLayoutField[] InputLayoutFields;
 
             /// <summary>
-            /// Raw buffer data.
+            /// Raw buffer data. Still meshlet codec encoded when <see cref="MeshletEncodeVersion"/> is set.
             /// </summary>
             public byte[] Data;
+
+            /// <summary>
+            /// Version of the meshoptimizer meshlet codec this buffer is encoded with, or -1 when it holds
+            /// plain elements. The codec frames one blob per meshlet, so decoding needs the meshlet table
+            /// that lives in the mesh data rather than in this buffer, and <see cref="Data"/> is left as it
+            /// was read for whoever has that table.
+            /// </summary>
+            public int MeshletEncodeVersion;
 
             /// <summary>
             /// Total size of the buffer in bytes.
@@ -314,6 +322,10 @@ namespace ValveResourceFormat.Blocks
                 ElementSizeInBytes = data.GetUInt32Property("m_nElementSizeInBytes"),
             };
 
+            buffer.MeshletEncodeVersion = data.ContainsKey("m_nMeshoptMeshletEncodeVersion")
+                ? data.GetInt32Property("m_nMeshoptMeshletEncodeVersion")
+                : -1;
+
             var inputLayoutFields = data.GetArray("m_inputLayoutFields");
             buffer.InputLayoutFields = [.. inputLayoutFields.Select(static il =>
             {
@@ -351,7 +363,7 @@ namespace ValveResourceFormat.Blocks
                 var bufferData = data.GetArray<byte>("m_pData");
                 var decompressedSize = (int)buffer.TotalSizeInBytes;
 
-                buffer.Data = bufferData.Length == decompressedSize
+                buffer.Data = bufferData.Length == decompressedSize || buffer.MeshletEncodeVersion >= 0
                     ? bufferData
                     : DecompressData(buffer, bufferData, decompressedSize, isVertex, isZstdCompressed: false, isMeshoptCompressed: true);
             }
@@ -372,7 +384,13 @@ namespace ValveResourceFormat.Blocks
                     Resource.Reader.BaseStream.Position = dataBlock.Offset;
                     Resource.Reader.Read(span);
 
-                    if (isZstdCompressed || isMeshoptCompressed)
+                    if (buffer.MeshletEncodeVersion >= 0)
+                    {
+                        // The meshlet codec sets m_bMeshoptCompressed too, but its payload is not the index
+                        // stream that flag otherwise means, so decoding it here would only misread it
+                        buffer.Data = span.ToArray();
+                    }
+                    else if (isZstdCompressed || isMeshoptCompressed)
                     {
                         buffer.Data = DecompressData(buffer, span, (int)buffer.TotalSizeInBytes, isVertex, isZstdCompressed, isMeshoptCompressed);
                     }
