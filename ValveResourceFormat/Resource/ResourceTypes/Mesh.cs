@@ -1,7 +1,9 @@
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using ValveKeyValue;
 using ValveResourceFormat.Blocks;
+using ValveResourceFormat.Compression;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes.ModelData;
 using ValveResourceFormat.ResourceTypes.ModelData.Attachments;
@@ -21,13 +23,23 @@ namespace ValveResourceFormat.ResourceTypes
         {
             get
             {
-                //new format has VBIB block, for old format we can get it from NTRO DATA block
-                cachedVBIB ??= (VBIB?)Resource.GetBlockByType(BlockType.VBIB) ?? new VBIB(Resource, Data) { Resource = Resource };
+                if (cachedVBIB == null)
+                {
+                    //new format has VBIB block, for old format we can get it from NTRO DATA block
+                    cachedVBIB = (VBIB?)Resource.GetBlockByType(BlockType.VBIB) ?? new VBIB(Resource, Data) { Resource = Resource };
+                    DecodeMeshletBuffers(cachedVBIB);
+                }
+
                 return cachedVBIB;
             }
             set
             {
                 cachedVBIB = value;
+
+                if (cachedVBIB != null)
+                {
+                    DecodeMeshletBuffers(cachedVBIB);
+                }
             }
         }
 
@@ -99,6 +111,54 @@ namespace ValveResourceFormat.ResourceTypes
                     var hitboxes = hitboxSet.GetArray(hitboxesKey).Select(d => new Hitbox(d)).ToArray();
 
                     HitboxSets.Add(hitboxSetName, hitboxes);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Decodes any index buffer that carries a version 1 meshoptimizer meshlet encoded packed IVB into
+        /// its plain elements. The chunked encoding is framed by the mesh's <c>m_meshlets</c> descriptors,
+        /// which is why this happens here and not when the buffer itself is read.
+        /// </summary>
+        private void DecodeMeshletBuffers(VBIB vbib)
+        {
+            for (var i = 0; i < vbib.IndexBuffers.Count; i++)
+            {
+                var buffer = vbib.IndexBuffers[i];
+
+                if (buffer.MeshletEncodeVersion != 1)
+                {
+                    continue;
+                }
+
+                var meshlets = new List<MeshOptimizerMeshletDecoder.MeshletCounts>();
+
+                foreach (var sceneObject in Data.GetArray("m_sceneObjects"))
+                {
+                    var meshletArray = sceneObject.GetArray("m_meshlets");
+                    if (meshletArray == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var meshlet in meshletArray)
+                    {
+                        meshlets.Add(new MeshOptimizerMeshletDecoder.MeshletCounts(
+                            meshlet.GetInt32Property("m_nVertexCount"),
+                            meshlet.GetInt32Property("m_nTriangleCount")));
+                    }
+                }
+
+                try
+                {
+                    buffer.Data = MeshOptimizerMeshletDecoder.DecodePackedIVB(buffer.Data, CollectionsMarshal.AsSpan(meshlets), (int)buffer.TotalSizeInBytes);
+                    buffer.MeshletEncodeVersion = -1;
+                    vbib.IndexBuffers[i] = buffer;
+                }
+                catch (InvalidOperationException)
+                {
+                    // An undecodable buffer keeps its encoded payload (and its version flag saying so)
+                    // rather than taking the whole model down; the meshlet draw path is optional.
                 }
             }
         }

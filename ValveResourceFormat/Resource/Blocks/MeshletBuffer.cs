@@ -12,6 +12,11 @@ namespace ValveResourceFormat.Blocks;
 /// as primitives over those vertices. A vertex's attributes are fetched from MVTX at index
 /// (m_nVertexOffset + localIndex). MIDX, the global index buffer, is only used by the classic vertex/fragment
 /// draw path; the meshlet path does not need it.
+/// <para>
+/// In resources whose buffer descriptor sets <c>m_nMeshoptMeshletEncodeVersion</c> to 1, this block stores
+/// meshoptimizer meshlet codec chunks instead of plain entries. This class reads the block bytes as-is; use
+/// the mesh's VBIB index buffer, which <see cref="ResourceTypes.Mesh"/> decodes, for those resources.
+/// </para>
 /// </remarks>
 public class MeshletBuffer : RawBinary
 {

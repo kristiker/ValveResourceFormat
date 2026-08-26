@@ -58,9 +58,10 @@ namespace ValveResourceFormat.Blocks
 
             /// <summary>
             /// Version of the meshoptimizer meshlet codec this buffer is encoded with, or -1 when it holds
-            /// plain elements. The codec frames one blob per meshlet, so decoding needs the meshlet table
-            /// that lives in the mesh data rather than in this buffer, and <see cref="Data"/> is left as it
-            /// was read for whoever has that table.
+            /// plain elements. The codec frames one chunk per meshlet, so decoding needs the meshlet table
+            /// that lives in the mesh data rather than in this buffer; <see cref="ResourceTypes.Mesh"/>
+            /// decodes version 1 buffers when its VBIB is accessed and resets this to -1. It stays set only
+            /// for an unknown version or undecodable data, with <see cref="Data"/> left as it was read.
             /// </summary>
             public int MeshletEncodeVersion;
 
@@ -190,6 +191,7 @@ namespace ValveResourceFormat.Blocks
         private static OnDiskBufferData ReadOnDiskBufferData(BinaryReader reader, bool isVertex)
         {
             var buffer = default(OnDiskBufferData);
+            buffer.MeshletEncodeVersion = -1;
 
             buffer.ElementCount = reader.ReadUInt32();
 
@@ -363,7 +365,7 @@ namespace ValveResourceFormat.Blocks
                 var bufferData = data.GetArray<byte>("m_pData");
                 var decompressedSize = (int)buffer.TotalSizeInBytes;
 
-                buffer.Data = bufferData.Length == decompressedSize || buffer.MeshletEncodeVersion >= 0
+                buffer.Data = bufferData.Length == decompressedSize || buffer.MeshletEncodeVersion > 0
                     ? bufferData
                     : DecompressData(buffer, bufferData, decompressedSize, isVertex, isZstdCompressed: false, isMeshoptCompressed: true);
             }
@@ -384,7 +386,7 @@ namespace ValveResourceFormat.Blocks
                     Resource.Reader.BaseStream.Position = dataBlock.Offset;
                     Resource.Reader.Read(span);
 
-                    if (buffer.MeshletEncodeVersion >= 0)
+                    if (buffer.MeshletEncodeVersion > 0)
                     {
                         // The meshlet codec sets m_bMeshoptCompressed too, but its payload is not the index
                         // stream that flag otherwise means, so decoding it here would only misread it
