@@ -26,7 +26,9 @@ public sealed class LightEntity : BaseEntity
     // NoShadows like the loader gives light icons, so a light's own icon cannot shadow the light
     /// <inheritdoc/>
     protected override SceneNode? CreateRootNode()
-        => World.EditorEntityNode.Create(Scene, KeyValues, Classname, Transform, ObjectTypeFlags.NoShadows);
+        => Scene.RendererContext.CreateEditorEntityNodes
+            ? World.EditorEntityNode.Create(Scene, KeyValues, Classname, Transform, ObjectTypeFlags.NoShadows)
+            : null;
 
     /// <inheritdoc/>
     public override void Spawn()

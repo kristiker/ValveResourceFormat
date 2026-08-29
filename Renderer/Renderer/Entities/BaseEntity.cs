@@ -312,7 +312,7 @@ public class BaseEntity
     /// <returns>The node, or <see langword="null"/> to own none.</returns>
     protected virtual SceneNode? CreateRootNode()
     {
-        if (Data == null)
+        if (Data == null || !Scene.RendererContext.CreateEditorEntityNodes)
         {
             return null;
         }

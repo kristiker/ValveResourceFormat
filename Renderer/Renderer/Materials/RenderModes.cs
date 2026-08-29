@@ -71,6 +71,20 @@ namespace ValveResourceFormat.Renderer.Materials
 
         private readonly static Dictionary<string, byte> ShaderIds = new(Items.Count);
 
+        /// <summary>
+        /// Registers a custom render mode ahead of shader parsing, so a shader mounted through
+        /// <see cref="Shaders.ShaderRegistry"/> can declare a <c>renderMode_</c> define of its own.
+        /// The shader define index is assigned when a shader declaring the mode is first parsed.
+        /// </summary>
+        /// <param name="name">The render mode name (without the <c>renderMode_</c> prefix).</param>
+        public static void Register(string name)
+        {
+            if (!Items.Contains(new RenderMode(name)))
+            {
+                Items = Items.Add(new RenderMode(name));
+            }
+        }
+
         /// <summary>Registers the shader define index assigned to a render mode name during preprocessing.</summary>
         /// <param name="renderMode">The render mode name (without the <c>renderMode_</c> prefix).</param>
         /// <param name="value">The byte index assigned to this render mode in the shader define.</param>

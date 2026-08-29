@@ -186,6 +186,15 @@ namespace ValveResourceFormat.Renderer
         /// and would otherwise inherit whatever the last draw latched.</summary>
         public void RestorePassBaseline() => Apply(CurrentPass);
 
+        /// <summary>Discards the shadow copies of the driver state after external code (e.g. an
+        /// immediate-mode UI library) issued raw GL calls behind the tracker's back, so the next
+        /// apply pushes everything instead of diffing against stale values.</summary>
+        public void MarkExternalStateModified()
+        {
+            appliedKnown = false;
+            dynamicKnown = false;
+        }
+
         /// <summary>Gets the dynamic state currently set.</summary>
         public DynamicState CurrentDynamic { get; private set; } = DynamicState.Default;
 

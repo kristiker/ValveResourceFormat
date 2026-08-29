@@ -61,6 +61,23 @@ public class RendererContext : IDisposable
     public bool ParallelSimulation { get; set; } = true;
 
     /// <summary>
+    /// Whether entities with no geometry of their own get the editor node Hammer would show them as
+    /// (icon sprites, colored boxes, connection lines). Turn off before loading a world for clean
+    /// renders that only want the world and its lighting, e.g. screenshots.
+    /// </summary>
+    public bool CreateEditorEntityNodes { get; set; } = true;
+
+    /// <summary>
+    /// Whether entities bring the nodes they are drawn as into the scene: models and the particles those
+    /// models spawn, effects, particle ropes. Turn off to load a world's entities for their data alone -
+    /// they still spawn into <see cref="Scene.EntitySystem"/> and still light the scene, but nothing an
+    /// entity owns is drawn and none of those models, particles or textures are ever loaded. What lights
+    /// and shades the world (lights, cubemaps, light probes, fog, sky) is not entity geometry and comes
+    /// through either way, as does <see cref="CreateEditorEntityNodes"/> when it is left on.
+    /// </summary>
+    public bool CreateEntitySceneNodes { get; set; } = true;
+
+    /// <summary>
     /// Initializes a new renderer context.
     /// </summary>
     /// <param name="fileLoader">Game file loader for resource access.</param>

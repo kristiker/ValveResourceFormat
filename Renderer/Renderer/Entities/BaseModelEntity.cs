@@ -37,7 +37,7 @@ public abstract class BaseModelEntity : BaseEntity
     {
         var modelName = ModelName;
 
-        if (string.IsNullOrEmpty(modelName))
+        if (string.IsNullOrEmpty(modelName) || !Scene.RendererContext.CreateEntitySceneNodes)
         {
             return base.CreateRootNode();
         }

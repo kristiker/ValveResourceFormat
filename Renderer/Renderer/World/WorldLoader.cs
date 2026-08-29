@@ -279,6 +279,26 @@ namespace ValveResourceFormat.Renderer.World
                 LoadEntitiesFromLump(entityLump, "Entities", Matrix4x4.Identity);
             }
 
+            FinishEntityLoading();
+        }
+
+        /// <summary>
+        /// Loads all entities from a caller-provided lump instead of the world's own entity lumps,
+        /// for hosts that carry a frozen copy of a map's entities (e.g. so game updates cannot move
+        /// authored template positions they depend on).
+        /// </summary>
+        /// <param name="entityLump">The entity lump to load in place of the world's own.</param>
+        public void LoadEntities(EntityLump entityLump)
+        {
+            ReportLoadingPhase("Loading entities…");
+
+            LoadEntitiesFromLump(entityLump, "Entities", Matrix4x4.Identity);
+
+            FinishEntityLoading();
+        }
+
+        private void FinishEntityLoading()
+        {
             ResolveAttachmentParenting();
             ResolveParticleControlPoints();
 
@@ -1044,6 +1064,12 @@ namespace ValveResourceFormat.Renderer.World
 
                 if (classname is "path_particle_rope" or "path_particle_rope_clientside")
                 {
+                    if (!RendererContext.CreateEntitySceneNodes)
+                    {
+                        // Still returns, for the reason the fall through is refused below
+                        return;
+                    }
+
                     try
                     {
                         if (CableSceneNode.TryCreate(scene, entity, parentTransform, out var cable) && cable != null)
@@ -1071,7 +1097,7 @@ namespace ValveResourceFormat.Renderer.World
                     return;
                 }
 
-                if (classname == "xen_flora_animatedmover" && model != null)
+                if (classname == "xen_flora_animatedmover" && model != null && RendererContext.CreateEntitySceneNodes)
                 {
                     var moverResource = RendererContext.FileLoader.LoadFileCompiled(model);
 
@@ -1113,7 +1139,7 @@ namespace ValveResourceFormat.Renderer.World
 
                     var moverParticleName = entity.GetStringProperty("particle_effect");
 
-                    if (moverParticleName != null)
+                    if (moverParticleName != null && RendererContext.CreateEntitySceneNodes)
                     {
                         var moverParticleResource = RendererContext.FileLoader.LoadFileCompiled(moverParticleName);
 
@@ -1133,7 +1159,7 @@ namespace ValveResourceFormat.Renderer.World
                     return;
                 }
 
-                if (particle != null)
+                if (particle != null && RendererContext.CreateEntitySceneNodes)
                 {
                     var particleResource = RendererContext.FileLoader.LoadFileCompiled(particle);
                     var particleSystem = (ParticleSystem?)particleResource?.DataBlock;
@@ -1307,8 +1333,9 @@ namespace ValveResourceFormat.Renderer.World
 
                 var entityFlags = light.Accepted ? ObjectTypeFlags.NoShadows : ObjectTypeFlags.None;
 
-                if (model == null)
+                if (model == null || !RendererContext.CreateEntitySceneNodes)
                 {
+                    // An entity whose model is skipped is still worth its editor marker, when those are on
                     CreateDefaultEntity(entity, classname, transformationMatrix, entityFlags, defaultEntityLayer);
                     return;
                 }
@@ -1619,6 +1646,11 @@ namespace ValveResourceFormat.Renderer.World
 
         private void CreateDefaultEntity(Entity entity, string classname, Matrix4x4 transformationMatrix, ObjectTypeFlags flags = ObjectTypeFlags.None, string layerName = EditorEntityNode.LayerName)
         {
+            if (!RendererContext.CreateEditorEntityNodes)
+            {
+                return;
+            }
+
             entityParentTransforms.TryGetValue(entity, out var entityParentTransform);
 
             var createdNode = EditorEntityNode.Create(scene, entity, classname, transformationMatrix, flags, layerName,
