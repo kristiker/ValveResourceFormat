@@ -92,6 +92,7 @@ namespace ValveResourceFormat.Serialization.VfxEval
         /// <summary>
         /// Dynamic expression bytecode instructions.
         /// </summary>
+#pragma warning disable CS1591 // Missing XML comment for publicly visible type or member
         public enum OPCODE
         {
             RETURN,             // 00
@@ -129,6 +130,7 @@ namespace ValveResourceFormat.Serialization.VfxEval
             MATERIAL_PARAM_IDX, // 20
             FLOAT4,             // 21
         };
+#pragma warning restore CS1591
 
         // How tightly an expression binds, listed loosest first. An operand is bracketed only where
         // it binds looser than the operator using it, which keeps the output free of brackets that
