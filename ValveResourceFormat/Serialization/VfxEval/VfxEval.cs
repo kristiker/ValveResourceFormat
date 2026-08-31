@@ -22,8 +22,11 @@ namespace ValveResourceFormat.Serialization.VfxEval
         // the decompiled expression, one statement per line
         private readonly List<string> DynamicExpressionList = [];
 
-        // function reference, name and number of arguments
-        private static readonly (string Name, int ArgumentCount)[] FUNCTION_REF = [
+        /// <summary>
+        /// Function reference, name and number of arguments, indexed by the function id in
+        /// <see cref="OPCODE.FUNC"/> instructions.
+        /// </summary>
+        public static readonly (string Name, int ArgumentCount)[] FUNCTION_REF = [
 #pragma warning disable format
             ("sin",        1),     // 00
             ("cos",        1),     // 01
@@ -86,7 +89,10 @@ namespace ValveResourceFormat.Serialization.VfxEval
 #pragma warning restore format
         ];
 
-        private enum OPCODE
+        /// <summary>
+        /// Dynamic expression bytecode instructions.
+        /// </summary>
+        public enum OPCODE
         {
             RETURN,             // 00
             NOP,                // 01

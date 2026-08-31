@@ -35,6 +35,9 @@ namespace ValveResourceFormat.ResourceTypes.ModelData.Attachments
             /// Gets the weight of the influence.
             /// </summary>
             public float Weight { get; init; }
+
+            /// <summary>Gets whether the influence anchors to the model root instead of a bone.</summary>
+            public bool RootTransform { get; init; }
         }
 
         /// <summary>
@@ -82,6 +85,7 @@ namespace ValveResourceFormat.ResourceTypes.ModelData.Attachments
             var influenceRotations = valueData.GetArray("m_vInfluenceRotations").Select(v => v.ToQuaternion()).ToArray();
             var influenceOffsets = valueData.GetArray("m_vInfluenceOffsets").Select(v => v.ToVector3()).ToArray();
             var influenceWeights = valueData.GetArray<double>("m_influenceWeights");
+            var influenceRootTransforms = valueData.GetArray<bool>("m_bInfluenceRootTransform");
 
             var influenceCount = valueData.GetInt32Property("m_nInfluences");
 
@@ -93,7 +97,8 @@ namespace ValveResourceFormat.ResourceTypes.ModelData.Attachments
                     Name = influenceNames![i],
                     Rotation = influenceRotations![i],
                     Offset = influenceOffsets![i],
-                    Weight = (float)influenceWeights![i]
+                    Weight = (float)influenceWeights![i],
+                    RootTransform = influenceRootTransforms![i],
                 };
             }
         }

@@ -608,13 +608,26 @@ namespace ValveResourceFormat.Renderer.SceneNodes
                 for (var i = 0; i < attachment.Length; i++)
                 {
                     var influence = attachment[i];
-                    var boneIndex = AnimationController.FrameCache.Skeleton.GetBoneIndex(influence.Name);
-                    if (boneIndex != -1)
+
+                    Matrix4x4 boneTransform;
+
+                    if (influence.RootTransform)
                     {
-                        var boneTransform = AnimationController.Pose[boneIndex];
-                        var influenceTransform = Matrix4x4.CreateFromQuaternion(influence.Rotation) * Matrix4x4.CreateTranslation(influence.Offset);
-                        transform *= Matrix4x4.Lerp(Matrix4x4.Identity, influenceTransform * boneTransform, influence.Weight);
+                        boneTransform = Matrix4x4.Identity;
                     }
+                    else
+                    {
+                        var boneIndex = AnimationController.FrameCache.Skeleton.GetBoneIndex(influence.Name);
+                        if (boneIndex == -1)
+                        {
+                            continue;
+                        }
+
+                        boneTransform = AnimationController.Pose[boneIndex];
+                    }
+
+                    var influenceTransform = Matrix4x4.CreateFromQuaternion(influence.Rotation) * Matrix4x4.CreateTranslation(influence.Offset);
+                    transform *= Matrix4x4.Lerp(Matrix4x4.Identity, influenceTransform * boneTransform, influence.Weight);
                 }
 
                 if (attachment.IgnoreRotation)

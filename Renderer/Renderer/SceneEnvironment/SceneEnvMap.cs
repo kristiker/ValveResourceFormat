@@ -113,6 +113,22 @@ public class SceneEnvMap : SceneNode
     {
         private uint _bucket0;
 
+        /// <summary>A mask with every environment map marked visible.</summary>
+        public static EnvMapVisibility128 All
+        {
+            get
+            {
+                var mask = new EnvMapVisibility128();
+
+                for (var bucket = 0; bucket < 4; bucket++)
+                {
+                    mask[bucket] = uint.MaxValue;
+                }
+
+                return mask;
+            }
+        }
+
 #pragma warning disable CA1024 // Use properties where appropriate
         /// <summary>Returns an enumeration of shader indices for all env maps currently marked visible in this bitmask.</summary>
         public readonly IEnumerable<int> GetVisibleShaderIndices()
