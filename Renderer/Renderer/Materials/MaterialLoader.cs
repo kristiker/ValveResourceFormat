@@ -215,7 +215,6 @@ namespace ValveResourceFormat.Renderer.Materials
         /// <param name="streaming">Whether mips may arrive over later frames.</param>
         public RenderTexture GetTexture(string name, bool srgbRead = false, bool anisotropicFiltering = false, bool streaming = false)
         {
-            // TODO: Create texture view for srgb textures
             var cache = srgbRead ? TexturesSrgb : Textures;
 
             if (cache.TryGetValue(name, out var tex))
@@ -223,13 +222,24 @@ namespace ValveResourceFormat.Renderer.Materials
                 // A non-streaming caller needs the texture complete, even when a material started it streaming
                 if (!streaming)
                 {
-                    RendererContext.TextureStreaming.FinishStreaming(tex);
+                    RendererContext.TextureStreaming.FinishStreaming(tex.AliasOf ?? tex);
                 }
 
                 return tex;
             }
 
-            tex = LoadTexture(name, srgbRead, async: streaming);
+            // The two variants are the same texels read two ways, so the second one can view the first's
+            // storage instead of reading and uploading the whole chain a second time
+            if ((srgbRead ? Textures : TexturesSrgb).TryGetValue(name, out var storage) && storage.CanAliasSrgb)
+            {
+                // A view of a chain that is still growing would need the caller to tolerate a stub
+                if (streaming || RendererContext.TextureStreaming.FinishStreaming(storage))
+                {
+                    tex = storage.CreateSrgbAlias(name);
+                }
+            }
+
+            tex ??= LoadTexture(name, srgbRead, async: streaming);
             cache.Add(name, tex);
 
             if (anisotropicFiltering && MaxTextureMaxAnisotropy >= 4)
@@ -366,17 +376,22 @@ namespace ValveResourceFormat.Renderer.Materials
             // path — as does a single-mip texture, which has nothing left to stream after its first upload
             var streamable = async && !rgba8UncompressedFallback && chainLevels > 1;
 
-            // Streamed textures are born holding only their smallest mip and grow as data arrives,
-            // so VRAM is committed by the upload pump instead of all at once during the load phase
+            tex.StorageFormat = format;
+            tex.IsSrgb = srgb;
+
+            // Streamed textures are born holding only their smallest mip and grow as data arrives, so
+            // VRAM is committed a slice at a time instead of all at once during the load phase
             if (streamable)
             {
                 var (smallestWidth, smallestHeight, smallestDepth) = GetChainLevelSize(target, texWidth, texHeight, texDepth, chainLevels - 1);
 
                 CreateStorageForTarget(tex.Handle, target, levels: 1, sizedInternalFormat, smallestWidth, smallestHeight, smallestDepth);
+                tex.StorageLevels = 1;
             }
             else
             {
                 CreateStorageForTarget(tex.Handle, target, chainLevels, sizedInternalFormat, texWidth, texHeight, texDepth);
+                tex.StorageLevels = chainLevels;
             }
 
             tex.SetFiltering(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear);

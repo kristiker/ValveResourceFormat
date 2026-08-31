@@ -48,6 +48,30 @@ namespace ValveResourceFormat.Renderer
             Handle = GraphicsDevice.CreateTexture(target, label);
         }
 
+        // An alias: a view over the whole of another texture's storage, reading the same texels as the
+        // given format. It carries the storage's metadata and, unlike the subrange views CreateView
+        // hands out, follows the storage when ReplaceHandle swaps it.
+        private RenderTexture(RenderTexture storage, ImageFormat format, bool srgb, string label)
+        {
+            Target = storage.Target;
+            Width = storage.Width;
+            Height = storage.Height;
+            Depth = storage.Depth;
+            NumMipLevels = storage.NumMipLevels;
+            SpriteSheetData = storage.SpriteSheetData;
+            Reflectivity = storage.Reflectivity;
+            RadianceCoefficients = storage.RadianceCoefficients;
+
+            StorageFormat = format;
+            StorageLevels = storage.StorageLevels;
+            IsSrgb = srgb;
+
+            AliasOf = storage;
+            viewLabel = label;
+
+            Handle = CreateAliasHandle();
+        }
+
         /// <summary>Creates a render texture and populates metadata from the given source texture resource.</summary>
         /// <param name="target">OpenGL texture target.</param>
         /// <param name="data">Source texture resource providing dimensions, mip count, spritesheet data and radiance harmonics.</param>
@@ -145,6 +169,58 @@ namespace ValveResourceFormat.Renderer
             return new RenderTexture(handle, Target);
         }
 
+        // Set when this texture was loaded from a texture resource, which is what an srgb alias needs to
+        // reinterpret the storage. Null for anything built another way, and those never alias.
+        internal ImageFormat? StorageFormat { get; set; }
+
+        // Levels the storage actually holds, which for a streamed texture is fewer than NumMipLevels
+        // until its chain finishes
+        internal int StorageLevels { get; set; }
+
+        internal bool IsSrgb { get; set; }
+
+        // The texture this one views, and the view taken of this one. Only ever one of each, since the
+        // only reason to alias is to read the same texels the other way.
+        internal RenderTexture? AliasOf { get; }
+        private RenderTexture? alias;
+        private readonly string viewLabel = string.Empty;
+
+        /// <summary>Gets whether this texture can hand out an srgb counterpart that shares its storage.</summary>
+        internal bool CanAliasSrgb
+            => AliasOf == null
+            && alias == null
+            && Target == TextureTarget.Texture2D
+            && StorageFormat is { } format
+            && format.HasSrgbVariant();
+
+        // Aliases this storage as its counterpart reading: srgb where this one is linear, or the reverse.
+        // It stays in step with the storage, which a streamed texture replaces every time a mip lands.
+        internal RenderTexture CreateSrgbAlias(string label)
+        {
+            Debug.Assert(CanAliasSrgb);
+
+            alias = new RenderTexture(this, StorageFormat!.Value, !IsSrgb, label)
+            {
+                filtering = filtering,
+                wrapMode = wrapMode,
+                baseMaxLevel = baseMaxLevel,
+                maxAnisotropy = maxAnisotropy,
+            };
+
+            alias.ApplySamplerState();
+
+            return alias;
+        }
+
+        private int CreateAliasHandle()
+        {
+            Debug.Assert(AliasOf != null);
+            Debug.Assert(StorageFormat != null);
+
+            return GraphicsDevice.CreateTextureView(AliasOf.Handle, Target, StorageFormat.Value,
+                minLevel: 0, numLevels: StorageLevels, minLayer: 0, numLayers: 1, viewLabel, IsSrgb);
+        }
+
         // Sampler state set through the methods below is remembered, so ReplaceHandle can reapply it —
         // parameters do not carry over to a replacement texture object
         private (TextureMinFilter Min, TextureMagFilter Mag)? filtering;
@@ -222,7 +298,25 @@ namespace ValveResourceFormat.Renderer
             GL.DeleteTexture(Handle);
             Handle = newHandle;
             NumMipLevels = numMipLevels;
+            StorageLevels = numMipLevels;
 
+            ApplySamplerState();
+
+            // A view is bound to the storage it was made from, so it would keep showing the old, smaller
+            // one. Point it at the replacement instead, or the alias would never sharpen.
+            if (alias != null)
+            {
+                GL.DeleteTexture(alias.Handle);
+
+                alias.NumMipLevels = numMipLevels;
+                alias.StorageLevels = numMipLevels;
+                alias.Handle = alias.CreateAliasHandle();
+                alias.ApplySamplerState();
+            }
+        }
+
+        private void ApplySamplerState()
+        {
             if (filtering is { } filter)
             {
                 SetParameter(TextureParameterName.TextureMinFilter, (int)filter.Min);
@@ -249,6 +343,9 @@ namespace ValveResourceFormat.Renderer
         /// <summary>Deletes the underlying OpenGL texture object.</summary>
         public void Delete()
         {
+            alias?.Delete();
+            alias = null;
+
             GL.DeleteTexture(Handle);
             Handle = 0;
         }

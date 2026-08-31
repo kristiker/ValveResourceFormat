@@ -57,8 +57,8 @@ public sealed class GraphicsDevice
     public static int CreateTexture(TextureTarget target, string name) => Current.CreateTextureCore(target, name);
 
     /// <summary>Creates a texture view over a subrange of another texture's storage.</summary>
-    public static int CreateTextureView(int texture, TextureTarget target, ImageFormat format, int minLevel, int numLevels, int minLayer, int numLayers, string name)
-        => Current.CreateTextureViewCore(texture, target, format, minLevel, numLevels, minLayer, numLayers, name);
+    public static int CreateTextureView(int texture, TextureTarget target, ImageFormat format, int minLevel, int numLevels, int minLayer, int numLayers, string name, bool srgb = false)
+        => Current.CreateTextureViewCore(texture, target, format, minLevel, numLevels, minLayer, numLayers, name, srgb);
 
     /// <summary>Creates a sampler object with default state.</summary>
     public static int CreateSampler(string name) => Current.CreateSamplerCore(name);
@@ -115,11 +115,11 @@ public sealed class GraphicsDevice
         return handle;
     }
 
-    private int CreateTextureViewCore(int texture, TextureTarget target, ImageFormat format, int minLevel, int numLevels, int minLayer, int numLayers, string name)
+    private int CreateTextureViewCore(int texture, TextureTarget target, ImageFormat format, int minLevel, int numLevels, int minLayer, int numLayers, string name, bool srgb)
     {
         // A view needs a name without a target yet, which only the non-DSA path hands out.
         var handle = GL.GenTexture();
-        GL.TextureView(handle, target, texture, (PixelInternalFormat)format.ToGLSizedInternalFormat(), minLevel, numLevels, minLayer, numLayers);
+        GL.TextureView(handle, target, texture, (PixelInternalFormat)format.ToGLSizedInternalFormat(srgb), minLevel, numLevels, minLayer, numLayers);
         Label(ObjectLabelIdentifier.Texture, handle, name);
         return handle;
     }
