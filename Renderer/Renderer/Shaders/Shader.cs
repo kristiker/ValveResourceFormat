@@ -25,6 +25,12 @@ namespace ValveResourceFormat.Renderer.Shaders
         /// <summary>Gets the compiled OpenGL shader stage object handles.</summary>
         public required int[] ShaderObjects { get; init; }
 
+        /// <summary>Gets the key this program is stored under, or null when it is not to be stored.</summary>
+        internal string? CacheKey { get; init; }
+
+        /// <summary>Gets the cache this program is stored in, once it is known to have linked.</summary>
+        internal ShaderProgramCache? ProgramCache { get; init; }
+
         /// <summary>Gets the static combo parameter values used to compile this shader variant.</summary>
         public required IReadOnlyDictionary<string, byte> Parameters { get; init; }
 
@@ -217,6 +223,11 @@ namespace ValveResourceFormat.Renderer.Shaders
 
                 if (IsValid)
                 {
+                    if (CacheKey != null && ShaderObjects.Length > 0)
+                    {
+                        ProgramCache?.Store(CacheKey, Program);
+                    }
+
                     StoreUniformLocations();
                     BindReservedTextureSlots();
                     StoreRequiredAttributes();
@@ -786,9 +797,7 @@ namespace ValveResourceFormat.Renderer.Shaders
             IsLoaded = false;
             Program = shader.Program;
 
-            System.Diagnostics.Debug.Assert(shader.ShaderObjects.Length == ShaderObjects.Length);
-
-            for (var i = 0; i < shader.ShaderObjects.Length; i++)
+            for (var i = 0; i < shader.ShaderObjects.Length && i < ShaderObjects.Length; i++)
             {
                 ShaderObjects[i] = shader.ShaderObjects[i];
             }

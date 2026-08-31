@@ -62,6 +62,10 @@ namespace ValveResourceFormat.Renderer.Shaders
 
         private readonly RendererContext RendererContext;
 
+        private ShaderProgramCache? programCache;
+
+        private ShaderProgramCache ProgramCache => programCache ??= new ShaderProgramCache(RendererContext.Logger);
+
         /// <summary>
         /// Preprocessed shader source with defines, uniforms, and compiled stage code.
         /// </summary>
@@ -246,9 +250,53 @@ namespace ValveResourceFormat.Renderer.Shaders
             return parsedData;
         }
 
+        /// <summary>Builds the shader for a program the cache had already linked, skipping compilation.</summary>
+        private Shader LoadedFromCache(string shaderName, string shaderFileName, int shaderProgram,
+            ParsedShaderData parsedData, IReadOnlyDictionary<string, byte> arguments, double loadMs)
+        {
+            DeclaredReservedTextures.UnionWith(parsedData.ReservedTextures);
+
+            var shader = new Shader(shaderName, RendererContext)
+            {
+#if DEBUG
+                FileName = shaderFileName,
+#endif
+
+                Parameters = arguments,
+                Defines = parsedData.Defines,
+                GlobalsLayout = parsedData.GlobalsLayout,
+                Program = shaderProgram,
+
+                // Nothing was compiled, so there is nothing to detach and delete later
+                ShaderObjects = [],
+                RenderModes = parsedData.RenderModes,
+                UniformNames = parsedData.Uniforms,
+                SrgbUniforms = parsedData.SrgbUniforms,
+                SamplerUserConfigUniforms = parsedData.SamplerUserConfigUniforms,
+                ReservedTexturesUsed = [.. parsedData.ReservedTextures],
+            };
+
+            // Already linked by the driver when it took the binary, so the reflection can be done now
+            shader.EnsureLoaded();
+
+            var argsDescription = GetArgumentDescription(SortAndFilterArguments(parsedData.Defines, arguments));
+
+            if (IsVfxShaderName(shaderName))
+            {
+                RendererContext.Logger.LogInformation("Shader '{ShaderName}' as '{ShaderFileName}'{ArgsDescription} loaded from the program cache in {LoadMs:F0} ms (program={Program})", shaderName, shaderFileName, argsDescription, loadMs, shader.Program);
+            }
+            else
+            {
+                RendererContext.Logger.LogInformation("Shader '{ShaderName}'{ArgsDescription} loaded from the program cache in {LoadMs:F0} ms (program={Program})", shaderName, argsDescription, loadMs, shader.Program);
+            }
+
+            return shader;
+        }
+
         private Shader CompileAndLinkShader(string shaderName, string shaderFileName, ParsedShaderData parsedData, IReadOnlyDictionary<string, byte> arguments, bool blocking = true)
         {
             var shaderProgram = -1;
+            var compileStarted = System.Diagnostics.Stopwatch.GetTimestamp();
 
             try
             {
@@ -260,19 +308,35 @@ namespace ValveResourceFormat.Renderer.Shaders
                     sources.Remove(ShaderProgramType.Fragment);
                 }
 
-                var shaderObjects = new int[sources.Count];
                 var shaderSources = new string[sources.Count];
                 var s = 0;
-                foreach (var (stage, source) in sources)
+                foreach (var (_, source) in sources)
                 {
-                    shaderObjects[s] = GraphicsDevice.CreateShader(stage, shaderFileName);
                     shaderSources[s] = source!;
                     s++;
                 }
 
-                CompileShaderObjects(shaderObjects, shaderSources, shaderFileName, shaderName, arguments, parsedData);
+                // The preprocessed source is the whole of what the program compiles to, so it is the
+                // whole of the key; the name only makes an entry recognisable to a human
+                var cacheKey = ShaderProgramCache.KeyFor([shaderFileName, .. shaderSources]);
 
                 shaderProgram = GraphicsDevice.CreateProgram(shaderFileName);
+
+                if (ProgramCache.TryLoad(cacheKey, shaderProgram))
+                {
+                    return LoadedFromCache(shaderName, shaderFileName, shaderProgram, parsedData, arguments,
+                        System.Diagnostics.Stopwatch.GetElapsedTime(compileStarted).TotalMilliseconds);
+                }
+
+                var shaderObjects = new int[sources.Count];
+                s = 0;
+                foreach (var (stage, _) in sources)
+                {
+                    shaderObjects[s] = GraphicsDevice.CreateShader(stage, shaderFileName);
+                    s++;
+                }
+
+                CompileShaderObjects(shaderObjects, shaderSources, shaderFileName, shaderName, arguments, parsedData);
 
                 // What the source declares is known before the program links, and the renderer needs it that
                 // early to have a texture bound by the first draw that samples it. Only ever grows.
@@ -289,6 +353,8 @@ namespace ValveResourceFormat.Renderer.Shaders
                     GlobalsLayout = parsedData.GlobalsLayout,
                     Program = shaderProgram,
                     ShaderObjects = shaderObjects,
+                    CacheKey = cacheKey,
+                    ProgramCache = ProgramCache,
                     RenderModes = parsedData.RenderModes,
                     UniformNames = parsedData.Uniforms,
                     SrgbUniforms = parsedData.SrgbUniforms,
@@ -303,6 +369,9 @@ namespace ValveResourceFormat.Renderer.Shaders
                 {
                     GL.AttachShader(shader.Program, shaderObj);
                 }
+
+                // Asked for before linking or the driver is free to discard what the cache wants
+                GL.ProgramParameter(shader.Program, ProgramParameterName.ProgramBinaryRetrievableHint, 1);
 
                 GL.LinkProgram(shader.Program);
 
@@ -319,15 +388,16 @@ namespace ValveResourceFormat.Renderer.Shaders
 
                 var argsDescription = GetArgumentDescription(SortAndFilterArguments(parsedData.Defines, arguments));
                 var compiledStatus = blocking ? " and linked" : string.Empty;
+                var compileMs = System.Diagnostics.Stopwatch.GetElapsedTime(compileStarted).TotalMilliseconds;
 
                 // Only Valve shader names are resolved to a different file, so naming both would be noise
                 if (IsVfxShaderName(shaderName))
                 {
-                    RendererContext.Logger.LogInformation("Shader '{ShaderName}' as '{ShaderFileName}'{ArgsDescription} compiled{CompiledStatus} successfully (program={Program})", shaderName, shaderFileName, argsDescription, compiledStatus, shader.Program);
+                    RendererContext.Logger.LogInformation("Shader '{ShaderName}' as '{ShaderFileName}'{ArgsDescription} compiled{CompiledStatus} successfully in {CompileMs:F0} ms (program={Program})", shaderName, shaderFileName, argsDescription, compiledStatus, compileMs, shader.Program);
                 }
                 else
                 {
-                    RendererContext.Logger.LogInformation("Shader '{ShaderName}'{ArgsDescription} compiled{CompiledStatus} successfully (program={Program})", shaderName, argsDescription, compiledStatus, shader.Program);
+                    RendererContext.Logger.LogInformation("Shader '{ShaderName}'{ArgsDescription} compiled{CompiledStatus} successfully in {CompileMs:F0} ms (program={Program})", shaderName, argsDescription, compiledStatus, compileMs, shader.Program);
                 }
 
                 return shader;
