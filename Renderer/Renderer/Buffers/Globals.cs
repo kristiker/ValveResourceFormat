@@ -17,7 +17,18 @@ public sealed class Globals : Buffer
 
     /// <summary>Initializes a new constant buffer bound to <see cref="ReservedBufferSlots.Globals"/>.</summary>
     /// <param name="name">Debug name, normally the shader or material this buffer belongs to.</param>
-    public Globals(string name) : base(BufferTarget.UniformBuffer, (int)ReservedBufferSlots.Globals, name)
+    public Globals(string name) : this(name, (int)ReservedBufferSlots.Globals)
+    {
+    }
+
+    /// <summary>Initializes a new constant buffer bound somewhere other than the reserved globals slot.</summary>
+    /// <remarks>
+    /// For a pass that owns the whole binding table and has more than one globals block to fill, which
+    /// happens when the blocks come from a compiled shader that declares one per stage.
+    /// </remarks>
+    /// <param name="name">Debug name, normally the shader or material this buffer belongs to.</param>
+    /// <param name="bindingPoint">The uniform buffer binding point to bind to.</param>
+    public Globals(string name, int bindingPoint) : base(BufferTarget.UniformBuffer, bindingPoint, name)
     {
     }
 

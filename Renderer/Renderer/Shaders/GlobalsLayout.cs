@@ -164,6 +164,36 @@ public sealed class GlobalsLayout
         return merged.Count == 0 ? Empty : new GlobalsLayout([.. merged.Values]);
     }
 
+    /// <summary>
+    /// Initializes a layout from members that already carry their offsets, for a shader that declares
+    /// the block itself and whose bytecode reads at offsets its own compiler assigned. Nothing is packed
+    /// and <see cref="BlockSource"/> stays empty; the source defaults stay empty too, there being no
+    /// shader source here to read them from.
+    /// </summary>
+    /// <param name="members">The members of the block, each at its offset within it.</param>
+    /// <param name="size">The size of the block in bytes, as the shader declares it.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The size is negative or over the guaranteed block size.</exception>
+    /// <exception cref="ArgumentException">A member falls outside the block.</exception>
+    public GlobalsLayout(IEnumerable<GlobalsMember> members, int size)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(size, MaxBlockSize);
+
+        Size = size;
+        defaultBytes = new byte[size];
+
+        foreach (var member in members)
+        {
+            if (member.Offset < 0 || member.Offset + member.Size > size)
+            {
+                throw new ArgumentException(
+                    $"Member '{member.Name}' spans {member.Offset}..{member.Offset + member.Size} of a {size} byte block", nameof(members));
+            }
+
+            this.members.Add(member.Name, member);
+        }
+    }
+
     private GlobalsLayout(List<GlobalsDeclaration> declarations)
     {
         if (declarations.Count == 0)
