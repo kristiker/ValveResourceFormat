@@ -7,14 +7,17 @@ namespace ValveResourceFormat.Renderer.Vulkan;
 /// <summary>
 /// Proof that a shader written as a GLSL string reaches the screen through this backend: glslang
 /// compiles it to SPIR-V exactly as the plan called for. Vertex data comes from a real
-/// <see cref="VulkanBuffer"/> (interleaved position/color, one binding), one push constant carries
-/// the MVP matrix; still no descriptor sets, which is the bindless-resource-binding step this only
-/// has to prove the way in for.
+/// <see cref="VulkanBuffer"/> (interleaved position/color, one binding); the texture comes from
+/// <see cref="VulkanBindlessTextures"/>, looked up by an index carried in the push constants
+/// alongside the MVP matrix, rather than a per-draw descriptor bind.
 /// </summary>
 public sealed unsafe class VulkanTrianglePipeline : IDisposable
 {
     /// <summary>Byte size and layout of one <see cref="VulkanBuffer"/> vertex: position then color.</summary>
     public const int VertexStride = 5 * sizeof(float);
+
+    /// <summary>The push-constant block every draw writes: the MVP matrix, then the bindless texture index.</summary>
+    public readonly record struct PushConstants(Matrix4x4 Mvp, uint TextureIndex);
 
     private const string VertexSource = """
         #version 450
@@ -22,42 +25,56 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
         layout(push_constant) uniform PushConstants
         {
             mat4 mvp;
+            uint textureIndex;
         } pc;
 
         layout(location = 0) in vec2 inPosition;
         layout(location = 1) in vec3 inColor;
 
         layout(location = 0) out vec3 vtxColor;
+        layout(location = 1) out vec2 vtxUV;
 
         void main()
         {
             gl_Position = pc.mvp * vec4(inPosition, 0.0, 1.0);
             vtxColor = inColor;
+            vtxUV = inPosition + 0.5;
         }
         """;
 
     private const string FragmentSource = """
         #version 450
+        #extension GL_EXT_nonuniform_qualifier : require
+
+        layout(push_constant) uniform PushConstants
+        {
+            mat4 mvp;
+            uint textureIndex;
+        } pc;
+
+        layout(set = 0, binding = 0) uniform sampler2D bindlessTextures[];
 
         layout(location = 0) in vec3 vtxColor;
+        layout(location = 1) in vec2 vtxUV;
         layout(location = 0) out vec4 outColor;
 
         void main()
         {
-            outColor = vec4(vtxColor, 1.0);
+            vec4 sampled = texture(bindlessTextures[nonuniformEXT(pc.textureIndex)], vtxUV);
+            outColor = vec4(vtxColor, 1.0) * sampled;
         }
         """;
 
     private readonly VulkanDevice device;
 
-    /// <summary>The pipeline layout, holding the one push-constant range every draw writes.</summary>
+    /// <summary>The pipeline layout: set 0 is the shared bindless textures set, plus the push-constant range every draw writes.</summary>
     public VkPipelineLayout Layout { get; }
 
     /// <summary>The graphics pipeline, built against dynamic rendering with no depth attachment.</summary>
     public VkPipeline Handle { get; }
 
     /// <summary>Compiles the shader strings above and builds the pipeline for the given swapchain color format.</summary>
-    public VulkanTrianglePipeline(VulkanDevice device, VkFormat colorFormat)
+    public VulkanTrianglePipeline(VulkanDevice device, VkFormat colorFormat, VulkanBindlessTextures bindlessTextures)
     {
         this.device = device;
 
@@ -71,13 +88,17 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
         {
             var pushConstantRange = new VkPushConstantRange
             {
-                stageFlags = VkShaderStageFlags.Vertex,
+                stageFlags = VkShaderStageFlags.Vertex | VkShaderStageFlags.Fragment,
                 offset = 0,
-                size = (uint)sizeof(Matrix4x4),
+                size = (uint)sizeof(PushConstants),
             };
+
+            var setLayout = bindlessTextures.Layout;
 
             var layoutCreateInfo = new VkPipelineLayoutCreateInfo
             {
+                setLayoutCount = 1,
+                pSetLayouts = &setLayout,
                 pushConstantRangeCount = 1,
                 pPushConstantRanges = &pushConstantRange,
             };

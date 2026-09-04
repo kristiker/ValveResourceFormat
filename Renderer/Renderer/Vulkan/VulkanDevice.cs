@@ -133,6 +133,23 @@ public sealed unsafe class VulkanDevice : IDisposable
         var features12 = new VkPhysicalDeviceVulkan12Features
         {
             timelineSemaphore = true,
+            // The bindless texture/buffer arrays VulkanBindlessResources builds: one binding whose
+            // descriptor count exceeds what is actually written (partially bound), updatable while
+            // in-flight command buffers still reference the set (update-after-bind), indexed
+            // dynamically in the shader (runtime array) rather than through a compile-time constant.
+            descriptorBindingSampledImageUpdateAfterBind = true,
+            descriptorBindingStorageImageUpdateAfterBind = true,
+            descriptorBindingUniformBufferUpdateAfterBind = true,
+            descriptorBindingStorageBufferUpdateAfterBind = true,
+            descriptorBindingPartiallyBound = true,
+            descriptorBindingVariableDescriptorCount = true,
+            runtimeDescriptorArray = true,
+            // GLSL's nonuniformEXT() qualifier, needed when the array index (here, a bindless texture
+            // index carried in a push constant) is not known to be the same across every invocation.
+            shaderSampledImageArrayNonUniformIndexing = true,
+            shaderStorageImageArrayNonUniformIndexing = true,
+            shaderUniformBufferArrayNonUniformIndexing = true,
+            shaderStorageBufferArrayNonUniformIndexing = true,
         };
 
         var features13 = new VkPhysicalDeviceVulkan13Features
@@ -222,7 +239,11 @@ public sealed unsafe class VulkanDevice : IDisposable
 
     private static bool SupportsRequiredFeatures(VulkanInstance instance, VkPhysicalDevice physicalDevice)
     {
-        var features13 = new VkPhysicalDeviceVulkan13Features();
+        var features12 = new VkPhysicalDeviceVulkan12Features();
+        var features13 = new VkPhysicalDeviceVulkan13Features
+        {
+            pNext = &features12,
+        };
         var features2 = new VkPhysicalDeviceFeatures2
         {
             pNext = &features13,
@@ -230,7 +251,19 @@ public sealed unsafe class VulkanDevice : IDisposable
 
         instance.Api.vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
 
-        return features13.dynamicRendering && features13.synchronization2;
+        return features13.dynamicRendering
+            && features13.synchronization2
+            && features12.descriptorBindingSampledImageUpdateAfterBind
+            && features12.descriptorBindingStorageImageUpdateAfterBind
+            && features12.descriptorBindingUniformBufferUpdateAfterBind
+            && features12.descriptorBindingStorageBufferUpdateAfterBind
+            && features12.descriptorBindingPartiallyBound
+            && features12.descriptorBindingVariableDescriptorCount
+            && features12.runtimeDescriptorArray
+            && features12.shaderSampledImageArrayNonUniformIndexing
+            && features12.shaderStorageImageArrayNonUniformIndexing
+            && features12.shaderUniformBufferArrayNonUniformIndexing
+            && features12.shaderStorageBufferArrayNonUniformIndexing;
     }
 
     private static bool TryFindGraphicsPresentQueueFamily(VulkanInstance instance, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, out uint queueFamilyIndex)

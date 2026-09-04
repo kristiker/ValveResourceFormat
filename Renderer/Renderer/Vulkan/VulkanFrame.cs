@@ -47,7 +47,8 @@ public sealed unsafe class VulkanFrame : IDisposable
     /// of date; the caller should call <see cref="VulkanSwapchain.Recreate"/> and try again next
     /// frame rather than treat this as an error.
     /// </summary>
-    public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor, VulkanTrianglePipeline? triangle = null, VulkanBuffer? vertexBuffer = null, Matrix4x4 mvp = default)
+    public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor, VulkanTrianglePipeline? triangle = null,
+        VulkanBindlessTextures? bindlessTextures = null, VulkanBuffer? vertexBuffer = null, Matrix4x4 mvp = default, uint textureIndex = 0)
     {
         device.Api.vkWaitForFences(inFlightFence, true, ulong.MaxValue).CheckResult();
 
@@ -104,7 +105,15 @@ public sealed unsafe class VulkanFrame : IDisposable
             device.Api.vkCmdSetViewport(commandBuffer, 0, viewport);
             device.Api.vkCmdSetScissor(commandBuffer, 0, scissor);
             device.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Handle);
-            device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex, 0, (uint)sizeof(Matrix4x4), &mvp);
+
+            if (bindlessTextures != null)
+            {
+                var set = bindlessTextures.Set;
+                device.Api.vkCmdBindDescriptorSets(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Layout, 0, 1, &set, 0, null);
+            }
+
+            var pushConstants = new VulkanTrianglePipeline.PushConstants(mvp, textureIndex);
+            device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex | VkShaderStageFlags.Fragment, 0, (uint)sizeof(VulkanTrianglePipeline.PushConstants), &pushConstants);
 
             if (vertexBuffer != null)
             {
@@ -144,35 +153,7 @@ public sealed unsafe class VulkanFrame : IDisposable
 
     private void TransitionImage(VkImage image, ref VkImageLayout currentLayout, VkImageLayout targetLayout,
         VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
-    {
-        var barrier = new VkImageMemoryBarrier2
-        {
-            srcStageMask = srcStage,
-            srcAccessMask = srcAccess,
-            dstStageMask = dstStage,
-            dstAccessMask = dstAccess,
-            oldLayout = currentLayout,
-            newLayout = targetLayout,
-            image = image,
-            subresourceRange = new VkImageSubresourceRange
-            {
-                aspectMask = VkImageAspectFlags.Color,
-                baseMipLevel = 0,
-                levelCount = 1,
-                baseArrayLayer = 0,
-                layerCount = 1,
-            },
-        };
-
-        var dependencyInfo = new VkDependencyInfo
-        {
-            imageMemoryBarrierCount = 1,
-            pImageMemoryBarriers = &barrier,
-        };
-
-        device.Api.vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
-        currentLayout = targetLayout;
-    }
+        => VulkanBarrier.TransitionImage(device.Api, commandBuffer, image, VkImageAspectFlags.Color, ref currentLayout, targetLayout, srcStage, srcAccess, dstStage, dstAccess);
 
     /// <summary>Waits for the in-flight frame to finish, then destroys this frame's sync objects.</summary>
     public void Dispose()

@@ -34,8 +34,11 @@ public sealed class VulkanClearTestForm : Form
     private VkSurfaceKHR surface;
     private VulkanSwapchain? swapchain;
     private VulkanFrame? frame;
+    private VulkanBindlessTextures? bindlessTextures;
     private VulkanTrianglePipeline? triangle;
     private VulkanBuffer? vertexBuffer;
+    private VulkanImage? checkerTexture;
+    private uint checkerTextureIndex;
     private bool swapchainDirty;
     private double lastVertexBufferRebuild;
     private int vertexBufferGeneration;
@@ -82,10 +85,38 @@ public sealed class VulkanClearTestForm : Form
         device = VulkanDevice.Create(instance, surface, logger);
         swapchain = new VulkanSwapchain(device, surface, (uint)hostControl.Width, (uint)hostControl.Height);
         frame = new VulkanFrame(device);
-        triangle = new VulkanTrianglePipeline(device, swapchain.Format);
+        bindlessTextures = new VulkanBindlessTextures(device);
+        triangle = new VulkanTrianglePipeline(device, swapchain.Format, bindlessTextures);
         vertexBuffer = CreateVertexBuffer(device, vertexBufferGeneration);
 
+        checkerTexture = CreateCheckerTexture(device);
+        checkerTextureIndex = bindlessTextures.Register(checkerTexture.View, bindlessTextures.DefaultSampler);
+
         renderTimer.Start();
+    }
+
+    // 8x8 magenta/white checkerboard: visually unmistakable as "a real sampled texture", not a
+    // solid fallback color, proving VulkanImage's staging upload actually reached the GPU.
+    private static VulkanImage CreateCheckerTexture(VulkanDevice device)
+    {
+        const int size = 8;
+        var pixels = new byte[size * size * 4];
+
+        for (var y = 0; y < size; y++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var isMagenta = ((x + y) & 1) == 0;
+                var offset = (y * size + x) * 4;
+
+                pixels[offset + 0] = isMagenta ? (byte)230 : (byte)255;
+                pixels[offset + 1] = isMagenta ? (byte)40 : (byte)255;
+                pixels[offset + 2] = isMagenta ? (byte)200 : (byte)255;
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        return VulkanImage.CreateRgba8(device, "Checker test texture", size, size, pixels);
     }
 
     // Interleaved [x, y, r, g, b] per vertex, matching VulkanTrianglePipeline.VertexStride. The
@@ -138,7 +169,7 @@ public sealed class VulkanClearTestForm : Form
 
         var mvp = Matrix4x4.CreateRotationZ((float)clock.Elapsed.TotalSeconds);
 
-        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, vertexBuffer, mvp))
+        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, bindlessTextures, vertexBuffer, mvp, checkerTextureIndex))
         {
             swapchainDirty = true;
         }
@@ -151,7 +182,9 @@ public sealed class VulkanClearTestForm : Form
 
         frame?.Dispose();
         vertexBuffer?.Dispose();
+        checkerTexture?.Dispose();
         triangle?.Dispose();
+        bindlessTextures?.Dispose();
         swapchain?.Dispose();
 
         if (instance != null && surface.IsNotNull)
