@@ -42,6 +42,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <PackageReference Include="NLayer" Version="2.0.1" />
     <PackageReference Include="OpenTK.Graphics" Version="4.9.4" />
+    <PackageReference Include="Vortice.Vulkan" Version="3.2.3" />
   </ItemGroup>
 
   <ItemGroup>

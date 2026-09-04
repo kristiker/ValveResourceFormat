@@ -44,6 +44,15 @@ namespace GUI
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
+            // Debug entry point for the Vulkan backend scaffolding milestone: a window that clears
+            // itself via a real swapchain, embedded the same way the OpenGL viewers are. Not reachable
+            // from the main menu yet, since there is nothing to render but a clear color so far.
+            if (args.Length > 0 && args[0] == "--vulkan-test")
+            {
+                Application.Run(new GUI.Types.GLViewers.VulkanClearTestForm());
+                return;
+            }
+
             if (args.Length > 0 && Ipc.TryForwardToExistingInstance(args))
             {
                 return;
