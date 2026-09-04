@@ -7,6 +7,7 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using ValveResourceFormat.Renderer;
+using ValveResourceFormat.Renderer.Buffers;
 using ValveResourceFormat.Renderer.Shaders;
 using ValveResourceFormat.Renderer.Vulkan;
 using Vortice.Vulkan;
@@ -33,12 +34,13 @@ public sealed class VulkanClearTestForm : Form
     private NativeWindow? nativeWindow;
     private VulkanInstance? instance;
     private VulkanDevice? device;
+    private GraphicsDevice? graphicsDevice;
     private VkSurfaceKHR surface;
     private VulkanSwapchain? swapchain;
     private VulkanFrame? frame;
     private VulkanBindlessTextures? bindlessTextures;
     private VulkanTrianglePipeline? triangle;
-    private VulkanBuffer? vertexBuffer;
+    private int vertexBufferHandle;
     private VulkanImage? checkerTexture;
     private uint checkerTextureIndex;
     private bool swapchainDirty;
@@ -49,14 +51,14 @@ public sealed class VulkanClearTestForm : Form
     private VulkanImage? depthImage;
     private VulkanFlatColorShader? flatColorShader;
     private VulkanPipelineCache? pipelineCache;
-    private VulkanBuffer? sceneVertexBuffer;
+    private int sceneVertexBufferHandle;
     private double lastCacheStatsLog;
 
     // Milestone-5: compute.
     private const uint PlasmaSize = 256;
     private VulkanImage? plasmaImage;
     private VulkanComputeShader? plasmaCompute;
-    private VulkanBuffer? plasmaQuadVertexBuffer;
+    private int plasmaQuadVertexBufferHandle;
     private uint plasmaTextureIndex;
     private VkImageLayout plasmaLayout;
 
@@ -104,7 +106,17 @@ public sealed class VulkanClearTestForm : Form
         frame = new VulkanFrame(device);
         bindlessTextures = new VulkanBindlessTextures(device);
         triangle = new VulkanTrianglePipeline(device, swapchain.Format, bindlessTextures, VkFormat.D32Sfloat);
-        vertexBuffer = CreateVertexBuffer(device, vertexBufferGeneration);
+
+        // Connects this test form's object creation to the real GraphicsDevice/GraphicsContext the
+        // rest of the renderer already calls, rather than creating VulkanBuffer directly: proves the
+        // GL-shaped int-handle API genuinely dispatches to Vulkan and hands back something usable in
+        // a real Vulkan call. Kept current for the form's whole lifetime - there is no per-frame
+        // Begin/End cycle here yet (see the type remarks on what this milestone does not cover), so a
+        // single standing surface-less context is the honest way to use the static creation API.
+        graphicsDevice = GraphicsDevice.Create(device);
+        graphicsDevice.CreateContext().Begin();
+
+        vertexBufferHandle = CreateVertexBuffer(vertexBufferGeneration);
 
         checkerTexture = CreateCheckerTexture(device);
         var checkerSampler = bindlessTextures.Samplers.GetOrCreate(RsTextureAddressMode.Wrap, RsTextureAddressMode.Wrap, mipmaps: false);
@@ -115,13 +127,13 @@ public sealed class VulkanClearTestForm : Form
         depthImage = VulkanImage.CreateDepth(device, "Test depth buffer", (uint)hostControl.Width, (uint)hostControl.Height);
         flatColorShader = new VulkanFlatColorShader(device);
         pipelineCache = new VulkanPipelineCache(device);
-        sceneVertexBuffer = VulkanBuffer.CreateWithData(device, "Render state demo triangles", SceneVertices, VkBufferUsageFlags.VertexBuffer);
+        sceneVertexBufferHandle = GraphicsDevice.CreateBuffer("Render state demo triangles", SceneVertices.AsSpan(), BufferUsage.Static);
 
         plasmaImage = VulkanImage.CreateStorage(device, "Compute plasma target", PlasmaSize, PlasmaSize, VkFormat.R8G8B8A8Unorm);
         plasmaCompute = new VulkanComputeShader(device, plasmaImage);
         var plasmaSampler = bindlessTextures.Samplers.GetOrCreate(RsTextureAddressMode.Clamp, RsTextureAddressMode.Clamp, mipmaps: false);
         plasmaTextureIndex = bindlessTextures.Register(plasmaImage.View, plasmaSampler);
-        plasmaQuadVertexBuffer = VulkanBuffer.CreateWithData(device, "Plasma quad", PlasmaQuadVertices, VkBufferUsageFlags.VertexBuffer);
+        plasmaQuadVertexBufferHandle = GraphicsDevice.CreateBuffer("Plasma quad", PlasmaQuadVertices.AsSpan(), BufferUsage.Static);
 
         renderTimer.Start();
     }
@@ -175,7 +187,7 @@ public sealed class VulkanClearTestForm : Form
         device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex | VkShaderStageFlags.Fragment,
             0, (uint)sizeof(VulkanTrianglePipeline.PushConstants), &pushConstants);
 
-        device.Api.vkCmdBindVertexBuffer(commandBuffer, 0, plasmaQuadVertexBuffer!.Handle);
+        device.Api.vkCmdBindVertexBuffer(commandBuffer, 0, GraphicsDevice.ResolveVulkanBuffer(plasmaQuadVertexBufferHandle).Handle);
         device.Api.vkCmdDraw(commandBuffer, 6, 1, 0, 0);
     }
 
@@ -243,7 +255,7 @@ public sealed class VulkanClearTestForm : Form
         var shader = flatColorShader!;
         var cache = pipelineCache!;
 
-        device!.Api.vkCmdBindVertexBuffer(commandBuffer, 0, sceneVertexBuffer!.Handle);
+        device!.Api.vkCmdBindVertexBuffer(commandBuffer, 0, GraphicsDevice.ResolveVulkanBuffer(sceneVertexBufferHandle).Handle);
 
         var vertexBinding = VulkanFlatColorShader.VertexBinding;
         var vertexAttribute = VulkanFlatColorShader.VertexAttribute;
@@ -335,7 +347,9 @@ public sealed class VulkanClearTestForm : Form
 
     // Interleaved [x, y, r, g, b] per vertex, matching VulkanTrianglePipeline.VertexStride. The
     // scale pulses with the buffer's generation so a rebuild is visible, not just a log line.
-    private static VulkanBuffer CreateVertexBuffer(VulkanDevice device, int generation)
+    // Created through GraphicsDevice rather than VulkanBuffer directly - see the comment where
+    // graphicsDevice is created in OnHostControlLoad.
+    private static int CreateVertexBuffer(int generation)
     {
         var scale = 0.6f + 0.35f * MathF.Sin(generation);
 
@@ -346,7 +360,7 @@ public sealed class VulkanClearTestForm : Form
             -0.5f * scale, 0.5f * scale, 0.3f, 0.4f, 0.95f,
         ];
 
-        return VulkanBuffer.CreateWithData(device, "Triangle vertices", vertices, VkBufferUsageFlags.VertexBuffer);
+        return GraphicsDevice.CreateBuffer("Triangle vertices", vertices, BufferUsage.Static);
     }
 
     // Rebuilds the vertex buffer every couple of seconds and disposes the old one immediately -
@@ -361,9 +375,9 @@ public sealed class VulkanClearTestForm : Form
         lastVertexBufferRebuild = clock.Elapsed.TotalSeconds;
         vertexBufferGeneration++;
 
-        var old = vertexBuffer;
-        vertexBuffer = CreateVertexBuffer(device!, vertexBufferGeneration);
-        old?.Dispose();
+        var old = vertexBufferHandle;
+        vertexBufferHandle = CreateVertexBuffer(vertexBufferGeneration);
+        GraphicsDevice.DeleteBuffer(old);
     }
 
     private void RenderFrame()
@@ -391,7 +405,7 @@ public sealed class VulkanClearTestForm : Form
         // Kept static (no rotation): without a real projection matrix, spinning these around Y would
         // skew flat clip-space triangles in a way that reads as broken rather than "3D", and the point
         // here is to see the depth/blend/cull result clearly, not to fake a camera.
-        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, bindlessTextures, vertexBuffer, mvp, checkerTextureIndex,
+        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, bindlessTextures, GraphicsDevice.ResolveVulkanBuffer(vertexBufferHandle), mvp, checkerTextureIndex,
             depthImage,
             extraDraws: commandBuffer =>
             {
@@ -410,15 +424,20 @@ public sealed class VulkanClearTestForm : Form
         device?.WaitIdle();
 
         frame?.Dispose();
-        vertexBuffer?.Dispose();
+
+        if (graphicsDevice != null)
+        {
+            GraphicsDevice.DeleteBuffer(vertexBufferHandle);
+            GraphicsDevice.DeleteBuffer(sceneVertexBufferHandle);
+            GraphicsDevice.DeleteBuffer(plasmaQuadVertexBufferHandle);
+        }
+
         checkerTexture?.Dispose();
         triangle?.Dispose();
         bindlessTextures?.Dispose();
-        sceneVertexBuffer?.Dispose();
         pipelineCache?.Dispose();
         flatColorShader?.Dispose();
         depthImage?.Dispose();
-        plasmaQuadVertexBuffer?.Dispose();
         plasmaCompute?.Dispose();
         plasmaImage?.Dispose();
         swapchain?.Dispose();
