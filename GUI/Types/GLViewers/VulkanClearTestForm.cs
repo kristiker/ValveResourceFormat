@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Numerics;
 using System.Windows.Forms;
 using GUI.Controls;
 using Microsoft.Extensions.Logging;
@@ -11,10 +13,12 @@ using NativeWindow = OpenTK.Windowing.Desktop.NativeWindow;
 namespace GUI.Types.GLViewers;
 
 /// <summary>
-/// Milestone-1 scaffolding: a real WinForms window, embedding a Vulkan swapchain the same way
+/// Vulkan backend scaffolding: a real WinForms window, embedding a Vulkan swapchain the same way
 /// <see cref="GLBaseControl"/> embeds an OpenGL context - a hidden GLFW window reparented as a
 /// native child - proving the surface can be created against the actual GUI, not a standalone
-/// test window. Opened via a debug entry point, not the main menu; see <c>GUI/Program.cs</c>.
+/// test window. Draws one triangle from a GLSL string compiled through glslang, proving the
+/// shader-string-to-draw-call path the plan called for. Opened via a debug entry point, not the
+/// main menu; see <c>GUI/Program.cs</c>.
 /// </summary>
 public sealed class VulkanClearTestForm : Form
 {
@@ -22,13 +26,15 @@ public sealed class VulkanClearTestForm : Form
 
     private readonly GLControl hostControl;
     private readonly Timer renderTimer;
+    private readonly Stopwatch clock = Stopwatch.StartNew();
 
     private NativeWindow? nativeWindow;
     private VulkanInstance? instance;
     private VulkanDevice? device;
     private VkSurfaceKHR surface;
     private VulkanSwapchain? swapchain;
-    private VulkanClearFrame? frame;
+    private VulkanFrame? frame;
+    private VulkanTrianglePipeline? triangle;
     private bool swapchainDirty;
 
     public VulkanClearTestForm()
@@ -72,7 +78,8 @@ public sealed class VulkanClearTestForm : Form
         surface = VulkanWin32Surface.Create(instance, hwnd);
         device = VulkanDevice.Create(instance, surface, logger);
         swapchain = new VulkanSwapchain(device, surface, (uint)hostControl.Width, (uint)hostControl.Height);
-        frame = new VulkanClearFrame(device);
+        frame = new VulkanFrame(device);
+        triangle = new VulkanTrianglePipeline(device, swapchain.Format);
 
         renderTimer.Start();
     }
@@ -90,7 +97,9 @@ public sealed class VulkanClearTestForm : Form
             swapchainDirty = false;
         }
 
-        if (!frame.RenderAndPresent(swapchain, ClearColor))
+        var mvp = Matrix4x4.CreateRotationZ((float)clock.Elapsed.TotalSeconds);
+
+        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, mvp))
         {
             swapchainDirty = true;
         }
@@ -102,6 +111,7 @@ public sealed class VulkanClearTestForm : Form
         device?.WaitIdle();
 
         frame?.Dispose();
+        triangle?.Dispose();
         swapchain?.Dispose();
 
         if (instance != null && surface.IsNotNull)

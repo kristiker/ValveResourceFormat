@@ -1,24 +1,26 @@
+using System.Numerics;
 using Vortice.Vulkan;
 using static Vortice.Vulkan.Vulkan;
 
 namespace ValveResourceFormat.Renderer.Vulkan;
 
 /// <summary>
-/// Milestone-1 proof that the swapchain and command submission work end to end: records and
-/// submits one command buffer per frame that clears the acquired image via dynamic rendering
-/// (no <c>VkRenderPass</c>/<c>VkFramebuffer</c>, matching how the GL backend has no default
-/// framebuffer object to create either) and presents it. Fully CPU/GPU-serialized - one command
-/// buffer, one fence, no frames-in-flight overlap - since proving correctness matters more than
-/// throughput at this stage; that comes with the delete-queue and multi-frame-in-flight milestone.
+/// Records and submits one command buffer per frame: acquire, clear the image via dynamic
+/// rendering (no <c>VkRenderPass</c>/<c>VkFramebuffer</c>, matching how the GL backend has no
+/// default framebuffer object to create either), optionally draw <see cref="VulkanTrianglePipeline"/>,
+/// then present. Fully CPU/GPU-serialized - one command buffer, one fence, no frames-in-flight
+/// overlap - since proving correctness matters more than throughput at this stage; that comes with
+/// the delete-queue and multi-frame-in-flight milestone.
 /// </summary>
-public sealed unsafe class VulkanClearFrame : IDisposable
+public sealed unsafe class VulkanFrame : IDisposable
 {
     private readonly VulkanDevice device;
     private readonly VkCommandBuffer commandBuffer;
     private readonly VkFence inFlightFence;
     private readonly VkSemaphore imageAvailableSemaphore;
 
-    public VulkanClearFrame(VulkanDevice device)
+    /// <summary>Allocates this frame's command buffer and sync objects against <paramref name="device"/>.</summary>
+    public VulkanFrame(VulkanDevice device)
     {
         this.device = device;
 
@@ -40,11 +42,12 @@ public sealed unsafe class VulkanClearFrame : IDisposable
     }
 
     /// <summary>
-    /// Acquires the next image, clears it, and presents it. Returns <see langword="false"/> if the
-    /// swapchain came back out of date; the caller should call <see cref="VulkanSwapchain.Recreate"/>
-    /// and try again next frame rather than treat this as an error.
+    /// Acquires the next image, clears it (and draws <paramref name="triangle"/> over the clear if
+    /// given one), and presents it. Returns <see langword="false"/> if the swapchain came back out
+    /// of date; the caller should call <see cref="VulkanSwapchain.Recreate"/> and try again next
+    /// frame rather than treat this as an error.
     /// </summary>
-    public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor)
+    public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor, VulkanTrianglePipeline? triangle = null, Matrix4x4 mvp = default)
     {
         device.Api.vkWaitForFences(inFlightFence, true, ulong.MaxValue).CheckResult();
 
@@ -81,6 +84,25 @@ public sealed unsafe class VulkanClearFrame : IDisposable
         };
 
         device.Api.vkCmdBeginRendering(commandBuffer, &renderingInfo);
+
+        if (triangle != null)
+        {
+            var viewport = new VkViewport
+            {
+                width = swapchain.Extent.width,
+                height = swapchain.Extent.height,
+                minDepth = 0.0f,
+                maxDepth = 1.0f,
+            };
+            var scissor = new VkRect2D { extent = swapchain.Extent };
+
+            device.Api.vkCmdSetViewport(commandBuffer, 0, viewport);
+            device.Api.vkCmdSetScissor(commandBuffer, 0, scissor);
+            device.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Handle);
+            device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex, 0, (uint)sizeof(Matrix4x4), &mvp);
+            device.Api.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        }
+
         device.Api.vkCmdEndRendering(commandBuffer);
 
         TransitionImage(image, ref swapchain.ImageLayout(imageIndex), VkImageLayout.PresentSrcKHR,

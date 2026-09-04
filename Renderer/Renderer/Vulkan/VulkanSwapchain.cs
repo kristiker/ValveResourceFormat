@@ -40,6 +40,7 @@ public sealed unsafe class VulkanSwapchain : IDisposable
     /// <summary>The semaphore signaled once presentation of this index's image no longer needs its contents.</summary>
     public VkSemaphore RenderFinishedSemaphore(int index) => renderFinishedSemaphores[index];
 
+    /// <summary>Creates the swapchain at the given pixel size.</summary>
     public VulkanSwapchain(VulkanDevice device, VkSurfaceKHR surface, uint width, uint height)
     {
         this.device = device;
