@@ -42,13 +42,21 @@ public sealed unsafe class VulkanFrame : IDisposable
     }
 
     /// <summary>
-    /// Acquires the next image, clears it (and draws <paramref name="triangle"/> over the clear if
-    /// given one), and presents it. Returns <see langword="false"/> if the swapchain came back out
-    /// of date; the caller should call <see cref="VulkanSwapchain.Recreate"/> and try again next
-    /// frame rather than treat this as an error.
+    /// Acquires the next image, runs <paramref name="computeDispatch"/> if given one (before
+    /// rendering starts - <c>vkCmdDispatch</c> is not allowed inside a
+    /// <c>vkCmdBeginRendering</c>/<c>vkCmdEndRendering</c> pair, dynamic or not), clears the image
+    /// (and draws <paramref name="triangle"/> over the clear if given one, then runs
+    /// <paramref name="extraDraws"/> if given one - viewport and scissor are already set to the
+    /// swapchain extent by the time it runs, since every pipeline drawn through
+    /// <see cref="VulkanPipelineCache"/> declares both as dynamic state), and presents it. Returns
+    /// <see langword="false"/> if the swapchain came back out of date; the caller should call
+    /// <see cref="VulkanSwapchain.Recreate"/> and try again next frame rather than treat this as an
+    /// error. Depth-tests against <paramref name="depthImage"/> when one is given, clearing it to the
+    /// far plane (1.0) first.
     /// </summary>
     public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor, VulkanTrianglePipeline? triangle = null,
-        VulkanBindlessTextures? bindlessTextures = null, VulkanBuffer? vertexBuffer = null, Matrix4x4 mvp = default, uint textureIndex = 0)
+        VulkanBindlessTextures? bindlessTextures = null, VulkanBuffer? vertexBuffer = null, Matrix4x4 mvp = default, uint textureIndex = 0,
+        VulkanImage? depthImage = null, Action<VkCommandBuffer>? extraDraws = null, Action<VkCommandBuffer>? computeDispatch = null)
     {
         device.Api.vkWaitForFences(inFlightFence, true, ulong.MaxValue).CheckResult();
 
@@ -66,6 +74,8 @@ public sealed unsafe class VulkanFrame : IDisposable
         device.Api.vkResetCommandBuffer(commandBuffer, VkCommandBufferResetFlags.None).CheckResult();
         device.Api.vkBeginCommandBuffer(commandBuffer, VkCommandBufferUsageFlags.OneTimeSubmit).CheckResult();
 
+        computeDispatch?.Invoke(commandBuffer);
+
         var image = swapchain.Image(imageIndex);
 
         TransitionImage(image, ref swapchain.ImageLayout(imageIndex), VkImageLayout.ColorAttachmentOptimal,
@@ -81,29 +91,40 @@ public sealed unsafe class VulkanFrame : IDisposable
             clearValue = new VkClearValue { color = clearColor },
         };
 
+        var depthAttachment = new VkRenderingAttachmentInfo
+        {
+            imageView = depthImage?.View ?? default,
+            imageLayout = VkImageLayout.DepthAttachmentOptimal,
+            loadOp = VkAttachmentLoadOp.Clear,
+            storeOp = VkAttachmentStoreOp.DontCare,
+            clearValue = new VkClearValue { depthStencil = new VkClearDepthStencilValue(1.0f, 0) },
+        };
+
         var renderingInfo = new VkRenderingInfo
         {
             renderArea = new VkRect2D { extent = swapchain.Extent },
             layerCount = 1,
             colorAttachmentCount = 1,
             pColorAttachments = &colorAttachment,
+            pDepthAttachment = depthImage != null ? &depthAttachment : null,
         };
 
         device.Api.vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
+        var viewport = new VkViewport
+        {
+            width = swapchain.Extent.width,
+            height = swapchain.Extent.height,
+            minDepth = 0.0f,
+            maxDepth = 1.0f,
+        };
+        var scissor = new VkRect2D { extent = swapchain.Extent };
+
+        device.Api.vkCmdSetViewport(commandBuffer, 0, viewport);
+        device.Api.vkCmdSetScissor(commandBuffer, 0, scissor);
+
         if (triangle != null)
         {
-            var viewport = new VkViewport
-            {
-                width = swapchain.Extent.width,
-                height = swapchain.Extent.height,
-                minDepth = 0.0f,
-                maxDepth = 1.0f,
-            };
-            var scissor = new VkRect2D { extent = swapchain.Extent };
-
-            device.Api.vkCmdSetViewport(commandBuffer, 0, viewport);
-            device.Api.vkCmdSetScissor(commandBuffer, 0, scissor);
             device.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Handle);
 
             if (bindlessTextures != null)
@@ -121,6 +142,8 @@ public sealed unsafe class VulkanFrame : IDisposable
                 device.Api.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
             }
         }
+
+        extraDraws?.Invoke(commandBuffer);
 
         device.Api.vkCmdEndRendering(commandBuffer);
 

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using ValveResourceFormat.Renderer;
 using ValveResourceFormat.Renderer.Shaders;
 using ValveResourceFormat.Renderer.Vulkan;
 using Vortice.Vulkan;
@@ -43,6 +44,21 @@ public sealed class VulkanClearTestForm : Form
     private bool swapchainDirty;
     private double lastVertexBufferRebuild;
     private int vertexBufferGeneration;
+
+    // Milestone-4: render state -> PSO cache.
+    private VulkanImage? depthImage;
+    private VulkanFlatColorShader? flatColorShader;
+    private VulkanPipelineCache? pipelineCache;
+    private VulkanBuffer? sceneVertexBuffer;
+    private double lastCacheStatsLog;
+
+    // Milestone-5: compute.
+    private const uint PlasmaSize = 256;
+    private VulkanImage? plasmaImage;
+    private VulkanComputeShader? plasmaCompute;
+    private VulkanBuffer? plasmaQuadVertexBuffer;
+    private uint plasmaTextureIndex;
+    private VkImageLayout plasmaLayout;
 
     public VulkanClearTestForm()
     {
@@ -87,7 +103,7 @@ public sealed class VulkanClearTestForm : Form
         swapchain = new VulkanSwapchain(device, surface, (uint)hostControl.Width, (uint)hostControl.Height);
         frame = new VulkanFrame(device);
         bindlessTextures = new VulkanBindlessTextures(device);
-        triangle = new VulkanTrianglePipeline(device, swapchain.Format, bindlessTextures);
+        triangle = new VulkanTrianglePipeline(device, swapchain.Format, bindlessTextures, VkFormat.D32Sfloat);
         vertexBuffer = CreateVertexBuffer(device, vertexBufferGeneration);
 
         checkerTexture = CreateCheckerTexture(device);
@@ -96,7 +112,172 @@ public sealed class VulkanClearTestForm : Form
 
         RunPushConstantPackingSmokeTest();
 
+        depthImage = VulkanImage.CreateDepth(device, "Test depth buffer", (uint)hostControl.Width, (uint)hostControl.Height);
+        flatColorShader = new VulkanFlatColorShader(device);
+        pipelineCache = new VulkanPipelineCache(device);
+        sceneVertexBuffer = VulkanBuffer.CreateWithData(device, "Render state demo triangles", SceneVertices, VkBufferUsageFlags.VertexBuffer);
+
+        plasmaImage = VulkanImage.CreateStorage(device, "Compute plasma target", PlasmaSize, PlasmaSize, VkFormat.R8G8B8A8Unorm);
+        plasmaCompute = new VulkanComputeShader(device, plasmaImage);
+        var plasmaSampler = bindlessTextures.Samplers.GetOrCreate(RsTextureAddressMode.Clamp, RsTextureAddressMode.Clamp, mipmaps: false);
+        plasmaTextureIndex = bindlessTextures.Register(plasmaImage.View, plasmaSampler);
+        plasmaQuadVertexBuffer = VulkanBuffer.CreateWithData(device, "Plasma quad", PlasmaQuadVertices, VkBufferUsageFlags.VertexBuffer);
+
         renderTimer.Start();
+    }
+
+    // A unit quad centered on the origin, white so the sampled plasma texture shows untinted. Same
+    // [x, y, r, g, b] layout and -0.5..0.5 coordinate convention VulkanTrianglePipeline's fragment
+    // shader assumes for its "uv = position + 0.5" trick; DrawPlasmaQuad's mvp scales and moves it
+    // into the corner rather than authoring off-center positions the UV math was not built for.
+    private static readonly float[] PlasmaQuadVertices =
+    [
+        -0.5f, -0.5f, 1f, 1f, 1f,
+         0.5f, -0.5f, 1f, 1f, 1f,
+         0.5f,  0.5f, 1f, 1f, 1f,
+
+        -0.5f, -0.5f, 1f, 1f, 1f,
+         0.5f,  0.5f, 1f, 1f, 1f,
+        -0.5f,  0.5f, 1f, 1f, 1f,
+    ];
+
+    // Dispatches the plasma compute shader, then transitions its output for sampling. Runs before
+    // vkCmdBeginRendering (see VulkanFrame.RenderAndPresent's computeDispatch parameter), since
+    // vkCmdDispatch is not legal inside a dynamic rendering instance.
+    private void DispatchPlasmaCompute(VkCommandBuffer commandBuffer)
+    {
+        var image = plasmaImage!;
+
+        VulkanBarrier.TransitionImage(device!.Api, commandBuffer, image.Handle, VkImageAspectFlags.Color, ref plasmaLayout, VkImageLayout.General,
+            VkPipelineStageFlags2.FragmentShader, VkAccessFlags2.ShaderRead,
+            VkPipelineStageFlags2.ComputeShader, VkAccessFlags2.ShaderStorageWrite);
+
+        plasmaCompute!.Dispatch(commandBuffer, (float)clock.Elapsed.TotalSeconds, PlasmaSize, PlasmaSize);
+
+        VulkanBarrier.TransitionImage(device.Api, commandBuffer, image.Handle, VkImageAspectFlags.Color, ref plasmaLayout, VkImageLayout.ShaderReadOnlyOptimal,
+            VkPipelineStageFlags2.ComputeShader, VkAccessFlags2.ShaderStorageWrite,
+            VkPipelineStageFlags2.FragmentShader, VkAccessFlags2.ShaderRead);
+    }
+
+    // Draws the plasma quad with the same VulkanTrianglePipeline/bindless set the checkerboard
+    // triangle uses, just a different vertex buffer and bindless texture index - proving the
+    // compute-written image is a completely ordinary bindless texture to everything downstream of it.
+    private unsafe void DrawPlasmaQuad(VkCommandBuffer commandBuffer)
+    {
+        device!.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, triangle!.Handle);
+
+        var set = bindlessTextures!.Set;
+        device.Api.vkCmdBindDescriptorSets(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Layout, 0, 1, &set, 0, null);
+
+        // Shrink the unit quad to a third size and push it into the bottom-right corner.
+        var mvp = Matrix4x4.CreateScale(0.35f) * Matrix4x4.CreateTranslation(0.6f, 0.6f, 0f);
+        var pushConstants = new VulkanTrianglePipeline.PushConstants(mvp, plasmaTextureIndex);
+        device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex | VkShaderStageFlags.Fragment,
+            0, (uint)sizeof(VulkanTrianglePipeline.PushConstants), &pushConstants);
+
+        device.Api.vkCmdBindVertexBuffer(commandBuffer, 0, plasmaQuadVertexBuffer!.Handle);
+        device.Api.vkCmdDraw(commandBuffer, 6, 1, 0, 0);
+    }
+
+    // Three overlapping triangles in NDC-ish space (x, y, z), positioned so B occludes A where they
+    // overlap under a standard (not reverse-Z) Less depth test, and C - drawn last, alpha-blended,
+    // depth-write disabled - washes over both. A and B share one RenderState (opaque, cull-back), so
+    // baking A's pipeline should make B's draw a cache hit; C's RenderState (blended, no cull) is
+    // the one guaranteed miss besides A's.
+    //
+    // Winding is deliberately v0, v2, v1 (not v0, v1, v2): Vulkan's NDC Y axis points down by
+    // default, unlike OpenGL's, so a triangle that is counter-clockwise by the usual Y-up convention
+    // rasterizes clockwise here - and with FrontFace.CounterClockwise + CullMode.Back, that reads as
+    // a back face and vanishes. C has CullMode.None, so its winding never mattered; A and B's did.
+    private static readonly float[] SceneVertices =
+    [
+        // Triangle A: opaque red, back, left-weighted
+        -0.9f, -0.6f, 0.6f,
+        -0.3f,  0.6f, 0.6f,
+         0.3f, -0.6f, 0.6f,
+
+        // Triangle B: opaque blue, closer, right-weighted, overlaps A in the middle
+        -0.3f, -0.6f, 0.2f,
+         0.3f,  0.6f, 0.2f,
+         0.9f, -0.6f, 0.2f,
+
+        // Triangle C: translucent green, closest, covers both
+        -1.2f, -1.0f, 0.05f,
+         1.2f, -1.0f, 0.05f,
+         0.0f,  1.4f, 0.05f,
+    ];
+
+    private static readonly RenderState OpaqueCullBackState = BuildOpaqueCullBackState();
+    private static readonly RenderState BlendedNoCullState = BuildBlendedNoCullState();
+
+    private static RenderState BuildOpaqueCullBackState()
+    {
+        var state = new RenderState
+        {
+            Rasterizer = new() { FillMode = RsFillMode.Solid, CullMode = RsCullMode.Back, DepthClipEnable = true, MultisampleEnable = true },
+            DepthStencil = new() { DepthTestEnable = true, DepthWriteEnable = true, DepthFunc = RsComparison.Less },
+        };
+        state.ColorWriteMask = RsColorWriteEnableBits.All;
+        return state;
+    }
+
+    private static RenderState BuildBlendedNoCullState()
+    {
+        var state = new RenderState
+        {
+            Rasterizer = new() { FillMode = RsFillMode.Solid, CullMode = RsCullMode.None, DepthClipEnable = true, MultisampleEnable = true },
+            DepthStencil = new() { DepthTestEnable = true, DepthWriteEnable = false, DepthFunc = RsComparison.Less },
+        };
+        state.BlendEnable = true;
+        state.SetBlend(RsBlendMode.SrcAlpha, RsBlendMode.InvSrcAlpha);
+        state.ColorWriteMask = RsColorWriteEnableBits.All;
+        return state;
+    }
+
+    // Binds VulkanPipelineCache's baked pipeline for each triangle's RenderState and draws it -
+    // called from VulkanFrame between BeginRendering and EndRendering, with viewport/scissor already
+    // set. Logs cache hit/miss counts periodically so the reuse (or lack of it) is visible, not just
+    // assumed from the code.
+    private unsafe void DrawRenderStateDemo(VkCommandBuffer commandBuffer, Matrix4x4 mvp)
+    {
+        var shader = flatColorShader!;
+        var cache = pipelineCache!;
+
+        device!.Api.vkCmdBindVertexBuffer(commandBuffer, 0, sceneVertexBuffer!.Handle);
+
+        var vertexBinding = VulkanFlatColorShader.VertexBinding;
+        var vertexAttribute = VulkanFlatColorShader.VertexAttribute;
+        var vertexInputState = new VkPipelineVertexInputStateCreateInfo
+        {
+            vertexBindingDescriptionCount = 1,
+            pVertexBindingDescriptions = &vertexBinding,
+            vertexAttributeDescriptionCount = 1,
+            pVertexAttributeDescriptions = &vertexAttribute,
+        };
+
+        void DrawTriangle(int firstVertex, Vector4 color, in RenderState state)
+        {
+            var pipeline = cache.GetOrCreate(shader.VertexModule, shader.FragmentModule, shader.Layout, in vertexInputState,
+                in state, VkPrimitiveTopology.TriangleList, swapchain!.Format, VkFormat.D32Sfloat);
+
+            device.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, pipeline);
+
+            var pushConstants = new VulkanFlatColorShader.PushConstants(mvp, color);
+            device.Api.vkCmdPushConstants(commandBuffer, shader.Layout, VkShaderStageFlags.Vertex | VkShaderStageFlags.Fragment,
+                0, (uint)sizeof(VulkanFlatColorShader.PushConstants), &pushConstants);
+
+            device.Api.vkCmdDraw(commandBuffer, 3, 1, (uint)firstVertex, 0);
+        }
+
+        DrawTriangle(0, new Vector4(0.85f, 0.15f, 0.15f, 1.0f), in OpaqueCullBackState);
+        DrawTriangle(3, new Vector4(0.15f, 0.35f, 0.9f, 1.0f), in OpaqueCullBackState);
+        DrawTriangle(6, new Vector4(0.15f, 0.8f, 0.3f, 0.5f), in BlendedNoCullState);
+
+        if (clock.Elapsed.TotalSeconds - lastCacheStatsLog >= 2.0)
+        {
+            lastCacheStatsLog = clock.Elapsed.TotalSeconds;
+            Console.WriteLine($"[PipelineCache] {cache.CacheHits} hit(s), {cache.CacheMisses} miss(es) (expect 2 misses total, then all hits)");
+        }
     }
 
     // Proves VulkanPushConstantLayout against a real renderer shader, not a hand-written test string:
@@ -195,6 +376,11 @@ public sealed class VulkanClearTestForm : Form
         if (swapchainDirty)
         {
             swapchain.Recreate((uint)hostControl.Width, (uint)hostControl.Height);
+
+            var oldDepth = depthImage;
+            depthImage = VulkanImage.CreateDepth(device!, "Test depth buffer", (uint)hostControl.Width, (uint)hostControl.Height);
+            oldDepth?.Dispose();
+
             swapchainDirty = false;
         }
 
@@ -202,7 +388,17 @@ public sealed class VulkanClearTestForm : Form
 
         var mvp = Matrix4x4.CreateRotationZ((float)clock.Elapsed.TotalSeconds);
 
-        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, bindlessTextures, vertexBuffer, mvp, checkerTextureIndex))
+        // Kept static (no rotation): without a real projection matrix, spinning these around Y would
+        // skew flat clip-space triangles in a way that reads as broken rather than "3D", and the point
+        // here is to see the depth/blend/cull result clearly, not to fake a camera.
+        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, bindlessTextures, vertexBuffer, mvp, checkerTextureIndex,
+            depthImage,
+            extraDraws: commandBuffer =>
+            {
+                DrawRenderStateDemo(commandBuffer, Matrix4x4.Identity);
+                DrawPlasmaQuad(commandBuffer);
+            },
+            computeDispatch: DispatchPlasmaCompute))
         {
             swapchainDirty = true;
         }
@@ -218,6 +414,13 @@ public sealed class VulkanClearTestForm : Form
         checkerTexture?.Dispose();
         triangle?.Dispose();
         bindlessTextures?.Dispose();
+        sceneVertexBuffer?.Dispose();
+        pipelineCache?.Dispose();
+        flatColorShader?.Dispose();
+        depthImage?.Dispose();
+        plasmaQuadVertexBuffer?.Dispose();
+        plasmaCompute?.Dispose();
+        plasmaImage?.Dispose();
         swapchain?.Dispose();
 
         if (instance != null && surface.IsNotNull)

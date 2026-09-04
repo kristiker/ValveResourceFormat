@@ -109,6 +109,108 @@ public sealed unsafe class VulkanImage : IDisposable
         return new VulkanImage(device, image, allocation, view, extent);
     }
 
+    /// <summary>
+    /// Creates a single-mip, single-layer <see cref="VkFormat.D32Sfloat"/> depth attachment, sized to
+    /// match a render target, transitioned to <see cref="VkImageLayout.DepthAttachmentOptimal"/> and
+    /// never touched again outside a render pass - nothing samples it, so unlike
+    /// <see cref="CreateRgba8"/> it needs no descriptor-facing view work or upload.
+    /// </summary>
+    public static VulkanImage CreateDepth(VulkanDevice device, string name, uint width, uint height)
+    {
+        const VkFormat format = VkFormat.D32Sfloat;
+        var extent = new VkExtent2D { width = width, height = height };
+
+        var imageCreateInfo = new VkImageCreateInfo
+        {
+            imageType = VkImageType.Image2D,
+            format = format,
+            extent = new VkExtent3D { width = width, height = height, depth = 1 },
+            mipLevels = 1,
+            arrayLayers = 1,
+            samples = VkSampleCountFlags.Count1,
+            usage = VkImageUsageFlags.DepthStencilAttachment,
+        };
+
+        var allocationCreateInfo = new VmaAllocationCreateInfo { usage = VmaMemoryUsage.AutoPreferDevice };
+
+        vmaCreateImage(device.VmaAllocator, in imageCreateInfo, in allocationCreateInfo, out var image, out var allocation).CheckResult();
+
+        var viewCreateInfo = new VkImageViewCreateInfo
+        {
+            image = image,
+            viewType = VkImageViewType.Image2D,
+            format = format,
+            subresourceRange = new VkImageSubresourceRange
+            {
+                aspectMask = VkImageAspectFlags.Depth,
+                baseMipLevel = 0,
+                levelCount = 1,
+                baseArrayLayer = 0,
+                layerCount = 1,
+            },
+        };
+
+        device.Api.vkCreateImageView(&viewCreateInfo, out var view).CheckResult();
+
+        var layout = VkImageLayout.Undefined;
+
+        device.RunOneShotCommands(commandBuffer =>
+        {
+            VulkanBarrier.TransitionImage(device.Api, commandBuffer, image, VkImageAspectFlags.Depth, ref layout, VkImageLayout.DepthAttachmentOptimal,
+                VkPipelineStageFlags2.TopOfPipe, VkAccessFlags2.None,
+                VkPipelineStageFlags2.EarlyFragmentTests | VkPipelineStageFlags2.LateFragmentTests, VkAccessFlags2.DepthStencilAttachmentWrite);
+        });
+
+        return new VulkanImage(device, image, allocation, view, extent);
+    }
+
+    /// <summary>
+    /// Creates a single-mip, single-layer, device-local image usable as both a compute shader's
+    /// <c>imageStore</c> target and a sampled bindless texture - written by compute, read by a later
+    /// fragment shader, the two connected only by whatever barrier the caller records between them.
+    /// Starts in <see cref="VkImageLayout.Undefined"/> and is never touched here again; unlike
+    /// <see cref="CreateRgba8"/> and <see cref="CreateDepth"/>, its layout changes every frame (write
+    /// layout before dispatch, read layout before sampling), which only the caller can time correctly.
+    /// </summary>
+    public static VulkanImage CreateStorage(VulkanDevice device, string name, uint width, uint height, VkFormat format)
+    {
+        var extent = new VkExtent2D { width = width, height = height };
+
+        var imageCreateInfo = new VkImageCreateInfo
+        {
+            imageType = VkImageType.Image2D,
+            format = format,
+            extent = new VkExtent3D { width = width, height = height, depth = 1 },
+            mipLevels = 1,
+            arrayLayers = 1,
+            samples = VkSampleCountFlags.Count1,
+            usage = VkImageUsageFlags.Storage | VkImageUsageFlags.Sampled,
+        };
+
+        var allocationCreateInfo = new VmaAllocationCreateInfo { usage = VmaMemoryUsage.AutoPreferDevice };
+
+        vmaCreateImage(device.VmaAllocator, in imageCreateInfo, in allocationCreateInfo, out var image, out var allocation).CheckResult();
+
+        var viewCreateInfo = new VkImageViewCreateInfo
+        {
+            image = image,
+            viewType = VkImageViewType.Image2D,
+            format = format,
+            subresourceRange = new VkImageSubresourceRange
+            {
+                aspectMask = VkImageAspectFlags.Color,
+                baseMipLevel = 0,
+                levelCount = 1,
+                baseArrayLayer = 0,
+                layerCount = 1,
+            },
+        };
+
+        device.Api.vkCreateImageView(&viewCreateInfo, out var view).CheckResult();
+
+        return new VulkanImage(device, image, allocation, view, extent);
+    }
+
     /// <summary>Queues this image's view and storage for destruction; see <see cref="VulkanDeleteQueue"/>.</summary>
     public void Dispose()
     {

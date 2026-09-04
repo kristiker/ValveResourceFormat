@@ -73,8 +73,14 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
     /// <summary>The graphics pipeline, built against dynamic rendering with no depth attachment.</summary>
     public VkPipeline Handle { get; }
 
-    /// <summary>Compiles the shader strings above and builds the pipeline for the given swapchain color format.</summary>
-    public VulkanTrianglePipeline(VulkanDevice device, VkFormat colorFormat, VulkanBindlessTextures bindlessTextures)
+    /// <summary>
+    /// Compiles the shader strings above and builds the pipeline for the given swapchain color
+    /// format. <paramref name="depthFormat"/> only has to match whatever else is drawn in the same
+    /// rendering instance - this pipeline does not itself test or write depth - because Vulkan
+    /// requires every pipeline used within one <c>vkCmdBeginRendering</c>/<c>vkCmdEndRendering</c>
+    /// pair to agree on the attachment formats declared, not just the ones it actually reads or writes.
+    /// </summary>
+    public VulkanTrianglePipeline(VulkanDevice device, VkFormat colorFormat, VulkanBindlessTextures bindlessTextures, VkFormat depthFormat = VkFormat.Undefined)
     {
         this.device = device;
 
@@ -188,10 +194,13 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
                 pDynamicStates = dynamicStates,
             };
 
+            var depthStencilState = new VkPipelineDepthStencilStateCreateInfo { sType = VkStructureType.PipelineDepthStencilStateCreateInfo };
+
             var renderingCreateInfo = new VkPipelineRenderingCreateInfo
             {
                 colorAttachmentCount = 1,
                 pColorAttachmentFormats = &colorFormat,
+                depthAttachmentFormat = depthFormat,
             };
 
             var pipelineCreateInfo = new VkGraphicsPipelineCreateInfo
@@ -204,6 +213,7 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
                 pViewportState = &viewportState,
                 pRasterizationState = &rasterizationState,
                 pMultisampleState = &multisampleState,
+                pDepthStencilState = &depthStencilState,
                 pColorBlendState = &colorBlendState,
                 pDynamicState = &dynamicState,
                 layout = layout,

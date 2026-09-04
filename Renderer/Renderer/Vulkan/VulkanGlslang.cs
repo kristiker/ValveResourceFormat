@@ -37,7 +37,7 @@ public static partial class VulkanGlslang
     // wrapper this was ported from.
     private const int MessagesSpvAndVulkanRules = (1 << 3) | (1 << 4);
 
-    /// <summary>Vertex, fragment, and nothing else yet; matches <see cref="ShaderProgramType"/> ordering.</summary>
+    /// <summary>Values match glslang's own <c>glslang_stage_t</c>, not <see cref="ShaderProgramType"/>'s ordering.</summary>
     public enum Stage
     {
         /// <summary>Vertex stage.</summary>
@@ -45,6 +45,9 @@ public static partial class VulkanGlslang
 
         /// <summary>Fragment (pixel) stage.</summary>
         Fragment = 4,
+
+        /// <summary>Compute stage.</summary>
+        Compute = 5,
     }
 
     /// <summary>
