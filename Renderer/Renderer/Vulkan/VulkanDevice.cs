@@ -46,8 +46,11 @@ public sealed unsafe class VulkanDevice : IDisposable
     /// </summary>
     public VulkanDeleteQueue DeleteQueue { get; } = new();
 
+    /// <summary>The highest anisotropy a sampler on this device can request; 1 if unsupported.</summary>
+    public float MaxSamplerAnisotropy { get; }
+
     private VulkanDevice(VulkanInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkDeviceApi api,
-        uint graphicsQueueFamily, VkQueue graphicsQueue, VkCommandPool commandPool, string deviceDescription, VmaAllocator vmaAllocator)
+        uint graphicsQueueFamily, VkQueue graphicsQueue, VkCommandPool commandPool, string deviceDescription, VmaAllocator vmaAllocator, float maxSamplerAnisotropy)
     {
         Instance = instance;
         PhysicalDevice = physicalDevice;
@@ -58,6 +61,7 @@ public sealed unsafe class VulkanDevice : IDisposable
         CommandPool = commandPool;
         DeviceDescription = deviceDescription;
         VmaAllocator = vmaAllocator;
+        MaxSamplerAnisotropy = maxSamplerAnisotropy;
     }
 
     /// <summary>
@@ -150,6 +154,8 @@ public sealed unsafe class VulkanDevice : IDisposable
             shaderStorageImageArrayNonUniformIndexing = true,
             shaderUniformBufferArrayNonUniformIndexing = true,
             shaderStorageBufferArrayNonUniformIndexing = true,
+            // For RsTextureAddressMode.MirrorOnce; see VulkanSamplerCache.
+            samplerMirrorClampToEdge = true,
         };
 
         var features13 = new VkPhysicalDeviceVulkan13Features
@@ -159,6 +165,10 @@ public sealed unsafe class VulkanDevice : IDisposable
             synchronization2 = true,
         };
 
+        // Not part of the versioned feature structs above (it predates them); VulkanSamplerCache
+        // needs it to request anisotropic filtering at all.
+        var baseFeatures = new VkPhysicalDeviceFeatures { samplerAnisotropy = true };
+
         var deviceCreateInfo = new VkDeviceCreateInfo
         {
             pNext = &features13,
@@ -166,6 +176,7 @@ public sealed unsafe class VulkanDevice : IDisposable
             pQueueCreateInfos = &queueCreateInfo,
             enabledExtensionCount = extensionArray.Length,
             ppEnabledExtensionNames = extensionArray,
+            pEnabledFeatures = &baseFeatures,
         };
 
         instance.Api.vkCreateDevice(physicalDevice, &deviceCreateInfo, out var device).CheckResult();
@@ -192,7 +203,7 @@ public sealed unsafe class VulkanDevice : IDisposable
 
         vmaCreateAllocator(in allocatorCreateInfo, out var vmaAllocator).CheckResult();
 
-        return new VulkanDevice(instance, physicalDevice, device, deviceApi, chosenGraphicsFamily, graphicsQueue, commandPool, description, vmaAllocator);
+        return new VulkanDevice(instance, physicalDevice, device, deviceApi, chosenGraphicsFamily, graphicsQueue, commandPool, description, vmaAllocator, chosenProperties.limits.maxSamplerAnisotropy);
     }
 
     /// <summary>
@@ -260,6 +271,8 @@ public sealed unsafe class VulkanDevice : IDisposable
             && features12.descriptorBindingPartiallyBound
             && features12.descriptorBindingVariableDescriptorCount
             && features12.runtimeDescriptorArray
+            && features12.samplerMirrorClampToEdge
+            && features2.features.samplerAnisotropy
             && features12.shaderSampledImageArrayNonUniformIndexing
             && features12.shaderStorageImageArrayNonUniformIndexing
             && features12.shaderUniformBufferArrayNonUniformIndexing

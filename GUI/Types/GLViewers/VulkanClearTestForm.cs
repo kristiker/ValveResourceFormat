@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using ValveResourceFormat.Renderer.Shaders;
 using ValveResourceFormat.Renderer.Vulkan;
 using Vortice.Vulkan;
 using NativeWindow = OpenTK.Windowing.Desktop.NativeWindow;
@@ -90,9 +91,41 @@ public sealed class VulkanClearTestForm : Form
         vertexBuffer = CreateVertexBuffer(device, vertexBufferGeneration);
 
         checkerTexture = CreateCheckerTexture(device);
-        checkerTextureIndex = bindlessTextures.Register(checkerTexture.View, bindlessTextures.DefaultSampler);
+        var checkerSampler = bindlessTextures.Samplers.GetOrCreate(RsTextureAddressMode.Wrap, RsTextureAddressMode.Wrap, mipmaps: false);
+        checkerTextureIndex = bindlessTextures.Register(checkerTexture.View, checkerSampler);
+
+        RunPushConstantPackingSmokeTest();
 
         renderTimer.Start();
+    }
+
+    // Proves VulkanPushConstantLayout against a real renderer shader, not a hand-written test string:
+    // crosshair.vert.slang declares "uniform mat4 transform;", a loose per-draw uniform exactly like
+    // the ones this is meant to pack. Parses it with the real ShaderParser, packs the result, rewrites
+    // the loose declaration into a push-constant member, and compiles that through glslang - logging
+    // rather than asserting, since this is scaffolding proof, not the real integration point yet.
+    private static void RunPushConstantPackingSmokeTest()
+    {
+        const string shaderFile = "crosshair.vert.slang";
+
+        var parser = new ShaderParser();
+        var parsedData = new ShaderLoader.ParsedShaderData();
+        var source = parser.PreprocessShader(shaderFile, parsedData);
+        parser.ClearBuilder();
+
+        var layout = VulkanPushConstantLayout.Build(parsedData.PushConstantDeclarations);
+
+        Console.WriteLine($"[PushConstantSmokeTest] {shaderFile}: {layout.Members.Count} push-constant member(s), {layout.Size} bytes");
+
+        foreach (var member in layout.Members.Values)
+        {
+            Console.WriteLine($"[PushConstantSmokeTest]   {member.Name} : {member.Type} @ offset {member.Offset}");
+        }
+
+        var vulkanSource = layout.ApplyToSource(source);
+        var spirv = VulkanGlslang.Compile(vulkanSource, VulkanGlslang.Stage.Vertex);
+
+        Console.WriteLine($"[PushConstantSmokeTest] Compiled to {spirv.Length} bytes of SPIR-V");
     }
 
     // 8x8 magenta/white checkerboard: visually unmistakable as "a real sampled texture", not a

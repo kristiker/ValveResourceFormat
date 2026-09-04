@@ -42,8 +42,8 @@ public sealed unsafe class VulkanBindlessTextures : IDisposable
     /// <summary>The one descriptor set every draw binds; textures are looked up in it by index.</summary>
     public VkDescriptorSet Set { get; }
 
-    /// <summary>A linear-filtered, repeat-wrapped sampler, shared by every texture that does not need its own.</summary>
-    public VkSampler DefaultSampler { get; }
+    /// <summary>Deduplicated samplers by wrap/filter/anisotropy state; see <see cref="VulkanSamplerCache"/>.</summary>
+    public VulkanSamplerCache Samplers { get; }
 
     /// <summary>
     /// Index of a 1x1 white placeholder, safe to sample as a stand-in for anything not registered
@@ -108,22 +108,12 @@ public sealed unsafe class VulkanBindlessTextures : IDisposable
         device.Api.vkAllocateDescriptorSets(allocateInfo, out var set).CheckResult();
         Set = set;
 
-        var samplerCreateInfo = new VkSamplerCreateInfo
-        {
-            magFilter = VkFilter.Linear,
-            minFilter = VkFilter.Linear,
-            addressModeU = VkSamplerAddressMode.Repeat,
-            addressModeV = VkSamplerAddressMode.Repeat,
-            addressModeW = VkSamplerAddressMode.Repeat,
-            maxLod = 1.0f,
-        };
-
-        device.Api.vkCreateSampler(&samplerCreateInfo, out var defaultSampler).CheckResult();
-        DefaultSampler = defaultSampler;
+        Samplers = new VulkanSamplerCache(device);
 
         ReadOnlySpan<byte> whitePixel = [255, 255, 255, 255];
         nullTexture = VulkanImage.CreateRgba8(device, "Bindless null texture", 1, 1, whitePixel);
-        NullTextureIndex = Register(nullTexture.View, DefaultSampler);
+        var nullSampler = Samplers.GetOrCreate(RsTextureAddressMode.Wrap, RsTextureAddressMode.Wrap, mipmaps: false, anisotropicFiltering: false);
+        NullTextureIndex = Register(nullTexture.View, nullSampler);
     }
 
     /// <summary>
@@ -166,7 +156,7 @@ public sealed unsafe class VulkanBindlessTextures : IDisposable
     public void Dispose()
     {
         nullTexture.Dispose();
-        device.Api.vkDestroySampler(DefaultSampler);
+        Samplers.Dispose();
         device.Api.vkDestroyDescriptorPool(pool);
         device.Api.vkDestroyDescriptorSetLayout(Layout);
     }

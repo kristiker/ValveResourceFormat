@@ -313,6 +313,18 @@ namespace ValveResourceFormat.Renderer.Shaders
                                 builder.Append('\n');
                                 continue;
                             }
+
+                            // Everything else typed and scalar/vector/matrix-shaped: OpenGL keeps setting
+                            // it directly per draw, unaffected by this. Recorded only as a candidate for
+                            // Vulkan's push constants; see ParsedShaderData.PushConstantDeclarations. Falls
+                            // through to the normal append below, so the loose declaration this line is
+                            // reading is left completely alone here.
+                            if (!match.Groups["Array"].Success
+                            && !IsPackableUniformName(uniformName)
+                            && GlobalsLayout.TryGetType(uniformType, out var pushConstantType))
+                            {
+                                parsedData.PushConstantDeclarations.Add(new GlobalsDeclaration(uniformName, pushConstantType, Initializer: null, SrgbRead: false));
+                            }
                         }
 
                         // Collected now, located once the whole declaring set is known

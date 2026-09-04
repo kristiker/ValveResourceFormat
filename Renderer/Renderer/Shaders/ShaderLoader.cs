@@ -91,6 +91,16 @@ namespace ValveResourceFormat.Renderer.Shaders
             /// </summary>
             public GlobalsLayout GlobalsLayout { get; set; } = GlobalsLayout.Empty;
 
+            /// <summary>
+            /// Gets the declarations of every loose (non <c>g_</c>/<c>F_</c>) scalar, vector, or matrix
+            /// uniform, collected from every stage in source order. OpenGL sets these directly per draw
+            /// (<c>GL.ProgramUniform*</c>) rather than packing them, so unlike <see cref="GlobalsDeclarations"/>
+            /// nothing here changes what OpenGL compiles; a Vulkan backend packs them into push constants
+            /// instead - see <c>VulkanPushConstantLayout</c> in <c>Renderer.Vulkan</c>, which is the one
+            /// consumer, kept out of this class to leave <see cref="ParsedShaderData"/> backend neutral.
+            /// </summary>
+            public List<GlobalsDeclaration> PushConstantDeclarations { get; } = [];
+
             /// <summary>Gets the set of uniform names annotated with <c>// SrgbRead(true)</c>.</summary>
             public HashSet<string> SrgbUniforms { get; } = [];
 
