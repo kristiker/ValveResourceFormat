@@ -47,9 +47,14 @@ public sealed unsafe class VulkanFrame : IDisposable
     /// of date; the caller should call <see cref="VulkanSwapchain.Recreate"/> and try again next
     /// frame rather than treat this as an error.
     /// </summary>
-    public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor, VulkanTrianglePipeline? triangle = null, Matrix4x4 mvp = default)
+    public bool RenderAndPresent(VulkanSwapchain swapchain, VkClearColorValue clearColor, VulkanTrianglePipeline? triangle = null, VulkanBuffer? vertexBuffer = null, Matrix4x4 mvp = default)
     {
         device.Api.vkWaitForFences(inFlightFence, true, ulong.MaxValue).CheckResult();
+
+        // Nothing can still be in flight now (see VulkanDeleteQueue), so anything queued for
+        // deletion up to this instant - including by the caller, between last frame's return and
+        // this call - is provably safe to actually destroy.
+        device.DeleteQueue.Flush();
 
         if (!swapchain.AcquireNextImage(imageAvailableSemaphore, out var imageIndex))
         {
@@ -100,7 +105,12 @@ public sealed unsafe class VulkanFrame : IDisposable
             device.Api.vkCmdSetScissor(commandBuffer, 0, scissor);
             device.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Handle);
             device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex, 0, (uint)sizeof(Matrix4x4), &mvp);
-            device.Api.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+            if (vertexBuffer != null)
+            {
+                device.Api.vkCmdBindVertexBuffer(commandBuffer, 0, vertexBuffer.Handle);
+                device.Api.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            }
         }
 
         device.Api.vkCmdEndRendering(commandBuffer);

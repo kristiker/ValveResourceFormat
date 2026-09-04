@@ -35,7 +35,10 @@ public sealed class VulkanClearTestForm : Form
     private VulkanSwapchain? swapchain;
     private VulkanFrame? frame;
     private VulkanTrianglePipeline? triangle;
+    private VulkanBuffer? vertexBuffer;
     private bool swapchainDirty;
+    private double lastVertexBufferRebuild;
+    private int vertexBufferGeneration;
 
     public VulkanClearTestForm()
     {
@@ -80,8 +83,42 @@ public sealed class VulkanClearTestForm : Form
         swapchain = new VulkanSwapchain(device, surface, (uint)hostControl.Width, (uint)hostControl.Height);
         frame = new VulkanFrame(device);
         triangle = new VulkanTrianglePipeline(device, swapchain.Format);
+        vertexBuffer = CreateVertexBuffer(device, vertexBufferGeneration);
 
         renderTimer.Start();
+    }
+
+    // Interleaved [x, y, r, g, b] per vertex, matching VulkanTrianglePipeline.VertexStride. The
+    // scale pulses with the buffer's generation so a rebuild is visible, not just a log line.
+    private static VulkanBuffer CreateVertexBuffer(VulkanDevice device, int generation)
+    {
+        var scale = 0.6f + 0.35f * MathF.Sin(generation);
+
+        ReadOnlySpan<float> vertices =
+        [
+            0.0f * scale, -0.5f * scale, 0.9f, 0.2f, 0.2f,
+            0.5f * scale, 0.5f * scale, 0.2f, 0.9f, 0.3f,
+            -0.5f * scale, 0.5f * scale, 0.3f, 0.4f, 0.95f,
+        ];
+
+        return VulkanBuffer.CreateWithData(device, "Triangle vertices", vertices, VkBufferUsageFlags.VertexBuffer);
+    }
+
+    // Rebuilds the vertex buffer every couple of seconds and disposes the old one immediately -
+    // exercising the delete queue under real frame-in-flight timing, not just at shutdown.
+    private void RebuildVertexBufferIfDue()
+    {
+        if (clock.Elapsed.TotalSeconds - lastVertexBufferRebuild < 2.0)
+        {
+            return;
+        }
+
+        lastVertexBufferRebuild = clock.Elapsed.TotalSeconds;
+        vertexBufferGeneration++;
+
+        var old = vertexBuffer;
+        vertexBuffer = CreateVertexBuffer(device!, vertexBufferGeneration);
+        old?.Dispose();
     }
 
     private void RenderFrame()
@@ -97,9 +134,11 @@ public sealed class VulkanClearTestForm : Form
             swapchainDirty = false;
         }
 
+        RebuildVertexBufferIfDue();
+
         var mvp = Matrix4x4.CreateRotationZ((float)clock.Elapsed.TotalSeconds);
 
-        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, mvp))
+        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, vertexBuffer, mvp))
         {
             swapchainDirty = true;
         }
@@ -111,6 +150,7 @@ public sealed class VulkanClearTestForm : Form
         device?.WaitIdle();
 
         frame?.Dispose();
+        vertexBuffer?.Dispose();
         triangle?.Dispose();
         swapchain?.Dispose();
 

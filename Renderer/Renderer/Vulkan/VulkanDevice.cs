@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Vortice.Vulkan;
+using static Vortice.Vulkan.Vma;
 using static Vortice.Vulkan.Vulkan;
 
 namespace ValveResourceFormat.Renderer.Vulkan;
@@ -36,8 +37,17 @@ public sealed unsafe class VulkanDevice : IDisposable
     /// <summary>Name and driver string of the selected GPU, for logging.</summary>
     public string DeviceDescription { get; }
 
+    /// <summary>The sub-allocator every <see cref="VulkanBuffer"/> (and later, image) allocates from.</summary>
+    public VmaAllocator VmaAllocator { get; }
+
+    /// <summary>
+    /// Where <c>Dispose()</c> on a GPU resource actually lands; see <see cref="VulkanDeleteQueue"/>
+    /// for why a caller does not have to know whether the GPU is still using it.
+    /// </summary>
+    public VulkanDeleteQueue DeleteQueue { get; } = new();
+
     private VulkanDevice(VulkanInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkDeviceApi api,
-        uint graphicsQueueFamily, VkQueue graphicsQueue, VkCommandPool commandPool, string deviceDescription)
+        uint graphicsQueueFamily, VkQueue graphicsQueue, VkCommandPool commandPool, string deviceDescription, VmaAllocator vmaAllocator)
     {
         Instance = instance;
         PhysicalDevice = physicalDevice;
@@ -47,6 +57,7 @@ public sealed unsafe class VulkanDevice : IDisposable
         GraphicsQueue = graphicsQueue;
         CommandPool = commandPool;
         DeviceDescription = deviceDescription;
+        VmaAllocator = vmaAllocator;
     }
 
     /// <summary>
@@ -154,7 +165,59 @@ public sealed unsafe class VulkanDevice : IDisposable
 
         deviceApi.vkCreateCommandPool(&poolCreateInfo, out var commandPool).CheckResult();
 
-        return new VulkanDevice(instance, physicalDevice, device, deviceApi, chosenGraphicsFamily, graphicsQueue, commandPool, description);
+        var allocatorCreateInfo = new VmaAllocatorCreateInfo
+        {
+            instance = instance.Handle,
+            physicalDevice = physicalDevice,
+            device = device,
+            vulkanApiVersion = VkVersion.Version_1_4,
+        };
+
+        vmaCreateAllocator(in allocatorCreateInfo, out var vmaAllocator).CheckResult();
+
+        return new VulkanDevice(instance, physicalDevice, device, deviceApi, chosenGraphicsFamily, graphicsQueue, commandPool, description, vmaAllocator);
+    }
+
+    /// <summary>
+    /// Records into a temporary command buffer, submits it, and blocks until it completes. For
+    /// infrequent host-to-device work (buffer/image uploads) where a dedicated transfer queue and
+    /// async pacing are not worth the complexity yet; see <see cref="VulkanBuffer.CreateWithData"/>.
+    /// </summary>
+    public void RunOneShotCommands(Action<VkCommandBuffer> record)
+    {
+        var allocateInfo = new VkCommandBufferAllocateInfo
+        {
+            commandPool = CommandPool,
+            level = VkCommandBufferLevel.Primary,
+            commandBufferCount = 1,
+        };
+
+        VkCommandBuffer commandBuffer;
+        Api.vkAllocateCommandBuffers(&allocateInfo, &commandBuffer).CheckResult();
+
+        try
+        {
+            Api.vkBeginCommandBuffer(commandBuffer, VkCommandBufferUsageFlags.OneTimeSubmit).CheckResult();
+            record(commandBuffer);
+            Api.vkEndCommandBuffer(commandBuffer).CheckResult();
+
+            var commandBufferInfo = new VkCommandBufferSubmitInfo { commandBuffer = commandBuffer };
+            var submitInfo = new VkSubmitInfo2
+            {
+                commandBufferInfoCount = 1,
+                pCommandBufferInfos = &commandBufferInfo,
+            };
+
+            Api.vkQueueSubmit2(GraphicsQueue, submitInfo, VkFence.Null).CheckResult();
+
+            // Infrequent enough (uploads, not per-draw) that blocking the whole queue is fine; a
+            // fenced wait scoped to just this command buffer is not worth it yet.
+            Api.vkQueueWaitIdle(GraphicsQueue).CheckResult();
+        }
+        finally
+        {
+            Api.vkFreeCommandBuffers(CommandPool, commandBuffer);
+        }
     }
 
     private static bool SupportsRequiredFeatures(VulkanInstance instance, VkPhysicalDevice physicalDevice)
@@ -206,9 +269,18 @@ public sealed unsafe class VulkanDevice : IDisposable
     /// <summary>Waits until every operation submitted to any queue on this device has completed.</summary>
     public void WaitIdle() => Api.vkDeviceWaitIdle().CheckResult();
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Waits for the device to go idle, flushes every resource the delete queue was still holding
+    /// (nothing can be in flight once idle, so this is always safe here), then destroys the
+    /// allocator, command pool, and device itself. Call after every other Vulkan object owned by
+    /// this device has been destroyed or handed to the delete queue.
+    /// </summary>
     public void Dispose()
     {
+        WaitIdle();
+        DeleteQueue.Flush();
+
+        vmaDestroyAllocator(VmaAllocator);
         Api.vkDestroyCommandPool(CommandPool);
         Api.vkDestroyDevice();
     }

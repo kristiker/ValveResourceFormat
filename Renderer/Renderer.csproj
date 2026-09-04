@@ -45,6 +45,7 @@
     <PackageReference Include="NLayer" Version="2.0.1" />
     <PackageReference Include="OpenTK.Graphics" Version="4.9.4" />
     <PackageReference Include="Vortice.Vulkan" Version="3.2.3" />
+    <PackageReference Include="Vortice.VulkanMemoryAllocator" Version="1.7.0" />
     <!-- Only the native glslang binary is wanted; its managed wrapper and Linux content copy are unused. -->
     <PackageReference Include="Glslang.NET" Version="1.2.0" ExcludeAssets="compile;contentFiles;build" />
   </ItemGroup>

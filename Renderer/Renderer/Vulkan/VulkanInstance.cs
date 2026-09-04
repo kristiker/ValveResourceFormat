@@ -18,6 +18,14 @@ public sealed unsafe class VulkanInstance : IDisposable
     /// <summary>Instance-level function pointers, dispatched against <see cref="Handle"/>.</summary>
     public VkInstanceApi Api { get; }
 
+    /// <summary>
+    /// Whether <c>VK_EXT_debug_utils</c> was actually enabled (the validation layer was installed).
+    /// Anything that calls a <c>vkSetDebugUtilsObjectNameEXT</c>/<c>vkCmdBeginDebugUtilsLabelEXT</c>
+    /// style function must check this first: the function pointer is null otherwise, and calling
+    /// through it crashes rather than failing gracefully the way a missing GL extension would.
+    /// </summary>
+    public bool DebugUtilsEnabled => debugMessenger.IsNotNull;
+
     private readonly VkDebugUtilsMessengerEXT debugMessenger;
     private readonly ILogger logger;
     private readonly DebugUtilsMessengerCallback? debugCallback;

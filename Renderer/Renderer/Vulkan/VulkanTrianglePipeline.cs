@@ -5,14 +5,17 @@ using static Vortice.Vulkan.Vulkan;
 namespace ValveResourceFormat.Renderer.Vulkan;
 
 /// <summary>
-/// Milestone-2 proof that a shader written as a GLSL string reaches the screen through this
-/// backend: glslang compiles it to SPIR-V exactly as the plan called for, no descriptor sets or
-/// vertex buffers yet (the triangle's positions and colors are baked into the vertex shader), one
-/// push constant carrying the MVP matrix. Real materials get real vertex/resource binding in a
-/// later milestone; this only has to prove the shader-string-to-draw-call path.
+/// Proof that a shader written as a GLSL string reaches the screen through this backend: glslang
+/// compiles it to SPIR-V exactly as the plan called for. Vertex data comes from a real
+/// <see cref="VulkanBuffer"/> (interleaved position/color, one binding), one push constant carries
+/// the MVP matrix; still no descriptor sets, which is the bindless-resource-binding step this only
+/// has to prove the way in for.
 /// </summary>
 public sealed unsafe class VulkanTrianglePipeline : IDisposable
 {
+    /// <summary>Byte size and layout of one <see cref="VulkanBuffer"/> vertex: position then color.</summary>
+    public const int VertexStride = 5 * sizeof(float);
+
     private const string VertexSource = """
         #version 450
 
@@ -21,24 +24,15 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
             mat4 mvp;
         } pc;
 
-        vec2 positions[3] = vec2[](
-            vec2(0.0, -0.5),
-            vec2(0.5, 0.5),
-            vec2(-0.5, 0.5)
-        );
-
-        vec3 colors[3] = vec3[](
-            vec3(0.9, 0.2, 0.2),
-            vec3(0.2, 0.9, 0.3),
-            vec3(0.3, 0.4, 0.95)
-        );
+        layout(location = 0) in vec2 inPosition;
+        layout(location = 1) in vec3 inColor;
 
         layout(location = 0) out vec3 vtxColor;
 
         void main()
         {
-            gl_Position = pc.mvp * vec4(positions[gl_VertexIndex], 0.0, 1.0);
-            vtxColor = colors[gl_VertexIndex];
+            gl_Position = pc.mvp * vec4(inPosition, 0.0, 1.0);
+            vtxColor = inColor;
         }
         """;
 
@@ -109,7 +103,26 @@ public sealed unsafe class VulkanTrianglePipeline : IDisposable
                 },
             };
 
-            var vertexInputState = new VkPipelineVertexInputStateCreateInfo();
+            var vertexBinding = new VkVertexInputBindingDescription
+            {
+                binding = 0,
+                stride = VertexStride,
+                inputRate = VkVertexInputRate.Vertex,
+            };
+
+            var vertexAttributes = stackalloc VkVertexInputAttributeDescription[2]
+            {
+                new() { location = 0, binding = 0, format = VkFormat.R32G32Sfloat, offset = 0 },
+                new() { location = 1, binding = 0, format = VkFormat.R32G32B32Sfloat, offset = 2 * sizeof(float) },
+            };
+
+            var vertexInputState = new VkPipelineVertexInputStateCreateInfo
+            {
+                vertexBindingDescriptionCount = 1,
+                pVertexBindingDescriptions = &vertexBinding,
+                vertexAttributeDescriptionCount = 2,
+                pVertexAttributeDescriptions = vertexAttributes,
+            };
 
             var inputAssemblyState = new VkPipelineInputAssemblyStateCreateInfo
             {
