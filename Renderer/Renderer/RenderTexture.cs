@@ -114,9 +114,22 @@ namespace ValveResourceFormat.Renderer
         public static RenderTexture Create(int width, int height, ImageFormat format, int mipCount, string label)
         {
             var texture = new RenderTexture(TextureTarget.Texture2D, width, height, 1, mipCount, label);
-            GL.TextureStorage2D(texture.Handle, mipCount, format.ToGLSizedInternalFormat(), width, height);
+            GraphicsDevice.SetTextureStorage2D(texture.Handle, mipCount, format, width, height);
             return texture;
         }
+
+        /// <summary>
+        /// Uploads one mip level's pixel data, tightly packed and row-major. See
+        /// <see cref="GraphicsDevice.SetTextureData2D"/> for what this cannot do yet
+        /// (block-compressed formats) in <see cref="GraphicsBackend.Vulkan"/> mode.
+        /// </summary>
+        /// <param name="mipLevel">Mip level to upload.</param>
+        /// <param name="mipWidth">Width of this mip level in texels.</param>
+        /// <param name="mipHeight">Height of this mip level in texels.</param>
+        /// <param name="format">Pixel format the data is laid out in; must match the format this texture was created with.</param>
+        /// <param name="pixels">Tightly packed, row-major pixel data.</param>
+        public void SetData(int mipLevel, int mipWidth, int mipHeight, ImageFormat format, ReadOnlySpan<byte> pixels)
+            => GraphicsDevice.SetTextureData2D(Handle, mipLevel, mipWidth, mipHeight, format, pixels);
 
         /// <summary>Creates a texture with immutable three dimensional storage.</summary>
         /// <returns>The newly created render texture.</returns>
@@ -199,27 +212,49 @@ namespace ValveResourceFormat.Renderer
             SetParameter(TextureParameterName.TextureMaxLevel, maxLevel);
         }
 
-        /// <summary>Sets the maximum anisotropic filtering level.</summary>
+        /// <summary>
+        /// Sets the maximum anisotropic filtering level. A no-op in <see cref="GraphicsBackend.Vulkan"/>
+        /// mode - see the remarks on <see cref="SetParameter"/>.
+        /// </summary>
         /// <param name="anisotropy">Maximum anisotropy, typically <see cref="GLEnvironment"/>'s supported maximum.</param>
         public void SetMaxAnisotropy(float anisotropy)
         {
             maxAnisotropy = anisotropy;
 
+            if (GraphicsDevice.CurrentBackend == GraphicsBackend.Vulkan)
+            {
+                return;
+            }
+
             GL.TextureParameter(Handle, (TextureParameterName)ExtTextureFilterAnisotropic.TextureMaxAnisotropyExt, anisotropy);
         }
 
-        /// <summary>Sets a single integer texture parameter.</summary>
+        /// <summary>
+        /// Sets a single integer texture parameter. A no-op in <see cref="GraphicsBackend.Vulkan"/>
+        /// mode: unlike GL, Vulkan has no per-texture default sampling state to set this onto - every
+        /// sample goes through an explicit, separate sampler object instead (see
+        /// <c>VulkanSamplerCache</c>), chosen at the point a texture is bound, not carried on the
+        /// texture itself. Values this remembers (filtering, wrap mode, ...) are just not applied yet
+        /// for Vulkan; wiring them into that separate sampler is later, material-facing work.
+        /// </summary>
         /// <param name="parameter">The parameter name to set.</param>
         /// <param name="value">The integer value to assign.</param>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SetParameter(TextureParameterName parameter, int value)
-            => GL.TextureParameter(Handle, parameter, value);
+        {
+            if (GraphicsDevice.CurrentBackend == GraphicsBackend.Vulkan)
+            {
+                return;
+            }
+
+            GL.TextureParameter(Handle, parameter, value);
+        }
 
         // Swaps in a new texture object, deleting the old one. Raw SetParameter writes are not
         // remembered and do not survive the swap.
         internal void ReplaceHandle(int newHandle, int numMipLevels)
         {
-            GL.DeleteTexture(Handle);
+            GraphicsDevice.DeleteTexture(Handle);
             Handle = newHandle;
             NumMipLevels = numMipLevels;
 
@@ -246,10 +281,10 @@ namespace ValveResourceFormat.Renderer
             }
         }
 
-        /// <summary>Deletes the underlying OpenGL texture object.</summary>
+        /// <summary>Deletes the underlying texture object.</summary>
         public void Delete()
         {
-            GL.DeleteTexture(Handle);
+            GraphicsDevice.DeleteTexture(Handle);
             Handle = 0;
         }
 

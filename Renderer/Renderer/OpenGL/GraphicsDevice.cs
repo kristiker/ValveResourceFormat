@@ -23,6 +23,9 @@ public sealed class GraphicsDevice
 {
     internal static GraphicsDevice Current => GraphicsContext.Current.Device;
 
+    /// <summary>Which graphics API the current context's device's handles are backed by.</summary>
+    public static GraphicsBackend CurrentBackend => Current.Backend;
+
     /// <summary>Which graphics API this device's handles are backed by.</summary>
     public GraphicsBackend Backend { get; private set; }
 
@@ -34,6 +37,7 @@ public sealed class GraphicsDevice
 
     private int nextVulkanHandle = 1; // 0 stays free, matching GL's "no object" convention.
     private readonly Dictionary<int, VulkanBuffer> vulkanBuffers = [];
+    private readonly Dictionary<int, VulkanImage> vulkanImages = [];
 
     /// <summary>
     /// Creates an OpenGL-backed device. Called once per set of GPU objects that can be used with
@@ -100,6 +104,37 @@ public sealed class GraphicsDevice
 
     /// <summary>Creates a texture object of the given target, without storage.</summary>
     public static int CreateTexture(TextureTarget target, string name) => Current.CreateTextureCore(target, name);
+
+    /// <summary>
+    /// Commits immutable 2D storage to a texture <see cref="CreateTexture"/> created, without
+    /// uploading any data - <see cref="SetTextureData2D"/> does that, per mip. In Vulkan mode this is
+    /// the point the real <see cref="VulkanImage"/> actually gets created, since (unlike a GL texture
+    /// name) a <c>VkImage</c> needs its format and size at creation and cannot be resized after.
+    /// </summary>
+    public static void SetTextureStorage2D(int handle, int mipLevels, ImageFormat format, int width, int height, bool srgb = false)
+        => Current.SetTextureStorage2DCore(handle, mipLevels, format, width, height, srgb);
+
+    /// <summary>
+    /// Uploads one mip level's pixel data to a texture <see cref="SetTextureStorage2D"/> already
+    /// committed storage to. <paramref name="format"/> must match what that call was given -
+    /// unlike Vulkan, which just copies bytes into an image already committed to a format, GL needs
+    /// telling again here what the bytes mean (<c>NotImplementedException</c> for a block-compressed
+    /// one for now; it needs <c>GL.CompressedTextureSubImage2D</c>, a different call shape, which
+    /// nothing has exercised through this path yet).
+    /// </summary>
+    public static void SetTextureData2D(int handle, int mipLevel, int width, int height, ImageFormat format, ReadOnlySpan<byte> pixels)
+        => Current.SetTextureData2DCore(handle, mipLevel, width, height, format, pixels);
+
+    /// <summary>Deletes a texture object created by this device.</summary>
+    public static void DeleteTexture(int handle) => Current.DeleteTextureCore(handle);
+
+    /// <summary>
+    /// The real <see cref="VulkanImage"/> behind a handle <see cref="SetTextureStorage2D"/> committed
+    /// storage to in <see cref="GraphicsBackend.Vulkan"/> mode; see the type-level remarks. Throws in
+    /// OpenGL mode, for a handle this device did not create, or for one <see cref="CreateTexture"/>
+    /// reserved that <see cref="SetTextureStorage2D"/> has not been called for yet.
+    /// </summary>
+    public static VulkanImage ResolveVulkanImage(int handle) => Current.vulkanImages[handle];
 
     /// <summary>Creates a texture view over a subrange of another texture's storage.</summary>
     public static int CreateTextureView(int texture, TextureTarget target, ImageFormat format, int minLevel, int numLevels, int minLayer, int numLayers, string name)
@@ -208,9 +243,60 @@ public sealed class GraphicsDevice
 
     private int CreateTextureCore(TextureTarget target, string name)
     {
+        if (Backend == GraphicsBackend.Vulkan)
+        {
+            // Mirrors CreateBufferCore(string): a VkImage needs a format and size that are not known
+            // yet, so this only reserves the handle. SetTextureStorage2DCore is what actually backs it.
+            return nextVulkanHandle++;
+        }
+
         GL.CreateTextures(target, 1, out int handle);
         Label(ObjectLabelIdentifier.Texture, handle, name);
         return handle;
+    }
+
+    private void SetTextureStorage2DCore(int handle, int mipLevels, ImageFormat format, int width, int height, bool srgb)
+    {
+        if (Backend == GraphicsBackend.Vulkan)
+        {
+            vulkanImages[handle] = VulkanImage.CreateWithStorage2D(vulkanDevice!, string.Empty, (uint)width, (uint)height, format.ToVkFormat(srgb), mipLevels);
+            return;
+        }
+
+        GL.TextureStorage2D(handle, mipLevels, format.ToGLSizedInternalFormat(srgb), width, height);
+    }
+
+    private void SetTextureData2DCore(int handle, int mipLevel, int width, int height, ImageFormat format, ReadOnlySpan<byte> pixels)
+    {
+        if (Backend == GraphicsBackend.Vulkan)
+        {
+            vulkanImages[handle].SetData(mipLevel, (uint)width, (uint)height, pixels);
+            return;
+        }
+
+        if (format.IsBlockCompressed())
+        {
+            throw new NotImplementedException($"Block-compressed upload ({format}) is not wired through GraphicsDevice yet.");
+        }
+
+        ref var bytes = ref MemoryMarshal.GetReference(pixels);
+        GL.TextureSubImage2D(handle, mipLevel, 0, 0, width, height, format.ToGLPixelFormat(), format.ToGLPixelType(), ref bytes);
+    }
+
+    private void DeleteTextureCore(int handle)
+    {
+        if (Backend == GraphicsBackend.Vulkan)
+        {
+            // Same tolerance as DeleteBufferCore for a handle nothing ever backed; see its comment.
+            if (vulkanImages.Remove(handle, out var image))
+            {
+                image.Dispose();
+            }
+
+            return;
+        }
+
+        GL.DeleteTexture(handle);
     }
 
     private int CreateTextureViewCore(int texture, TextureTarget target, ImageFormat format, int minLevel, int numLevels, int minLayer, int numLayers, string name)

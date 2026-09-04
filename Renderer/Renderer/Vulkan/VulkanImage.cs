@@ -25,13 +25,21 @@ public sealed unsafe class VulkanImage : IDisposable
     /// <summary>Pixel dimensions.</summary>
     public VkExtent2D Extent { get; }
 
-    private VulkanImage(VulkanDevice device, VkImage handle, VmaAllocation allocation, VkImageView view, VkExtent2D extent)
+    /// <summary>Number of mip levels the image was created with.</summary>
+    public int NumMipLevels { get; }
+
+    /// <summary>Format the image was created with.</summary>
+    public VkFormat Format { get; }
+
+    private VulkanImage(VulkanDevice device, VkImage handle, VmaAllocation allocation, VkImageView view, VkExtent2D extent, int numMipLevels, VkFormat format)
     {
         this.device = device;
         Handle = handle;
         this.allocation = allocation;
         View = view;
         Extent = extent;
+        NumMipLevels = numMipLevels;
+        Format = format;
     }
 
     /// <summary>
@@ -106,7 +114,7 @@ public sealed unsafe class VulkanImage : IDisposable
             staging.Dispose();
         }
 
-        return new VulkanImage(device, image, allocation, view, extent);
+        return new VulkanImage(device, image, allocation, view, extent, numMipLevels: 1, format);
     }
 
     /// <summary>
@@ -161,7 +169,7 @@ public sealed unsafe class VulkanImage : IDisposable
                 VkPipelineStageFlags2.EarlyFragmentTests | VkPipelineStageFlags2.LateFragmentTests, VkAccessFlags2.DepthStencilAttachmentWrite);
         });
 
-        return new VulkanImage(device, image, allocation, view, extent);
+        return new VulkanImage(device, image, allocation, view, extent, numMipLevels: 1, format);
     }
 
     /// <summary>
@@ -208,7 +216,121 @@ public sealed unsafe class VulkanImage : IDisposable
 
         device.Api.vkCreateImageView(&viewCreateInfo, out var view).CheckResult();
 
-        return new VulkanImage(device, image, allocation, view, extent);
+        return new VulkanImage(device, image, allocation, view, extent, numMipLevels: 1, format);
+    }
+
+    /// <summary>
+    /// Creates a device-local image with storage committed but no data uploaded - the Vulkan
+    /// counterpart of <c>GL.CreateTextures</c> followed by <c>GL.TextureStorage2D</c>. Every mip is
+    /// left in <see cref="VkImageLayout.ShaderReadOnlyOptimal"/> (with whatever driver-undefined bytes
+    /// the allocation happened to contain) rather than tracked per mip, so
+    /// <see cref="SetData(int, uint, uint, ReadOnlySpan{byte})"/> can treat every upload the same way:
+    /// transition that one mip out and back, unconditionally, rather than needing to know whether it
+    /// has been written before.
+    /// </summary>
+    public static VulkanImage CreateWithStorage2D(VulkanDevice device, string name, uint width, uint height, VkFormat format, int mipLevels)
+    {
+        var extent = new VkExtent2D { width = width, height = height };
+
+        var imageCreateInfo = new VkImageCreateInfo
+        {
+            imageType = VkImageType.Image2D,
+            format = format,
+            extent = new VkExtent3D { width = width, height = height, depth = 1 },
+            mipLevels = (uint)mipLevels,
+            arrayLayers = 1,
+            samples = VkSampleCountFlags.Count1,
+            usage = VkImageUsageFlags.Sampled | VkImageUsageFlags.TransferDst,
+        };
+
+        var allocationCreateInfo = new VmaAllocationCreateInfo { usage = VmaMemoryUsage.AutoPreferDevice };
+
+        vmaCreateImage(device.VmaAllocator, in imageCreateInfo, in allocationCreateInfo, out var image, out var allocation).CheckResult();
+
+        var viewCreateInfo = new VkImageViewCreateInfo
+        {
+            image = image,
+            viewType = VkImageViewType.Image2D,
+            format = format,
+            subresourceRange = new VkImageSubresourceRange
+            {
+                aspectMask = VkImageAspectFlags.Color,
+                baseMipLevel = 0,
+                levelCount = (uint)mipLevels,
+                baseArrayLayer = 0,
+                layerCount = 1,
+            },
+        };
+
+        device.Api.vkCreateImageView(&viewCreateInfo, out var view).CheckResult();
+
+        var layout = VkImageLayout.Undefined;
+
+        device.RunOneShotCommands(commandBuffer =>
+        {
+            var range = new VkImageSubresourceRange
+            {
+                aspectMask = VkImageAspectFlags.Color,
+                baseMipLevel = 0,
+                levelCount = (uint)mipLevels,
+                baseArrayLayer = 0,
+                layerCount = 1,
+            };
+
+            VulkanBarrier.TransitionImage(device.Api, commandBuffer, image, range, ref layout, VkImageLayout.ShaderReadOnlyOptimal,
+                VkPipelineStageFlags2.TopOfPipe, VkAccessFlags2.None, VkPipelineStageFlags2.FragmentShader, VkAccessFlags2.ShaderRead);
+        });
+
+        return new VulkanImage(device, image, allocation, view, extent, mipLevels, format);
+    }
+
+    /// <summary>
+    /// Uploads one mip level's pixel data (tightly packed, row-major), the Vulkan counterpart of
+    /// <c>GL.TextureSubImage2D</c>. The mip is assumed to already be
+    /// <see cref="VkImageLayout.ShaderReadOnlyOptimal"/> beforehand (true immediately after
+    /// <see cref="CreateWithStorage2D"/>, and true again after this returns) and is left there after.
+    /// </summary>
+    public void SetData(int mipLevel, uint mipWidth, uint mipHeight, ReadOnlySpan<byte> pixels)
+    {
+        var staging = VulkanBuffer.Create(device, $"mip {mipLevel} upload staging", (ulong)pixels.Length, VkBufferUsageFlags.TransferSrc, BufferUsage.Dynamic);
+
+        try
+        {
+            staging.SetData(pixels);
+
+            var range = new VkImageSubresourceRange
+            {
+                aspectMask = VkImageAspectFlags.Color,
+                baseMipLevel = (uint)mipLevel,
+                levelCount = 1,
+                baseArrayLayer = 0,
+                layerCount = 1,
+            };
+
+            var layout = VkImageLayout.ShaderReadOnlyOptimal;
+            var image = Handle;
+
+            device.RunOneShotCommands(commandBuffer =>
+            {
+                VulkanBarrier.TransitionImage(device.Api, commandBuffer, image, range, ref layout, VkImageLayout.TransferDstOptimal,
+                    VkPipelineStageFlags2.FragmentShader, VkAccessFlags2.ShaderRead, VkPipelineStageFlags2.Transfer, VkAccessFlags2.TransferWrite);
+
+                var region = new VkBufferImageCopy
+                {
+                    imageSubresource = new VkImageSubresourceLayers(VkImageAspectFlags.Color, (uint)mipLevel, 0, 1),
+                    imageExtent = new VkExtent3D { width = mipWidth, height = mipHeight, depth = 1 },
+                };
+
+                device.Api.vkCmdCopyBufferToImage(commandBuffer, staging.Handle, image, VkImageLayout.TransferDstOptimal, 1, &region);
+
+                VulkanBarrier.TransitionImage(device.Api, commandBuffer, image, range, ref layout, VkImageLayout.ShaderReadOnlyOptimal,
+                    VkPipelineStageFlags2.Transfer, VkAccessFlags2.TransferWrite, VkPipelineStageFlags2.FragmentShader, VkAccessFlags2.ShaderRead);
+            });
+        }
+        finally
+        {
+            staging.Dispose();
+        }
     }
 
     /// <summary>Queues this image's view and storage for destruction; see <see cref="VulkanDeleteQueue"/>.</summary>

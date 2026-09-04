@@ -41,7 +41,7 @@ public sealed class VulkanClearTestForm : Form
     private VulkanBindlessTextures? bindlessTextures;
     private VulkanTrianglePipeline? triangle;
     private int vertexBufferHandle;
-    private VulkanImage? checkerTexture;
+    private RenderTexture? checkerTexture;
     private uint checkerTextureIndex;
     private bool swapchainDirty;
     private double lastVertexBufferRebuild;
@@ -118,9 +118,9 @@ public sealed class VulkanClearTestForm : Form
 
         vertexBufferHandle = CreateVertexBuffer(vertexBufferGeneration);
 
-        checkerTexture = CreateCheckerTexture(device);
+        checkerTexture = CreateCheckerTexture();
         var checkerSampler = bindlessTextures.Samplers.GetOrCreate(RsTextureAddressMode.Wrap, RsTextureAddressMode.Wrap, mipmaps: false);
-        checkerTextureIndex = bindlessTextures.Register(checkerTexture.View, checkerSampler);
+        checkerTextureIndex = bindlessTextures.Register(GraphicsDevice.ResolveVulkanImage(checkerTexture.Handle).View, checkerSampler);
 
         RunPushConstantPackingSmokeTest();
 
@@ -322,8 +322,10 @@ public sealed class VulkanClearTestForm : Form
     }
 
     // 8x8 magenta/white checkerboard: visually unmistakable as "a real sampled texture", not a
-    // solid fallback color, proving VulkanImage's staging upload actually reached the GPU.
-    private static VulkanImage CreateCheckerTexture(VulkanDevice device)
+    // solid fallback color, proving a RenderTexture created through GraphicsDevice - not VulkanImage
+    // directly - actually reaches the GPU. This is the same RenderTexture.Create/SetData path real
+    // material textures use; see the comment where graphicsDevice is created in OnHostControlLoad.
+    private static RenderTexture CreateCheckerTexture()
     {
         const int size = 8;
         var pixels = new byte[size * size * 4];
@@ -342,7 +344,9 @@ public sealed class VulkanClearTestForm : Form
             }
         }
 
-        return VulkanImage.CreateRgba8(device, "Checker test texture", size, size, pixels);
+        var texture = RenderTexture.Create(size, size, ImageFormat.RGBA8888, 1, "Checker test texture");
+        texture.SetData(0, size, size, ImageFormat.RGBA8888, pixels);
+        return texture;
     }
 
     // Interleaved [x, y, r, g, b] per vertex, matching VulkanTrianglePipeline.VertexStride. The
@@ -432,7 +436,7 @@ public sealed class VulkanClearTestForm : Form
             GraphicsDevice.DeleteBuffer(plasmaQuadVertexBufferHandle);
         }
 
-        checkerTexture?.Dispose();
+        checkerTexture?.Delete();
         triangle?.Dispose();
         bindlessTextures?.Dispose();
         pipelineCache?.Dispose();
