@@ -38,6 +38,9 @@ public sealed class VulkanClearTestForm : Form
     private VkSurfaceKHR surface;
     private VulkanSwapchain? swapchain;
     private VulkanFrame? frame;
+    private VulkanGraphicsSurface? vulkanSurface;
+    private GraphicsContext? resourceContext;
+    private GraphicsContext? frameContext;
     private VulkanBindlessTextures? bindlessTextures;
     private VulkanTrianglePipeline? triangle;
     private int vertexBufferHandle;
@@ -104,17 +107,22 @@ public sealed class VulkanClearTestForm : Form
         device = VulkanDevice.Create(instance, surface, logger);
         swapchain = new VulkanSwapchain(device, surface, (uint)hostControl.Width, (uint)hostControl.Height);
         frame = new VulkanFrame(device);
+        vulkanSurface = new VulkanGraphicsSurface(frame, swapchain);
         bindlessTextures = new VulkanBindlessTextures(device);
         triangle = new VulkanTrianglePipeline(device, swapchain.Format, bindlessTextures, VkFormat.D32Sfloat);
 
         // Connects this test form's object creation to the real GraphicsDevice/GraphicsContext the
         // rest of the renderer already calls, rather than creating VulkanBuffer directly: proves the
         // GL-shaped int-handle API genuinely dispatches to Vulkan and hands back something usable in
-        // a real Vulkan call. Kept current for the form's whole lifetime - there is no per-frame
-        // Begin/End cycle here yet (see the type remarks on what this milestone does not cover), so a
-        // single standing surface-less context is the honest way to use the static creation API.
+        // a real Vulkan call. Two contexts against the same device: resourceContext stays current for
+        // the form's whole lifetime and backs every CreateBuffer/RenderTexture.Create call (including
+        // the ones below, at load time), while frameContext wraps vulkanSurface and is only Begin/End
+        // for the span of a frame's actual draw calls, in RenderFrame - see GraphicsContext.Current
+        // being thread-static for why only one can be current at a time and that is fine here.
         graphicsDevice = GraphicsDevice.Create(device);
-        graphicsDevice.CreateContext().Begin();
+        resourceContext = graphicsDevice.CreateContext();
+        resourceContext.Begin();
+        frameContext = graphicsDevice.CreateContext(vulkanSurface);
 
         vertexBufferHandle = CreateVertexBuffer(vertexBufferGeneration);
 
@@ -154,7 +162,7 @@ public sealed class VulkanClearTestForm : Form
     ];
 
     // Dispatches the plasma compute shader, then transitions its output for sampling. Runs before
-    // vkCmdBeginRendering (see VulkanFrame.RenderAndPresent's computeDispatch parameter), since
+    // vkCmdBeginRendering (see VulkanFrame.BeginFrame's computeDispatch parameter), since
     // vkCmdDispatch is not legal inside a dynamic rendering instance.
     private void DispatchPlasmaCompute(VkCommandBuffer commandBuffer)
     {
@@ -189,6 +197,24 @@ public sealed class VulkanClearTestForm : Form
 
         device.Api.vkCmdBindVertexBuffer(commandBuffer, 0, GraphicsDevice.ResolveVulkanBuffer(plasmaQuadVertexBufferHandle).Handle);
         device.Api.vkCmdDraw(commandBuffer, 6, 1, 0, 0);
+    }
+
+    // The original spinning checker-textured triangle, recorded directly against
+    // GraphicsContext.VulkanCommandBuffer from RenderFrame - the first real draw call issued through
+    // the GraphicsContext plumbing rather than passed into VulkanFrame as a lambda.
+    private unsafe void DrawMainTriangle(VkCommandBuffer commandBuffer, Matrix4x4 mvp)
+    {
+        device!.Api.vkCmdBindPipeline(commandBuffer, VkPipelineBindPoint.Graphics, triangle!.Handle);
+
+        var set = bindlessTextures!.Set;
+        device.Api.vkCmdBindDescriptorSets(commandBuffer, VkPipelineBindPoint.Graphics, triangle.Layout, 0, 1, &set, 0, null);
+
+        var pushConstants = new VulkanTrianglePipeline.PushConstants(mvp, checkerTextureIndex);
+        device.Api.vkCmdPushConstants(commandBuffer, triangle.Layout, VkShaderStageFlags.Vertex | VkShaderStageFlags.Fragment,
+            0, (uint)sizeof(VulkanTrianglePipeline.PushConstants), &pushConstants);
+
+        device.Api.vkCmdBindVertexBuffer(commandBuffer, 0, GraphicsDevice.ResolveVulkanBuffer(vertexBufferHandle).Handle);
+        device.Api.vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     }
 
     // Three overlapping triangles in NDC-ish space (x, y, z), positioned so B occludes A where they
@@ -386,7 +412,8 @@ public sealed class VulkanClearTestForm : Form
 
     private void RenderFrame()
     {
-        if (swapchain is null || frame is null || hostControl.Width <= 0 || hostControl.Height <= 0)
+        if (swapchain is null || frame is null || vulkanSurface is null || resourceContext is null || frameContext is null
+            || hostControl.Width <= 0 || hostControl.Height <= 0)
         {
             return;
         }
@@ -400,23 +427,43 @@ public sealed class VulkanClearTestForm : Form
             oldDepth?.Dispose();
 
             swapchainDirty = false;
+            vulkanSurface.AcknowledgeSwapchainRecreated();
         }
 
+        // resourceContext, not frameContext, is current for CreateBuffer/DeleteBuffer here - neither
+        // needs a command buffer, only GraphicsDevice.Current, which either context would satisfy,
+        // but frameContext's surface has not been opened yet at this point in the loop.
+        resourceContext.Begin();
         RebuildVertexBufferIfDue();
 
         var mvp = Matrix4x4.CreateRotationZ((float)clock.Elapsed.TotalSeconds);
 
-        // Kept static (no rotation): without a real projection matrix, spinning these around Y would
-        // skew flat clip-space triangles in a way that reads as broken rather than "3D", and the point
-        // here is to see the depth/blend/cull result clearly, not to fake a camera.
-        if (!frame.RenderAndPresent(swapchain, ClearColor, triangle, bindlessTextures, GraphicsDevice.ResolveVulkanBuffer(vertexBufferHandle), mvp, checkerTextureIndex,
-            depthImage,
-            extraDraws: commandBuffer =>
-            {
-                DrawRenderStateDemo(commandBuffer, Matrix4x4.Identity);
-                DrawPlasmaQuad(commandBuffer);
-            },
-            computeDispatch: DispatchPlasmaCompute))
+        vulkanSurface.ClearColor = ClearColor;
+        vulkanSurface.DepthImage = depthImage;
+        vulkanSurface.ComputeDispatch = DispatchPlasmaCompute;
+
+        // Opens dynamic rendering over the acquired swapchain image (see VulkanGraphicsSurface.Begin)
+        // and makes frameContext current, so GraphicsContext.VulkanCommandBuffer below resolves to the
+        // same command buffer BeginFrame just started recording into - the real draw-call path this
+        // milestone is proving, in place of the extraDraws/computeDispatch lambdas RenderAndPresent
+        // used to take.
+        frameContext.Begin();
+
+        if (!vulkanSurface.NeedsSwapchainRecreate)
+        {
+            var commandBuffer = GraphicsContext.VulkanCommandBuffer;
+
+            // Kept static (no rotation): without a real projection matrix, spinning these around Y
+            // would skew flat clip-space triangles in a way that reads as broken rather than "3D", and
+            // the point here is to see the depth/blend/cull result clearly, not to fake a camera.
+            DrawMainTriangle(commandBuffer, mvp);
+            DrawRenderStateDemo(commandBuffer, Matrix4x4.Identity);
+            DrawPlasmaQuad(commandBuffer);
+        }
+
+        frameContext.End();
+
+        if (vulkanSurface.NeedsSwapchainRecreate)
         {
             swapchainDirty = true;
         }
@@ -431,6 +478,10 @@ public sealed class VulkanClearTestForm : Form
 
         if (graphicsDevice != null)
         {
+            // The last RenderFrame's frameContext.End() cleared GraphicsContext.Current (see
+            // GraphicsContext.End), and resourceContext is only re-Begin'd at the top of RenderFrame,
+            // which the timer stopping above means will not run again - so nothing is current here.
+            resourceContext!.Begin();
             GraphicsDevice.DeleteBuffer(vertexBufferHandle);
             GraphicsDevice.DeleteBuffer(sceneVertexBufferHandle);
             GraphicsDevice.DeleteBuffer(plasmaQuadVertexBufferHandle);

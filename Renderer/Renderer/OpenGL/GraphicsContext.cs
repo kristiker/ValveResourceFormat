@@ -1,3 +1,5 @@
+using Vortice.Vulkan;
+
 namespace ValveResourceFormat.Renderer;
 
 /// <summary>
@@ -15,6 +17,20 @@ public interface IGraphicsSurface
     void End();
 }
 #pragma warning restore CA1716
+
+/// <summary>
+/// Extends <see cref="IGraphicsSurface"/> for a <see cref="GraphicsBackend.Vulkan"/> surface, so
+/// <see cref="GraphicsContext.VulkanCommandBuffer"/> has something to read: unlike OpenGL, where
+/// "the context that is current on this thread" is enough to issue a draw call against, Vulkan needs
+/// an explicit <see cref="VkCommandBuffer"/> passed to every recording call.
+/// <see cref="IGraphicsSurface.Begin"/> opens it (acquiring a swapchain image, beginning dynamic
+/// rendering over it); <see cref="IGraphicsSurface.End"/> closes, submits, and presents it.
+/// </summary>
+public interface IVulkanGraphicsSurface : IGraphicsSurface
+{
+    /// <summary>The command buffer the frame between <see cref="IGraphicsSurface.Begin"/> and <see cref="IGraphicsSurface.End"/> is recorded into.</summary>
+    VkCommandBuffer CommandBuffer { get; }
+}
 
 /// <summary>
 /// One command stream recorded against a <see cref="GraphicsDevice"/>'s objects.
@@ -38,6 +54,16 @@ public sealed class GraphicsContext
     /// <summary>Gets the render state applied by the context the calling thread records into.
     /// State is per context, not per device.</summary>
     public static RenderStateTracker RenderState => Current.renderState;
+
+    /// <summary>
+    /// The command buffer to record draws into, between this context's <see cref="GraphicsContext.Begin"/>
+    /// and <see cref="GraphicsContext.End"/>, in <see cref="GraphicsBackend.Vulkan"/> mode. Throws if
+    /// the current context's surface is not <see cref="IVulkanGraphicsSurface"/> (an OpenGL surface,
+    /// or none), or if called outside that scope.
+    /// </summary>
+    public static VkCommandBuffer VulkanCommandBuffer => ((IVulkanGraphicsSurface)(Current.surface
+        ?? throw new InvalidOperationException("This context has no surface, so it has no Vulkan command buffer either.")))
+        .CommandBuffer;
 
     internal GraphicsContext(GraphicsDevice device, IGraphicsSurface? surface)
     {
