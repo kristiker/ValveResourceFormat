@@ -29,7 +29,7 @@
     <PackageReference Include="ValvePak" Version="5.0.2.177" />
     <PackageReference Include="Vortice.SpirvCross" Version="1.5.4" />
     <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
-    <PackageReference Include="KeyValues2" Version="0.8.0" />
+    <PackageReference Include="KeyValues2" Version="1.0.0" />
     <PackageReference Include="TinyEXR.NET" Version="1.1.0" />
   </ItemGroup>
   <ItemGroup>
